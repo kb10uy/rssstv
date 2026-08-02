@@ -4,6 +4,10 @@ This document defines the intended design of the RSSSTV transmit image template
 system. Templates are portable RGBA overlays that are rendered independently of
 the selected SSTV mode, source image, UI toolkit, and transmit encoder.
 
+The initial implementation is provided by the `rssstv-template` crate. It parses
+KDL v2, generates a controlled static SVG subset, and rasterizes that SVG with
+`usvg` and `resvg`.
+
 ## Goals
 
 - Use an existing human-readable data definition language rather than inventing
@@ -63,8 +67,8 @@ change requires one.
 
 ## Scene Model
 
-The KDL document describes a scene graph whose root is implicit. Expected basic
-layer types include:
+The KDL document describes a scene graph whose root is implicit. The initial
+layer types are:
 
 - `image`
 - `rximage`
@@ -74,13 +78,55 @@ layer types include:
 - `line`
 - `group`
 
-The exact property set will be defined alongside the renderer. Geometry, paint,
-text style, effects, and asset references should remain separate in the scene
-model even when KDL expresses them compactly.
+Geometry, paint, text style, effects, and asset references remain separate in
+the scene model even when KDL expresses them compactly.
 
 Groups provide nested positioning and compositing without changing the root
 document structure. Layer order is stable and follows document order at every
 level.
+
+### Initial Schema
+
+The initial implementation supports these layer forms:
+
+| Layer | Argument | Required children | Optional children |
+| --- | --- | --- | --- |
+| `image` | PNG asset reference | `position`, `size` | None |
+| `rximage` | None | `position`, `size` | None |
+| `text` | Interpolated text | `position`, `font`, `fill` | `stroke` |
+| `rect` | None | `position`, `size`, at least one paint | `fill`, `stroke` |
+| `ellipse` | None | `position`, `size`, at least one paint | `fill`, `stroke` |
+| `line` | None | `start`, `end`, `stroke` | None |
+| `group` | None | At least one layer | `position` |
+
+The supported child properties are:
+
+```kdl
+position x=(fw)0 y=(fh)0 anchor="top-left"
+size width=(fw)10 height=(fh)10 fit="contain"
+start x=(fw)0 y=(fh)0
+end x=(fw)100 y=(fh)100
+font family="Noto Sans" size=(fh)9 weight=700
+fill color="#ffffff"
+stroke color="#182030" width=(em)0.08
+```
+
+`position.anchor` defaults to `top-left`. Image `fit` defaults to `contain` and
+accepts `contain`, `cover`, `stretch`, or `preserve`. `aspect="preserve"` is
+accepted as an equivalent spelling, but `fit` and `aspect` cannot both appear.
+Shapes require both width and height. Images may omit one dimension, in which
+case it is derived from the PNG aspect ratio.
+
+Colors use `#RRGGBB` or `#RRGGBBAA`. Layer nodes, child nodes, and properties
+outside this schema are errors. Duplicate properties and duplicate singleton
+children are also errors. Dimensions must be finite and non-negative;
+layer width and height values that resolve to zero are rejected before
+rasterization.
+
+Groups add their optional `position` to every nested layer. Child coordinates
+remain frame-relative rather than becoming percentages of a group bounding box.
+The initial implementation does not provide rotation, arbitrary transforms,
+clipping, shadows, gradients, rounded rectangles, or multiline text.
 
 ## Coordinate System
 
@@ -104,9 +150,11 @@ anchors include `top-left`, `top-center`, `top-right`, `center`, `bottom-left`,
 pixel offsets and allows edge-aligned content to remain stable across different
 aspect ratios.
 
-Image sizing should support aspect-preserving behavior. At minimum, image
-layout needs equivalents of `contain`, `cover`, `stretch`, and an explicitly
-sized aspect-preserving mode.
+Image sizing supports `contain`, `cover`, `stretch`, and explicitly sized
+aspect-preserving behavior.
+
+The initial renderer accepts `(em)` where a current text font size exists, such
+as text stroke width. Using `(em)` for non-text geometry is a render error.
 
 ### Received Image Layer
 
@@ -123,6 +171,10 @@ The layer specifies only layout and rendering behavior. The caller is
 responsible for identifying and providing the appropriate final received image
 as typed input to the renderer. The template renderer must not implicitly read
 receive history, application state, or files to resolve `rximage`.
+
+If a template contains `rximage` and the caller does not provide an image,
+rendering fails. The renderer encodes the supplied RGB image as an in-memory PNG
+for the SVG backend; it does not persist that encoding or add it to the template.
 
 ## Variables
 
@@ -145,8 +197,13 @@ macros. Anticipated values include:
 The evaluation context supplies typed values, including the image used by an
 `rximage` layer. Text interpolation converts only values used in text; images
 and other resources should be referenced as typed properties rather than
-converted through strings. Formatting, fallback values, and missing-variable
-behavior remain to be specified before implementation.
+converted through strings.
+
+The initial implementation accepts text, signed integer, floating-point, and
+boolean variable values. It applies no formatting expressions; callers provide
+preformatted text for values such as dates and times. A missing variable is a
+render error. Variable names consist of dot-separated ASCII identifier segments.
+`$${name}` produces the literal text `${name}`.
 
 ## Text Rendering
 
@@ -169,11 +226,21 @@ stroking glyph paths or expanding a glyph mask, but should document the visual
 and metric guarantees it provides. Exact output may differ between font
 backends when the selected font is unavailable or rasterized differently.
 
+The renderer begins with an empty font database. Callers register in-memory
+font data or explicitly request system-font discovery. A requested family that
+is not present in the database is a render error. The generated SVG uses
+`paint-order="stroke fill"` and a round stroke join so a wide outline is painted
+behind the glyph fill.
+
 ## Rendering and Composition
 
 A template renderer produces an RGBA image with the dimensions requested by its
 caller. Transparent pixels are valid and expected; a template is not required
 to cover the frame.
+
+The public image representation uses straight alpha. `resvg` renders internally
+to premultiplied RGBA; `rssstv-template` converts that buffer before returning
+it. Fully transparent pixels are normalized to transparent black.
 
 The background image is selected and prepared separately. Resizing, cropping,
 and choosing whether to contain, cover, or stretch that image are application
@@ -194,9 +261,16 @@ RGB background frame + RGBA overlay
   -> TxEncoder
 ```
 
-Composition uses ordinary alpha blending. There is no sampled transparent
-color, color-key import mode, or implicit conversion of a particular RGB value
-to transparency.
+Composition uses source-over alpha blending directly on eight-bit sRGB channel
+values, with integer rounding to the nearest output value. The background and
+overlay must have identical dimensions. There is no sampled transparent color,
+color-key import mode, or implicit conversion of a particular RGB value to
+transparency.
+
+`image` references are resolved through a caller-provided asset interface. The
+renderer never opens a path from the template directly. The initial
+implementation accepts PNG-encoded assets only and passes them to `usvg` through
+private virtual resource URIs.
 
 This pipeline keeps template parsing, variable evaluation, font and asset
 rendering, source-image preparation, and SSTV encoding as separate concerns.

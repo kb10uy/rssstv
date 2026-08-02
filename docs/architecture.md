@@ -8,7 +8,8 @@ The architecture of the original MMSSTV application is described in
 [mmsstv.md](mmsstv.md). See [mmsstv-porting.md](mmsstv-porting.md) for the
 mapping from the original implementation to the proposed Rust boundaries,
 [mmsstv-dsp.md](mmsstv-dsp.md) for original DSP details, and
-[sstv-formats.md](sstv-formats.md) for mode and timing data.
+[sstv-formats.md](sstv-formats.md) for mode and timing data. The portable
+transmit overlay format is described in [template-design.md](template-design.md).
 
 ## Design Goals
 
@@ -48,7 +49,8 @@ platform integration, and application behavior.
 | Modulator | Timed frequencies to PCM samples | Not implemented |
 | Audio adapters | Platform-specific input and output streams | Not implemented |
 | Integration | Composition of core stages for a particular environment | `decode-wav` for offline receive |
-| Application | UI, configuration, history, templates, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder |
+| Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
+| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder |
 
 These are responsibility boundaries, not a requirement that every row become a
 separate crate. Closely related protocol types currently live together in
@@ -214,7 +216,8 @@ The following concerns belong outside the portable DSP and SSTV core:
 - Windows messages, handles, VCL controls, and other GUI toolkit types.
 - PTT and CAT transports.
 - Logging services and external logger integrations.
-- History, templates, settings persistence, and application file management.
+- History, template editing, settings persistence, and application file
+  management.
 - Thread scheduling and application-level queue policy.
 
 Integration crates may adapt these facilities to core data types, but platform
@@ -222,7 +225,7 @@ types must not appear in reusable core APIs.
 
 ## Current Crate Structure
 
-The workspace currently contains six packages:
+The workspace currently contains seven packages:
 
 | Package | Architectural role | Current status |
 | --- | --- | --- |
@@ -230,6 +233,7 @@ The workspace currently contains six packages:
 | `rssstv-sstv` | Protocol model, images, transmit encoder, and receive decoder | 14 modes implemented |
 | `rssstv-fskid` | FSKID protocol decoder | Callsign receive implemented |
 | `rssstv-demodulator` | Receive front end | Incremental conventional-VIS demodulation implemented |
+| `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |
 | `decode-wav` | Offline receive integration | Implemented |
 | `rssstv` | Application composition root | Placeholder only |
 
@@ -241,13 +245,18 @@ rssstv-fskid ---------+-> rssstv-demodulator --+
 rssstv-sstv ----------+                       +-> decode-wav
 rssstv-fskid ----------------------------------+
 rssstv-sstv -----------------------------------+
+rssstv-sstv -----------------> rssstv-template
 
 rssstv  (currently has no dependencies on the other packages)
 ```
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
-remain in `decode-wav`, outside the portable core.
+remain in `decode-wav`, outside the portable core. `rssstv-template` is a
+standard-library application-support crate: it depends on `rssstv-sstv` only at
+the received-image and final RGB composition boundaries. It does not expose
+SSTV modes to the template format or make the protocol crate depend on template
+rendering.
 
 ## Current Implementation Detail
 
@@ -273,6 +282,13 @@ first WAV channel, enables live raster synchronization and bounded in-memory
 staging, performs global slant refinement, and saves BMP, JPEG, or PNG according
 to the output extension.
 
+`rssstv-template` strictly parses ordered KDL v2 layers, resolves frame-relative
+geometry and caller-provided variables, PNG assets, received images, and fonts,
+then generates static SVG for `resvg`. It returns a straight-alpha RGBA overlay
+and can source-over composite that overlay into `rssstv-sstv::image::RgbImage`.
+It does not select or prepare the background image and does not access history
+or the filesystem implicitly.
+
 ## Planned Gaps
 
 The architecture is not complete until the following boundaries have production
@@ -284,7 +300,7 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - FSKID, VOX framing, footer, and station-ID transmission.
 - An application composition root and user interface.
-- PTT, CAT, logging, history, templates, and persistent configuration.
+- PTT, CAT, logging, history, template editing, and persistent configuration.
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform
@@ -296,7 +312,9 @@ Core behavior is tested with deterministic in-memory signals and images. The
 test suite covers numerical primitives, mode metadata and timing, all currently
 supported raster families, transmit/receive round trips, synchronization and
 slant behavior, malformed streaming input, FSKID at multiple sample rates, and
-a synthesized WAV-to-PNG integration path.
+a synthesized WAV-to-PNG integration path. Template tests cover strict KDL
+validation, all initial layer kinds, caller-resolved PNG and receive images,
+straight-alpha rendering, and RGB source-over composition.
 
 Run the complete verification set from the workspace root:
 

@@ -1,8 +1,10 @@
 use alloc::collections::VecDeque;
 
 use super::clock::RasterClock;
+use super::config::sync_detector_delay_samples;
 use super::input::SampleBuffer;
 use super::raster::RasterProfile;
+use crate::time::SstvDuration;
 
 pub(super) const HISTORY_LEN: usize = 16;
 pub(super) const MIN_CONFIDENCE: f32 = 0.20;
@@ -30,11 +32,16 @@ pub(super) fn observe(
     profile: RasterProfile,
     clock: RasterClock,
     unit: usize,
+    sample_rate_hz: u32,
+    sync_detector_delay: SstvDuration,
 ) -> Option<SyncObservation> {
-    let protocol = profile.period_ps.checked_mul(unit as u64)?;
-    let expected = clock
-        .sample_at(protocol.checked_add(profile.sync_center_ps)?)
-        .ok()?;
+    let protocol = profile
+        .period_ps
+        .checked_mul(unit as u64)?
+        .checked_add(profile.sync_center_ps)?;
+    let expected = clock.sample_at(protocol).ok()?.checked_add(
+        sync_detector_delay_samples(sample_rate_hz, sync_detector_delay).round() as u64,
+    )?;
     let half_period = clock
         .samples_for(profile.period_ps)
         .ok()?

@@ -143,6 +143,15 @@ sample positions plus parallel frequency and normalized synchronization-strength
 samples. `DemodulatedBlock` enforces continuity and value validation at this
 boundary.
 
+Frequency and synchronization strength are causal detector outputs and remain at
+the sample positions where they were produced. The synchronization envelope
+lags the frequency-discriminator output, so a demodulator reports that calibrated
+relative delay separately. The integration passes it through `RxConfig` so
+raster acquisition, live phase correction, and staged slant refinement use the
+frequency stream's time coordinate. The delay is converted with the physical
+receive sample rate, independently of the estimated raster clock. Inputs whose
+two streams are already aligned use a zero delay.
+
 `RxDecoder` is stateful and streaming. It exposes acquisition, decoding,
 completion, and stopped states, consumes an explicit prefix of each input block,
 and reports typed events and errors. Its responsibilities include:
@@ -248,7 +257,10 @@ path; that path uses a Hilbert phase-difference discriminator.
 `rssstv-demodulator` currently provides one batch function over normalized mono
 PCM. It performs band-pass filtering, level normalization, VIS/FSK tone
 detection, conventional VIS decoding, zero-crossing AFC measurement, and
-Hilbert frequency discrimination. It requires at least a 6000 Hz sample rate.
+Hilbert frequency discrimination. Its synchronization envelope is causal, with
+its calibrated delay relative to the frequency output carried as metadata rather
+than implemented by shifting the sample array. It requires at least a 6000 Hz
+sample rate.
 
 `decode-wav` composes the existing receive stages. It uses the first WAV channel,
 enables live raster synchronization and in-memory staging, performs global slant

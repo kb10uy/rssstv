@@ -10,7 +10,7 @@ use crate::{RxProcessError, SstvError};
 
 use super::acquisition::{acquire, window_samples};
 use super::clock::{RasterClock, ceil_sample};
-use super::config::{RxConfig, Staging};
+use super::config::{RxConfig, Staging, sync_detector_delay_samples};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
 use super::input::{DemodulatedBlock, SampleBuffer};
 use super::raster::{PixelSegment, RasterProfile};
@@ -252,7 +252,12 @@ impl RxDecoder {
                 let input = self.input.as_ref().expect("input initialized");
                 let target = window_samples(self.profile, self.sample_rate_hz);
                 if input.len() as u64 >= target {
-                    match acquire(input, self.profile, self.sample_rate_hz) {
+                    match acquire(
+                        input,
+                        self.profile,
+                        self.sample_rate_hz,
+                        self.config.sync_detector_delay,
+                    ) {
                         Ok(clock) => {
                             self.decode.clock = Some(clock);
                             self.decode.state = RxState::Decoding { completed_rows: 0 };
@@ -380,8 +385,12 @@ impl RxDecoder {
         if self.staged.is_none() {
             return Err(SstvError::StagingDisabled);
         }
-        let estimator = SlantEstimator::for_mode(self.sample_rate_hz, self.mode)
-            .expect("decoder mode has a raster profile");
+        let estimator = SlantEstimator::for_mode_with_sync_detector_delay(
+            self.sample_rate_hz,
+            self.mode,
+            self.config.sync_detector_delay,
+        )
+        .expect("decoder mode has a raster profile");
         let slant = estimator
             .estimate(&self.staged_observations)
             .ok_or(SstvError::InsufficientStagedSync)?;
@@ -750,6 +759,8 @@ impl RxDecoder {
             self.profile,
             self.decode.clock.expect("clock acquired"),
             unit,
+            self.sample_rate_hz,
+            self.config.sync_detector_delay,
         );
         let Some(observation) = observation else {
             self.phase_displacements.clear();
@@ -771,7 +782,12 @@ impl RxDecoder {
             .decode
             .clock
             .expect("clock acquired")
-            .sample_at(expected_protocol)?;
+            .sample_at(expected_protocol)?
+            .checked_add(
+                sync_detector_delay_samples(self.sample_rate_hz, self.config.sync_detector_delay)
+                    .round() as u64,
+            )
+            .ok_or(SstvError::SamplePositionOverflow)?;
         let displacement = observation.center_sample as i128 - expected as i128;
         let max_consistent = self
             .decode

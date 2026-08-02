@@ -37,6 +37,7 @@ pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
         RxConfig {
             live_sync: true,
             auto_stop: false,
+            sync_detector_delay: demodulated.sync_detector_delay(),
             staging: Staging::Memory { max_samples },
         },
     )

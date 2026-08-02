@@ -1,8 +1,10 @@
 use alloc::vec::Vec;
 
 use crate::SstvError;
+use crate::time::SstvDuration;
 
 use super::clock::RasterClock;
+use super::config::sync_detector_delay_samples;
 use super::input::SampleBuffer;
 use super::raster::RasterProfile;
 use super::sync::RUN_THRESHOLD;
@@ -22,6 +24,7 @@ pub(super) fn acquire(
     input: &SampleBuffer,
     profile: RasterProfile,
     sample_rate_hz: u32,
+    sync_detector_delay: SstvDuration,
 ) -> Result<RasterClock, SstvError> {
     let mut centers = Vec::new();
     let sync = input.sync_values();
@@ -135,7 +138,9 @@ pub(super) fn acquire(
         .sum::<f64>()
         / count;
     let fitted_first = sequence[0] as f64 + mean_offset - samples_per_period * mean_step;
-    let epoch = fitted_first - effective * profile.sync_center_ps as f64 / 1.0e12;
+    let epoch = fitted_first
+        - effective * profile.sync_center_ps as f64 / 1.0e12
+        - sync_detector_delay_samples(sample_rate_hz, sync_detector_delay);
     RasterClock::from_estimate(epoch, effective)
 }
 
@@ -169,7 +174,7 @@ mod tests {
         let block = DemodulatedBlock::new(0, &frequency, &sync);
         let mut input = SampleBuffer::new(0);
         input.append(block, frequency.len());
-        let clock = acquire(&input, profile, physical_rate).unwrap();
+        let clock = acquire(&input, profile, physical_rate, SstvDuration::ZERO).unwrap();
         assert!((clock.effective_sample_rate_hz() - effective_rate).abs() < 2.0);
         assert!(
             clock.source_epoch().abs_diff(epoch as u64) <= 1,
@@ -195,7 +200,7 @@ mod tests {
         let block = DemodulatedBlock::new(0, &frequency, &sync);
         let mut input = SampleBuffer::new(0);
         input.append(block, frequency.len());
-        let clock = acquire(&input, profile, sample_rate).unwrap();
+        let clock = acquire(&input, profile, sample_rate, SstvDuration::ZERO).unwrap();
         let last_protocol = profile.period_ps * 255 + profile.sync_center_ps;
         let fitted = clock.position_at(last_protocol).unwrap();
         let expected = epoch + f64::from(sample_rate) * last_protocol as f64 / 1.0e12;

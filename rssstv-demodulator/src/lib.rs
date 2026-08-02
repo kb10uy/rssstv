@@ -12,6 +12,7 @@ use rssstv_dsp::iir::{IirFilter, IirLowPassDesign, IirResponse};
 use rssstv_dsp::resonator::Resonator;
 use rssstv_fskid::{FskDecoder, FskId, FskTone};
 use rssstv_sstv::mode::Mode;
+use rssstv_sstv::time::SstvDuration;
 use thiserror::Error;
 
 const DETECTORS: [(f64, f64); 5] = [
@@ -21,8 +22,8 @@ const DETECTORS: [(f64, f64); 5] = [
     (1_900.0, 100.0),
     (2_100.0, 100.0),
 ];
-const SYNC_ENVELOPE_ADVANCE_SECONDS: f64 = 0.006;
 const FSK_MINIMUM_CONTRAST: f64 = 0.125;
+const SYNC_DETECTOR_DELAY_PS: u64 = 6_000_000_000;
 
 /// Failure while configuring or processing the receive front end.
 #[derive(Debug, Error)]
@@ -51,6 +52,7 @@ pub struct DemodulatedAudio {
     first_sample: u64,
     frequency_hz: Vec<f32>,
     sync_strength: Vec<f32>,
+    sync_detector_delay: SstvDuration,
     frequency_offset_hz: f64,
     fsk_ids: Vec<FskId>,
 }
@@ -71,9 +73,14 @@ impl DemodulatedAudio {
         &self.frequency_hz
     }
 
-    /// Returns normalized horizontal-sync confidence.
+    /// Returns causal normalized horizontal-sync confidence.
     pub fn sync_strength(&self) -> &[f32] {
         &self.sync_strength
+    }
+
+    /// Returns synchronization-envelope delay relative to frequency output.
+    pub const fn sync_detector_delay(&self) -> SstvDuration {
+        self.sync_detector_delay
     }
 
     /// Returns the final smoothed receiver frequency offset.
@@ -125,24 +132,39 @@ pub fn demodulate(
     front_end.finish_afc()?;
 
     let (mode, first) = detection.ok_or(DemodulatorError::VisNotDetected)?;
-    let advance = (rate * SYNC_ENVELOPE_ADVANCE_SECONDS).round() as usize;
-    if advance > 0 {
-        for index in first..sync_strength.len() {
-            sync_strength[index] = sync_strength
-                .get(index + advance)
-                .copied()
-                .unwrap_or_default();
-        }
-    }
-
     Ok(DemodulatedAudio {
         mode,
         first_sample: first as u64,
         frequency_hz: frequency_hz.split_off(first),
         sync_strength: sync_strength.split_off(first),
+        sync_detector_delay: sync_detector_delay(mode),
         frequency_offset_hz: front_end.afc.offset_hz,
         fsk_ids,
     })
+}
+
+/// Returns sync-envelope delay relative to demodulated frequency output.
+///
+/// Modes without an implemented raster decoder return zero.
+pub const fn sync_detector_delay(mode: Mode) -> SstvDuration {
+    let delay = match mode {
+        Mode::Martin1
+        | Mode::Martin2
+        | Mode::Scottie1
+        | Mode::Scottie2
+        | Mode::ScottieDx
+        | Mode::Robot36
+        | Mode::Robot72
+        | Mode::Pd50
+        | Mode::Pd90
+        | Mode::Pd120
+        | Mode::Pd160
+        | Mode::Pd180
+        | Mode::Pd240
+        | Mode::Pd290 => SYNC_DETECTOR_DELAY_PS,
+        _ => 0,
+    };
+    SstvDuration::from_picos(delay)
 }
 
 struct FrontEndOutput {
@@ -528,6 +550,10 @@ impl VisDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
+    use rssstv_sstv::rx::{DemodulatedBlock, RxConfig};
+    use rssstv_sstv::{RxDecoder, TxEncoder};
+    use rstest::rstest;
 
     fn tone(samples: &mut Vec<f32>, rate: u32, frequency: f64, seconds: f64, phase: &mut f64) {
         for _ in 0..(rate as f64 * seconds).round() as usize {
@@ -538,7 +564,7 @@ mod tests {
 
     fn vis_signal(mode: Mode, rate: u32, offset: f64) -> Vec<f32> {
         let mut samples = Vec::new();
-        let mut phase = 0.0;
+        let mut phase = 0.0_f64;
         tone(&mut samples, rate, 1_900.0 + offset, 0.3, &mut phase);
         tone(&mut samples, rate, 1_200.0 + offset, 0.01, &mut phase);
         tone(&mut samples, rate, 1_900.0 + offset, 0.3, &mut phase);
@@ -574,11 +600,102 @@ mod tests {
         tone(samples, rate, 2_100.0, 0.1, phase);
     }
 
+    fn raster_epoch_error_ms(mode: Mode, rate: u32) -> f64 {
+        let size =
+            ImageSize::new(mode.spec().width() as usize, mode.spec().height() as usize).unwrap();
+        let image = RgbImage::new(size, Rgb8::new(128, 128, 128));
+        let scan = mode.scan();
+        let leading_ps = scan
+            .leading()
+            .iter()
+            .map(|segment| segment.duration().as_picos())
+            .sum::<u64>();
+        let epoch_ps = 910_000_000_000 + leading_ps;
+        let stop_ps = epoch_ps + mode.spec().period().as_picos() * 40;
+        let stop_sample = u128::from(stop_ps) * u128::from(rate) / 1_000_000_000_000;
+        let mut samples = Vec::new();
+        let mut phase = 0.0_f64;
+        let mut written = 0_u64;
+        for timed in TxEncoder::new(mode, image).unwrap() {
+            let deadline = timed.until().as_picos() * u64::from(rate) / 1_000_000_000_000;
+            while written < deadline && u128::from(written) < stop_sample {
+                samples.push((phase.sin() * 0.8) as f32);
+                phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
+                    .rem_euclid(TAU);
+                written += 1;
+            }
+            if u128::from(written) >= stop_sample {
+                break;
+            }
+        }
+
+        let output = demodulate(&samples, rate).unwrap();
+        let mut decoder = RxDecoder::with_config(
+            mode,
+            rate,
+            RxConfig {
+                sync_detector_delay: output.sync_detector_delay(),
+                ..RxConfig::default()
+            },
+        )
+        .unwrap();
+        let mut offset = 0;
+        while offset < output.frequency_hz().len() && decoder.source_epoch().is_none() {
+            let processed = decoder
+                .process(DemodulatedBlock::new(
+                    output.first_sample() + offset as u64,
+                    &output.frequency_hz()[offset..],
+                    &output.sync_strength()[offset..],
+                ))
+                .unwrap();
+            offset += processed.consumed();
+        }
+        let actual = decoder.source_epoch().unwrap() as f64;
+        let expected = epoch_ps as f64 * f64::from(rate) / 1.0e12;
+        let period = mode.spec().period().as_picos() as f64 * f64::from(rate) / 1.0e12;
+        let mut error = (actual - expected).rem_euclid(period);
+        if error > period / 2.0 {
+            error -= period;
+        }
+        error * 1_000.0 / f64::from(rate)
+    }
+
     #[test]
     fn detects_parity_inclusive_vis() {
         let samples = vis_signal(Mode::Scottie2, 8_000, 0.0);
         let output = demodulate(&samples, 8_000).unwrap();
         assert_eq!(output.mode(), Mode::Scottie2);
+    }
+
+    #[test]
+    fn synchronization_envelope_is_causal_at_end_of_input() {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Robot36, rate, 0.0);
+        let mut phase = 0.0;
+        tone(&mut samples, rate, 1_200.0, 0.05, &mut phase);
+        let output = demodulate(&samples, rate).unwrap();
+        assert!(output.sync_strength().last().copied().unwrap() > 0.5);
+    }
+
+    #[test]
+    fn detector_delay_is_calibrated_only_for_supported_raster_families() {
+        assert_eq!(
+            sync_detector_delay(Mode::Martin2).as_picos(),
+            SYNC_DETECTOR_DELAY_PS
+        );
+        assert_eq!(
+            sync_detector_delay(Mode::Scottie2).as_picos(),
+            SYNC_DETECTOR_DELAY_PS
+        );
+        assert_eq!(
+            sync_detector_delay(Mode::Robot36).as_picos(),
+            SYNC_DETECTOR_DELAY_PS
+        );
+        assert_eq!(
+            sync_detector_delay(Mode::Pd50).as_picos(),
+            SYNC_DETECTOR_DELAY_PS
+        );
+        assert_eq!(sync_detector_delay(Mode::Avt90), SstvDuration::ZERO);
     }
 
     #[test]
@@ -612,6 +729,26 @@ mod tests {
 
         assert_eq!(output.fsk_ids().len(), 1);
         assert_eq!(output.fsk_ids()[0].as_str(), "JL1HIS");
+    }
+
+    #[rstest]
+    #[case(Mode::Martin2, 8_000, 2.0)]
+    #[case(Mode::Martin2, 48_000, 2.0)]
+    #[case(Mode::Scottie2, 8_000, 3.1)]
+    #[case(Mode::Robot36, 8_000, 3.6)]
+    #[case(Mode::Robot36, 48_000, 3.6)]
+    #[case(Mode::Pd50, 8_000, 3.6)]
+    #[case(Mode::Pd50, 48_000, 3.6)]
+    fn aligns_causal_sync_with_frequency_output(
+        #[case] mode: Mode,
+        #[case] rate: u32,
+        #[case] expected_ms: f64,
+    ) {
+        let offset_ms = raster_epoch_error_ms(mode, rate);
+        assert!(
+            (offset_ms - expected_ms).abs() <= 0.75,
+            "raster epoch offset was {offset_ms} ms"
+        );
     }
 
     #[test]

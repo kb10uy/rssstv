@@ -1,3 +1,5 @@
+use crate::time::SstvDuration;
+
 /// Retention policy for demodulated samples used by staged refinement.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Staging {
@@ -24,6 +26,18 @@ pub struct RxConfig {
     pub live_sync: bool,
     /// Stops normally after synchronization failures persist in leaky history.
     pub auto_stop: bool,
+    /// Compensates synchronization-envelope delay relative to frequency input.
+    ///
+    /// Leave this at zero for synchronization samples already aligned with the
+    /// frequency input.
+    pub sync_detector_delay: SstvDuration,
     /// Controls immutable sample retention for whole-image refinement.
     pub staging: Staging,
+}
+
+pub(super) fn sync_detector_delay_samples(
+    sample_rate_hz: u32,
+    sync_detector_delay: SstvDuration,
+) -> f64 {
+    f64::from(sample_rate_hz) * sync_detector_delay.as_picos() as f64 / 1.0e12
 }

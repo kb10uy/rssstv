@@ -29,4 +29,4 @@ pub mod tx;
 
 pub use error::{RxProcessError, SstvError};
 pub use rx::RxDecoder;
-pub use tx::TxEncoder;
+pub use tx::{TransmissionEncoder, TxEncoder};

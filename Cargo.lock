@@ -735,6 +735,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "proptest",
+ "rssstv-fskid",
  "rstest",
  "thiserror",
 ]

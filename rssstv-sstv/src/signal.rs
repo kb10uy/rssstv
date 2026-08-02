@@ -19,6 +19,8 @@ impl Frequency {
 /// The protocol role of a generated tone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TxComponent {
+    /// Audio framing intended to trigger voice-operated transmit control.
+    VoiceActivation,
     /// Leader or break framing before mode identification.
     Leader,
     /// Conventional VIS, extended VIS, or narrow mode identification.
@@ -41,6 +43,12 @@ pub enum TxComponent {
     BlueDifference,
     /// Robot 36's chrominance-selection tone.
     ChrominanceSelector,
+    /// Post-image framing before station identification.
+    Footer,
+    /// FSK station identification.
+    StationIdentification,
+    /// An explicit silent interval.
+    Silence,
 }
 
 /// A tone, its protocol role, and its absolute end deadline.

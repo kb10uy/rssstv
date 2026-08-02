@@ -6,9 +6,22 @@ use crate::image::{ImageSize, RgbImage};
 use crate::mode::{Mode, ScanChannel, ScanContent, Support};
 use crate::signal::{Frequency, TimedTone, TxComponent};
 use crate::time::TxInstant;
+use rssstv_fskid::{FskEncoder, FskId};
 
 const PS_PER_MS: u64 = 1_000_000_000;
 const VIS_END_PS: u64 = 910 * PS_PER_MS;
+const VOX_DURATION_PS: u64 = 800 * PS_PER_MS;
+
+const VOX: [(u32, u64); 8] = [
+    (1900, 100),
+    (1500, 100),
+    (1900, 100),
+    (1500, 100),
+    (2300, 100),
+    (1500, 100),
+    (2300, 100),
+    (1500, 100),
+];
 
 /// A bounded, pull-based encoder for one owned SSTV image.
 ///
@@ -174,6 +187,107 @@ impl Iterator for TxEncoder {
                     }
                     return Some(tone);
                 }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransmissionStage {
+    VoiceActivation,
+    Image,
+    Footer,
+    StationIdentification,
+    Silence,
+    Complete,
+}
+
+/// A complete pull-based conventional SSTV transmission.
+///
+/// The stream contains MMSSTV's built-in VOX sequence, conventional VIS and
+/// image raster, the FSKID footer and station identifier, and 500 milliseconds
+/// of trailing silence.
+#[derive(Debug)]
+pub struct TransmissionEncoder {
+    image: TxEncoder,
+    fsk: FskEncoder,
+    stage: TransmissionStage,
+    voice_activation: usize,
+    deadline_ps: u64,
+}
+
+impl TransmissionEncoder {
+    /// Validates the mode and image and constructs a complete transmission.
+    pub fn new(mode: Mode, image: RgbImage, station_id: FskId) -> Result<Self, SstvError> {
+        Ok(Self {
+            image: TxEncoder::new(mode, image)?,
+            fsk: station_id.encoder(),
+            stage: TransmissionStage::VoiceActivation,
+            voice_activation: 0,
+            deadline_ps: 0,
+        })
+    }
+
+    fn emit(&mut self, component: TxComponent, frequency_hz: u32, duration_ps: u64) -> TimedTone {
+        self.deadline_ps += duration_ps;
+        TimedTone::new(
+            component,
+            Frequency::from_hz(frequency_hz),
+            TxInstant::from_picos(self.deadline_ps),
+        )
+    }
+}
+
+impl Iterator for TransmissionEncoder {
+    type Item = TimedTone;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.stage {
+                TransmissionStage::VoiceActivation => {
+                    if let Some((frequency_hz, duration_ms)) =
+                        VOX.get(self.voice_activation).copied()
+                    {
+                        self.voice_activation += 1;
+                        return Some(self.emit(
+                            TxComponent::VoiceActivation,
+                            frequency_hz,
+                            duration_ms * PS_PER_MS,
+                        ));
+                    }
+                    debug_assert_eq!(self.deadline_ps, VOX_DURATION_PS);
+                    self.stage = TransmissionStage::Image;
+                }
+                TransmissionStage::Image => {
+                    if let Some(tone) = self.image.next() {
+                        self.deadline_ps = VOX_DURATION_PS + tone.until().as_picos();
+                        return Some(TimedTone::new(
+                            tone.component(),
+                            tone.frequency(),
+                            TxInstant::from_picos(self.deadline_ps),
+                        ));
+                    }
+                    self.stage = TransmissionStage::Footer;
+                }
+                TransmissionStage::Footer => {
+                    self.stage = TransmissionStage::StationIdentification;
+                    return Some(self.emit(TxComponent::Footer, 1500, 300 * PS_PER_MS));
+                }
+                TransmissionStage::StationIdentification => {
+                    if let Some(event) = self.fsk.next() {
+                        return Some(self.emit(
+                            TxComponent::StationIdentification,
+                            u32::from(event.tone().frequency_hz()),
+                            u64::from(event.duration_micros()) * 1_000_000,
+                        ));
+                    }
+                    self.stage = TransmissionStage::Silence;
+                }
+                TransmissionStage::Silence => {
+                    self.stage = TransmissionStage::Complete;
+                    return Some(self.emit(TxComponent::Silence, 0, 500 * PS_PER_MS));
+                }
+                TransmissionStage::Complete => return None,
             }
         }
     }
@@ -475,5 +589,75 @@ mod tests {
             VIS_END_PS + 5_434_000_000 + 457_600_000
         );
         assert_eq!(tones[319].until().as_picos(), VIS_END_PS + 151_866_000_000);
+    }
+
+    #[test]
+    fn complete_transmission_frames_image_and_station_id() {
+        let mode = Mode::Robot36;
+        let fill = Rgb8::new(80, 140, 200);
+        let image_end = TxEncoder::new(mode, image(mode, fill))
+            .unwrap()
+            .last()
+            .unwrap()
+            .until()
+            .as_picos();
+        let station_id = FskId::new("N0CALL").unwrap();
+        let mut transmission =
+            TransmissionEncoder::new(mode, image(mode, fill), station_id).unwrap();
+
+        let voice_activation: Vec<_> = transmission.by_ref().take(8).collect();
+        assert_eq!(
+            voice_activation
+                .iter()
+                .map(|tone| tone.frequency().as_hz())
+                .collect::<Vec<_>>(),
+            [1900, 1500, 1900, 1500, 2300, 1500, 2300, 1500]
+        );
+        assert!(
+            voice_activation
+                .iter()
+                .all(|tone| tone.component() == TxComponent::VoiceActivation)
+        );
+        assert_eq!(voice_activation[7].until().as_picos(), VOX_DURATION_PS);
+
+        let first_image = transmission.next().unwrap();
+        assert_eq!(first_image.component(), TxComponent::Leader);
+        assert_eq!(first_image.frequency().as_hz(), 1900);
+        assert_eq!(first_image.until().as_picos(), 1_100 * PS_PER_MS);
+
+        let footer = transmission
+            .by_ref()
+            .find(|tone| tone.component() == TxComponent::Footer)
+            .unwrap();
+        assert_eq!(footer.frequency().as_hz(), 1500);
+        assert_eq!(
+            footer.until().as_picos(),
+            VOX_DURATION_PS + image_end + 300 * PS_PER_MS
+        );
+
+        let first_guard = transmission.next().unwrap();
+        assert_eq!(first_guard.component(), TxComponent::StationIdentification);
+        assert_eq!(first_guard.frequency().as_hz(), 2100);
+        assert_eq!(
+            first_guard.until().as_picos() - footer.until().as_picos(),
+            100 * PS_PER_MS
+        );
+        let start = transmission.next().unwrap();
+        assert_eq!(start.frequency().as_hz(), 1900);
+        assert_eq!(
+            start.until().as_picos() - first_guard.until().as_picos(),
+            22 * PS_PER_MS
+        );
+
+        let silence = transmission
+            .by_ref()
+            .find(|tone| tone.component() == TxComponent::Silence)
+            .unwrap();
+        assert_eq!(silence.frequency().as_hz(), 0);
+        assert_eq!(
+            silence.until().as_picos(),
+            footer.until().as_picos() + 1_410 * PS_PER_MS + 500 * PS_PER_MS
+        );
+        assert_eq!(transmission.next(), None);
     }
 }

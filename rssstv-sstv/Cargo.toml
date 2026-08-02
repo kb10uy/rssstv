@@ -11,6 +11,7 @@ std = ["thiserror/std"]
 
 [dependencies]
 libm.workspace = true
+rssstv-fskid = { path = "../rssstv-fskid" }
 thiserror.workspace = true
 
 [dev-dependencies]

@@ -129,6 +129,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "encode-wav"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "decode-wav",
+ "hound",
+ "image",
+ "rssstv-fskid",
+ "rssstv-modulator",
+ "rssstv-sstv",
+ "rssstv-template",
+ "rstest",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,19 @@
+[package]
+name = "encode-wav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hound.workspace = true
+image.workspace = true
+rssstv-fskid = { path = "../rssstv-fskid" }
+rssstv-modulator = { path = "../rssstv-modulator" }
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+rssstv-template = { path = "../rssstv-template" }
+
+[dev-dependencies]
+decode-wav = { path = "../decode-wav" }
+rstest.workspace = true

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "decode-wav",
+  "encode-wav",
   "rssstv",
   "rssstv-demodulator",
   "rssstv-dsp",

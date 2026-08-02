@@ -4,7 +4,8 @@ This document describes proposed boundaries for porting the original MMSSTV
 implementation in `original/mmsstv` to Rust. The architecture of the original
 application is documented separately in [mmsstv.md](mmsstv.md). Detailed
 references are available for the [DSP implementation](mmsstv-dsp.md) and
-[supported SSTV formats](sstv-formats.md).
+[supported SSTV formats](sstv-formats.md). MMSSTV's six-bit station identifier
+is documented separately in [mmsstv-fskid.md](mmsstv-fskid.md).
 
 ## Proposed Module Boundaries
 

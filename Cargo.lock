@@ -85,6 +85,7 @@ dependencies = [
  "hound",
  "image",
  "rssstv-demodulator",
+ "rssstv-fskid",
  "rssstv-sstv",
 ]
 
@@ -482,6 +483,7 @@ name = "rssstv-demodulator"
 version = "0.1.0"
 dependencies = [
  "rssstv-dsp",
+ "rssstv-fskid",
  "rssstv-sstv",
  "rstest",
  "thiserror",
@@ -494,6 +496,13 @@ dependencies = [
  "libm",
  "rstest",
  "thiserror",
+]
+
+[[package]]
+name = "rssstv-fskid"
+version = "0.1.0"
+dependencies = [
+ "rstest",
 ]
 
 [[package]]

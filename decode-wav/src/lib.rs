@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
 use rssstv_demodulator::demodulate;
+use rssstv_fskid::FskId;
 use rssstv_sstv::RxDecoder;
 use rssstv_sstv::image::RgbImage;
 use rssstv_sstv::mode::Mode;
@@ -15,12 +16,13 @@ pub enum DecodeStatus {
     SynchronizationLost,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DecodeReport {
     pub mode: Mode,
     pub status: DecodeStatus,
     pub frequency_offset_hz: f64,
     pub effective_sample_rate_hz: Option<f64>,
+    pub fsk_ids: Vec<FskId>,
 }
 
 pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
@@ -86,6 +88,7 @@ pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
         status,
         frequency_offset_hz: demodulated.frequency_offset_hz(),
         effective_sample_rate_hz,
+        fsk_ids: demodulated.fsk_ids().to_vec(),
     })
 }
 
@@ -197,6 +200,35 @@ mod tests {
                 written += 1;
             }
         }
+        {
+            let mut deadline = written as f64;
+            let mut write_tone = |frequency: f64, seconds: f64| {
+                deadline += f64::from(sample_rate) * seconds;
+                while written < deadline as u64 {
+                    let sample = (phase.sin() * 24_000.0) as i16;
+                    writer.write_sample(sample).unwrap();
+                    writer.write_sample(0_i16).unwrap();
+                    phase = (phase + TAU * frequency / f64::from(sample_rate)).rem_euclid(TAU);
+                    written += 1;
+                }
+            };
+            write_tone(1_500.0, 0.3);
+            write_tone(2_100.0, 0.1);
+            write_tone(1_900.0, 0.022);
+            for symbol in [0x2a_u8, 0x2a, 0x2c, 0x11, 0x28, 0x29, 0x33, 0x01, 0x25] {
+                for bit in 0..6 {
+                    write_tone(
+                        if symbol & (1 << bit) == 0 {
+                            2_100.0
+                        } else {
+                            1_900.0
+                        },
+                        0.022,
+                    );
+                }
+            }
+            write_tone(2_100.0, 0.1);
+        }
         for _ in 0..sample_rate / 10 {
             writer.write_sample(0_i16).unwrap();
             writer.write_sample(0_i16).unwrap();
@@ -206,6 +238,7 @@ mod tests {
         let report = decode_file(&input, &output).unwrap();
         assert_eq!(report.mode, mode);
         assert_eq!(report.status, DecodeStatus::Complete);
+        assert_eq!(report.fsk_ids[0].as_str(), "JL1HIS");
         let saved = image::open(&output).unwrap();
         assert_eq!(saved.width(), size.width() as u32);
         assert_eq!(saved.height(), size.height() as u32);

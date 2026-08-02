@@ -10,6 +10,7 @@ use rssstv_dsp::fir::{Fir, FirDesign, FirKind, HilbertTransformer};
 use rssstv_dsp::frequency::ZeroCrossingFrequency;
 use rssstv_dsp::iir::{IirFilter, IirLowPassDesign, IirResponse};
 use rssstv_dsp::resonator::Resonator;
+use rssstv_fskid::{FskDecoder, FskId, FskTone};
 use rssstv_sstv::mode::Mode;
 use thiserror::Error;
 
@@ -21,6 +22,7 @@ const DETECTORS: [(f64, f64); 5] = [
     (2_100.0, 100.0),
 ];
 const SYNC_ENVELOPE_ADVANCE_SECONDS: f64 = 0.006;
+const FSK_MINIMUM_CONTRAST: f64 = 0.125;
 
 /// Failure while configuring or processing the receive front end.
 #[derive(Debug, Error)]
@@ -50,6 +52,7 @@ pub struct DemodulatedAudio {
     frequency_hz: Vec<f32>,
     sync_strength: Vec<f32>,
     frequency_offset_hz: f64,
+    fsk_ids: Vec<FskId>,
 }
 
 impl DemodulatedAudio {
@@ -77,6 +80,11 @@ impl DemodulatedAudio {
     pub const fn frequency_offset_hz(&self) -> f64 {
         self.frequency_offset_hz
     }
+
+    /// Returns the validated station identifiers found in the complete audio.
+    pub fn fsk_ids(&self) -> &[FskId] {
+        &self.fsk_ids
+    }
 }
 
 /// Demodulates normalized mono PCM and detects its conventional VIS mode.
@@ -97,12 +105,16 @@ pub fn demodulate(
     let mut front_end = FrontEnd::new(rate)?;
     let mut frequency_hz = Vec::with_capacity(samples.len());
     let mut sync_strength = Vec::with_capacity(samples.len());
+    let mut fsk_ids = Vec::new();
     let mut detection = None;
 
     for (index, &sample) in samples.iter().enumerate() {
         let output = front_end.process(sample as f64)?;
         frequency_hz.push(output.frequency_hz as f32);
         sync_strength.push(output.sync_strength as f32);
+        if let Some(id) = output.fsk_id {
+            fsk_ids.push(id);
+        }
         if detection.is_none()
             && let Some(mode) = output.mode
         {
@@ -129,6 +141,7 @@ pub fn demodulate(
         frequency_hz: frequency_hz.split_off(first),
         sync_strength: sync_strength.split_off(first),
         frequency_offset_hz: front_end.afc.offset_hz,
+        fsk_ids,
     })
 }
 
@@ -136,6 +149,7 @@ struct FrontEndOutput {
     frequency_hz: f64,
     sync_strength: f64,
     mode: Option<Mode>,
+    fsk_id: Option<FskId>,
 }
 
 struct FrontEnd {
@@ -147,6 +161,7 @@ struct FrontEnd {
     level_decay: f64,
     detectors: Vec<ToneDetector>,
     vis: VisDecoder,
+    fsk: FskDecoder,
     afc: Afc,
 }
 
@@ -180,6 +195,7 @@ impl FrontEnd {
             level_decay: (-1.0 / (sample_rate_hz * 0.1)).exp(),
             detectors,
             vis: VisDecoder::new(sample_rate_hz),
+            fsk: FskDecoder::new(sample_rate_hz as u32),
             afc: Afc::new(sample_rate_hz),
         })
     }
@@ -202,6 +218,15 @@ impl FrontEnd {
             .max(1.0e-6);
         let sync_strength = (envelopes[1] / (envelopes[1] + competing)).clamp(0.0, 1.0);
         let mode = self.vis.process(envelopes);
+        let difference = (envelopes[3] - envelopes[4]).abs();
+        let fsk_tone = if difference < FSK_MINIMUM_CONTRAST {
+            FskTone::Ambiguous
+        } else if envelopes[3] > envelopes[4] {
+            FskTone::Mark
+        } else {
+            FskTone::Space
+        };
+        let fsk_id = self.fsk.process(fsk_tone);
 
         let measured = self.zero_crossing.process_sample(filtered);
         let changed = self.afc.process(sync_strength, measured);
@@ -216,6 +241,7 @@ impl FrontEnd {
             frequency_hz: (frequency - self.afc.offset_hz).clamp(0.0, 3_000.0),
             sync_strength,
             mode,
+            fsk_id,
         })
     }
 
@@ -531,6 +557,23 @@ mod tests {
         samples
     }
 
+    fn fsk_id_signal(samples: &mut Vec<f32>, rate: u32, phase: &mut f64) {
+        const SYMBOLS: [u8; 9] = [0x2a, 0x2a, 0x2c, 0x11, 0x28, 0x29, 0x33, 0x01, 0x25];
+        tone(samples, rate, 2_100.0, 0.1, phase);
+        tone(samples, rate, 1_900.0, 0.022, phase);
+        for symbol in SYMBOLS {
+            for bit in 0..6 {
+                let frequency = if symbol & (1 << bit) == 0 {
+                    2_100.0
+                } else {
+                    1_900.0
+                };
+                tone(samples, rate, frequency, 0.022, phase);
+            }
+        }
+        tone(samples, rate, 2_100.0, 0.1, phase);
+    }
+
     #[test]
     fn detects_parity_inclusive_vis() {
         let samples = vis_signal(Mode::Scottie2, 8_000, 0.0);
@@ -556,6 +599,19 @@ mod tests {
             "offset was {} Hz",
             afc.offset_hz
         );
+    }
+
+    #[test]
+    fn detects_trailing_jl1his_fskid() {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Scottie2, rate, 0.0);
+        let mut phase = 0.0;
+        fsk_id_signal(&mut samples, rate, &mut phase);
+
+        let output = demodulate(&samples, rate).unwrap();
+
+        assert_eq!(output.fsk_ids().len(), 1);
+        assert_eq!(output.fsk_ids()[0].as_str(), "JL1HIS");
     }
 
     #[test]

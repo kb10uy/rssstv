@@ -40,6 +40,9 @@ fn run() -> Result<DecodeStatus> {
             .map(|rate| format!("{rate:.3} Hz"))
             .unwrap_or_else(|| "not acquired".to_owned())
     );
+    for id in &report.fsk_ids {
+        println!("fskid: {id}");
+    }
     Ok(report.status)
 }
 

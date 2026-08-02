@@ -7,6 +7,7 @@ authors.workspace = true
 
 [dependencies]
 rssstv-dsp = { path = "../rssstv-dsp", features = ["std"] }
+rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 

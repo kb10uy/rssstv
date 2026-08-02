@@ -10,4 +10,5 @@ anyhow.workspace = true
 hound.workspace = true
 image.workspace = true
 rssstv-demodulator = { path = "../rssstv-demodulator" }
+rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }

@@ -159,6 +159,53 @@ impl Mode {
     pub const fn scan(self) -> RasterScan {
         scan::for_mode(self)
     }
+
+    /// Returns the mode identified by a seven-bit conventional VIS value.
+    pub fn from_conventional_vis(code: u8) -> Option<Self> {
+        Self::find(
+            |identification| matches!(identification, ModeIdentification::ConventionalVis { code: value, .. } if value == code),
+        )
+    }
+
+    /// Returns the mode identified by a received conventional VIS byte.
+    ///
+    /// The byte is matched whole, as MMSSTV does, rather than by checking
+    /// parity and looking up the low seven bits. B/W 12 is inventoried with the
+    /// parity-violating byte `0x86` that MMSSTV both sends and accepts, so a
+    /// parity test would reject a mode the reference implementation decodes.
+    pub fn from_raw_vis(raw: u8) -> Option<Self> {
+        Self::find(|identification| {
+            matches!(
+                identification,
+                ModeIdentification::ConventionalVis { raw: value, .. } if value == raw
+            )
+        })
+    }
+
+    /// Returns the mode identified by the second byte of an extended VIS.
+    ///
+    /// The first byte is always [`Self::EXTENDED_VIS_PREFIX`].
+    pub fn from_extended_vis(code: u8) -> Option<Self> {
+        Self::find(
+            |identification| matches!(identification, ModeIdentification::ExtendedVis { prefix, code: value } if prefix == Self::EXTENDED_VIS_PREFIX && value == code),
+        )
+    }
+
+    /// Returns the narrow mode identified by a six-bit FSK value.
+    pub fn from_narrow_vis(code: u8) -> Option<Self> {
+        Self::find(
+            |identification| matches!(identification, ModeIdentification::NarrowVis { code: value } if value == code),
+        )
+    }
+
+    /// The first byte of every MMSSTV extended VIS sequence.
+    pub const EXTENDED_VIS_PREFIX: u8 = 0x23;
+
+    fn find(predicate: impl Fn(ModeIdentification) -> bool) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|mode| predicate(mode.spec().identification()))
+    }
 }
 
 /// The originating or structurally related mode family.
@@ -306,6 +353,13 @@ impl ModeSpec {
     pub const fn decode_support(&self) -> Support {
         self.decode_support
     }
+    /// Returns the seven-bit VIS value for a conventional VIS mode.
+    pub const fn vis_code(&self) -> Option<u8> {
+        match self.identification {
+            ModeIdentification::ConventionalVis { code, .. } => Some(code),
+            _ => None,
+        }
+    }
     /// Returns the parity-inclusive VIS byte for a conventional VIS mode.
     pub const fn raw_vis(&self) -> Option<u8> {
         match self.identification {
@@ -325,7 +379,10 @@ const fn vis(code: u8, raw: u8) -> ModeIdentification {
 }
 
 const fn ext(code: u8) -> ModeIdentification {
-    ModeIdentification::ExtendedVis { prefix: 0x23, code }
+    ModeIdentification::ExtendedVis {
+        prefix: Mode::EXTENDED_VIS_PREFIX,
+        code,
+    }
 }
 
 const fn narrow(code: u8) -> ModeIdentification {
@@ -334,7 +391,8 @@ const fn narrow(code: u8) -> ModeIdentification {
 
 macro_rules! spec {
     ($name:expr, $family:expr, $width:expr, $height:expr, $active_rows:expr, $rows:expr,
-     $period_ps:expr, $identification:expr, $raster:expr, $signal_band:expr, $support:expr $(,)?) => {
+     $period_ps:expr, $identification:expr, $raster:expr, $signal_band:expr,
+     $encode_support:expr, $decode_support:expr $(,)?) => {
         ModeSpec {
             name: $name,
             family: $family,
@@ -346,8 +404,8 @@ macro_rules! spec {
             identification: $identification,
             raster: $raster,
             signal_band: $signal_band,
-            encode_support: $support,
-            decode_support: $support,
+            encode_support: $encode_support,
+            decode_support: $decode_support,
         }
     };
 }
@@ -365,6 +423,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::AlternatingYCrCb,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "Robot 72",
@@ -377,6 +436,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x0c, 0x0c),
         RasterOrganization::YCrCb,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -391,6 +451,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "Scottie 1",
@@ -403,6 +464,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x3c, 0x3c),
         RasterOrganization::DirectGbr,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -417,6 +479,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectGbr,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "ScottieDX",
@@ -429,6 +492,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x4c, 0xcc),
         RasterOrganization::DirectGbr,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -443,6 +507,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectGbr,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "Martin 2",
@@ -455,6 +520,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x28, 0x28),
         RasterOrganization::DirectGbr,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -469,6 +535,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "SC2 120",
@@ -481,6 +548,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x3f, 0x3f),
         RasterOrganization::DirectRgb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -495,6 +563,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "PD50",
@@ -507,6 +576,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x5d, 0xdd),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -521,6 +591,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "PD120",
@@ -533,6 +604,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x5f, 0x5f),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -547,6 +619,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "PD180",
@@ -559,6 +632,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x60, 0x60),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -573,6 +647,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         WIDE,
         SUP,
+        SUP,
     ),
     spec!(
         "PD290",
@@ -585,6 +660,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x5e, 0xde),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        SUP,
         SUP,
     ),
     spec!(
@@ -599,6 +675,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "P5",
@@ -611,6 +688,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x72, 0x72),
         RasterOrganization::DirectRgb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -625,6 +703,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MR73",
@@ -637,6 +716,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x45),
         RasterOrganization::YCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -651,6 +731,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::YCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MR115",
@@ -663,6 +744,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x49),
         RasterOrganization::YCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -677,6 +759,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::YCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MR175",
@@ -689,6 +772,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x4c),
         RasterOrganization::YCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -703,6 +787,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MP115",
@@ -715,6 +800,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x29),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -729,6 +815,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MP175",
@@ -741,6 +828,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x2c),
         RasterOrganization::PairedYCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -755,6 +843,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::YCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "ML240",
@@ -767,6 +856,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x86),
         RasterOrganization::YCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -781,6 +871,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::YCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "ML320",
@@ -793,6 +884,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x8a),
         RasterOrganization::YCrCb,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -807,6 +899,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::YCrCb,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "B/W 8",
@@ -819,6 +912,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x02, 0x82),
         RasterOrganization::PairedLuminance,
         WIDE,
+        TODO,
         TODO,
     ),
     spec!(
@@ -833,6 +927,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedLuminance,
         WIDE,
         TODO,
+        TODO,
     ),
     spec!(
         "MP73-N",
@@ -845,6 +940,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x02),
         RasterOrganization::PairedYCrCb,
         NARROW,
+        TODO,
         TODO,
     ),
     spec!(
@@ -859,6 +955,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::PairedYCrCb,
         NARROW,
         TODO,
+        TODO,
     ),
     spec!(
         "MP140-N",
@@ -871,6 +968,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x05),
         RasterOrganization::PairedYCrCb,
         NARROW,
+        TODO,
         TODO,
     ),
     spec!(
@@ -885,6 +983,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         NARROW,
         TODO,
+        TODO,
     ),
     spec!(
         "MC140-N",
@@ -897,6 +996,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x15),
         RasterOrganization::DirectRgb,
         NARROW,
+        TODO,
         TODO,
     ),
     spec!(
@@ -911,11 +1011,13 @@ const MODE_SPECS: [ModeSpec; 43] = [
         RasterOrganization::DirectRgb,
         NARROW,
         TODO,
+        TODO,
     ),
 ];
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
     use rstest::rstest;
 
     use super::*;
@@ -1019,5 +1121,51 @@ mod tests {
         assert_eq!(Mode::Martin1.spec().raw_vis(), Some(0xac));
         assert_eq!(Mode::Robot36.spec().raw_vis(), Some(0x88));
         assert_eq!(Mode::Pd290.spec().raw_vis(), Some(0xde));
+    }
+
+    #[test]
+    fn every_identifier_is_unique_and_round_trips() {
+        for mode in Mode::ALL {
+            match mode.spec().identification() {
+                ModeIdentification::ConventionalVis { code, raw } => {
+                    assert_eq!(Mode::from_conventional_vis(code), Some(mode), "{mode:?}");
+                    assert_eq!(Mode::from_raw_vis(raw), Some(mode), "{mode:?}");
+                    assert_eq!(raw & 0x7f, code, "{mode:?}");
+                }
+                ModeIdentification::ExtendedVis { prefix, code } => {
+                    assert_eq!(prefix, Mode::EXTENDED_VIS_PREFIX, "{mode:?}");
+                    assert_eq!(Mode::from_extended_vis(code), Some(mode), "{mode:?}");
+                }
+                ModeIdentification::NarrowVis { code } => {
+                    assert_eq!(Mode::from_narrow_vis(code), Some(mode), "{mode:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_b_w_12_carries_a_parity_violating_vis_byte() {
+        let violating: Vec<_> = Mode::ALL
+            .into_iter()
+            .filter(|mode| {
+                mode.spec()
+                    .raw_vis()
+                    .is_some_and(|raw| !raw.count_ones().is_multiple_of(2))
+            })
+            .collect();
+        assert_eq!(violating, [Mode::Bw12]);
+        assert_eq!(Mode::from_raw_vis(0x86), Some(Mode::Bw12));
+        assert_eq!(Mode::from_raw_vis(0x06), None);
+    }
+
+    #[test]
+    fn unknown_identifiers_are_rejected() {
+        assert_eq!(Mode::from_conventional_vis(0x7f), None);
+        assert_eq!(Mode::from_raw_vis(0x2c), None);
+        assert_eq!(Mode::from_raw_vis(0xac), Some(Mode::Martin1));
+        assert_eq!(Mode::from_extended_vis(0x00), None);
+        assert_eq!(Mode::from_narrow_vis(0x3f), None);
+        assert_eq!(Mode::Avt90.spec().vis_code(), Some(0x44));
+        assert_eq!(Mode::Mr73.spec().vis_code(), None);
     }
 }

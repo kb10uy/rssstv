@@ -3,9 +3,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::SstvError;
-use crate::color::{LevelFrequencyBand, YCrCb8, y_cr_cb_to_rgb};
+use crate::color::{YCrCb8, y_cr_cb_to_rgb};
 use crate::image::{ImageSize, Rgb8, RgbImage};
-use crate::mode::{Mode, Support};
+use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
 use crate::signal::Frequency;
 
 use super::acquisition::{acquire, window_samples};
@@ -13,7 +13,7 @@ use super::clock::RasterClock;
 use super::config::{RxConfig, Staging};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
 use super::input::{DemodulatedBlock, SampleBuffer};
-use super::raster::{RasterFamily, RasterProfile};
+use super::raster::{PixelSegment, RasterProfile};
 use super::slant::{SlantEstimate, SlantEstimator};
 use super::sync::{SyncObservation, observe, push_bounded};
 
@@ -421,27 +421,57 @@ impl RxDecoder {
         Ok(())
     }
 
-    fn required_end(&self) -> Result<u64, SstvError> {
-        let starts = self.profile.component_starts();
-        let (last_start, duration) = match self.profile.family {
-            RasterFamily::Martin | RasterFamily::Scottie => (starts[2], self.profile.component_ps),
-            RasterFamily::Robot36 => (starts[1], 44_000_000_000),
-            RasterFamily::Robot72 => (starts[2], 69_000_000_000),
-            RasterFamily::Pd => (starts[3], self.profile.component_ps),
-        };
+    fn raster_units(&self) -> usize {
+        let spec = self.mode.spec();
+        spec.active_rows() as usize / spec.rows_per_raster_unit() as usize
+    }
+
+    fn pixel_sample(
+        &self,
+        clock: RasterClock,
+        unit: usize,
+        segment: PixelSegment,
+        x: usize,
+    ) -> Result<u64, SstvError> {
         let width = self.image.size().width() as u128;
-        let last_center =
-            u128::from(last_start) + u128::from(duration) * (2 * width - 1) / (2 * width);
+        let center = u128::from(segment.start_ps)
+            + u128::from(segment.duration_ps) * (2 * x as u128 + 1) / (2 * width);
+        let protocol = u128::from(self.profile.period_ps) * unit as u128 + center;
+        let protocol = u64::try_from(protocol).map_err(|_| SstvError::TimeOverflow)?;
+        clock.sample_at(protocol)
+    }
+
+    fn selector_window(&self, clock: RasterClock, unit: usize) -> Result<(u64, u64), SstvError> {
+        let (start_ps, end_ps) = self
+            .profile
+            .selector_window_ps()
+            .ok_or(SstvError::UnsupportedRxMode(self.mode))?;
         let unit_start = self
             .profile
             .period_ps
-            .checked_mul(self.raster_unit as u64)
+            .checked_mul(unit as u64)
             .ok_or(SstvError::TimeOverflow)?;
-        let protocol_ps = u64::try_from(u128::from(unit_start) + last_center)
-            .map_err(|_| SstvError::TimeOverflow)?;
-        self.clock
-            .expect("clock acquired")
-            .sample_at(protocol_ps)?
+        let edge = |offset_ps: u64| -> Result<u64, SstvError> {
+            clock.sample_at(
+                unit_start
+                    .checked_add(offset_ps)
+                    .ok_or(SstvError::TimeOverflow)?,
+            )
+        };
+        let first = edge(start_ps)?;
+        let last = edge(end_ps)?;
+        Ok((first, last.max(first.saturating_add(1))))
+    }
+
+    fn required_end(&self) -> Result<u64, SstvError> {
+        let clock = self.clock.expect("clock acquired");
+        let last = self
+            .profile
+            .pixels()
+            .last()
+            .ok_or(SstvError::UnsupportedRxMode(self.mode))?;
+        let width = self.image.size().width();
+        self.pixel_sample(clock, self.raster_unit, last, width - 1)?
             .checked_add(1)
             .ok_or(SstvError::SamplePositionOverflow)
     }
@@ -451,62 +481,26 @@ impl RxDecoder {
         staged: &SampleBuffer,
         clock: RasterClock,
     ) -> Result<(), SstvError> {
-        let starts = self.profile.component_starts();
         let width = self.image.size().width();
-        let units = self.mode.spec().active_rows() as usize
-            / self.mode.spec().rows_per_raster_unit() as usize;
-        let components: &[(u64, u64)] = match self.profile.family {
-            RasterFamily::Martin | RasterFamily::Scottie => &[
-                (starts[0], self.profile.component_ps),
-                (starts[1], self.profile.component_ps),
-                (starts[2], self.profile.component_ps),
-            ],
-            RasterFamily::Robot36 => &[(starts[0], 88_000_000_000), (starts[1], 44_000_000_000)],
-            RasterFamily::Robot72 => &[
-                (starts[0], 138_000_000_000),
-                (starts[1], 69_000_000_000),
-                (starts[2], 69_000_000_000),
-            ],
-            RasterFamily::Pd => &[
-                (starts[0], self.profile.component_ps),
-                (starts[1], self.profile.component_ps),
-                (starts[2], self.profile.component_ps),
-                (starts[3], self.profile.component_ps),
-            ],
+        let require = |sample: u64| -> Result<(), SstvError> {
+            if staged.frequency(sample).is_some() {
+                Ok(())
+            } else {
+                Err(SstvError::InsufficientStagedData {
+                    required_sample: sample,
+                })
+            }
         };
-        for unit in 0..units {
-            for &(start, duration) in components {
+        for unit in 0..self.raster_units() {
+            for segment in self.profile.pixels().iter() {
                 for x in 0..width {
-                    let center = u128::from(start)
-                        + u128::from(duration) * (2 * x as u128 + 1) / (2 * width as u128);
-                    let protocol = u128::from(self.profile.period_ps) * unit as u128 + center;
-                    let protocol = u64::try_from(protocol).map_err(|_| SstvError::TimeOverflow)?;
-                    let sample = clock.sample_at(protocol)?;
-                    if staged.frequency(sample).is_none() {
-                        return Err(SstvError::InsufficientStagedData {
-                            required_sample: sample,
-                        });
-                    }
+                    require(self.pixel_sample(clock, unit, segment, x)?)?;
                 }
             }
-            if matches!(self.profile.family, RasterFamily::Robot36) {
-                let tcs_start =
-                    u128::from(self.profile.period_ps) * unit as u128 + 100_000_000_000_u128;
-                let tcs_end =
-                    u128::from(self.profile.period_ps) * unit as u128 + 104_500_000_000_u128;
-                let first_sample = clock
-                    .sample_at(u64::try_from(tcs_start).map_err(|_| SstvError::TimeOverflow)?)?;
-                let last_sample = clock
-                    .sample_at(u64::try_from(tcs_end).map_err(|_| SstvError::TimeOverflow)?)?
-                    .saturating_sub(1);
-                for sample in [first_sample, last_sample] {
-                    if staged.frequency(sample).is_some() {
-                        continue;
-                    }
-                    return Err(SstvError::InsufficientStagedData {
-                        required_sample: sample,
-                    });
-                }
+            if self.profile.selector_window_ps().is_some() {
+                let (first, end) = self.selector_window(clock, unit)?;
+                require(first)?;
+                require(end - 1)?;
             }
         }
         Ok(())
@@ -516,33 +510,42 @@ impl RxDecoder {
         Ok(self.input.as_ref().expect("input initialized").end() >= self.required_end()?)
     }
 
+    fn segment(&self, channel: ScanChannel, row_offset: u8) -> Result<PixelSegment, SstvError> {
+        self.profile
+            .pixels()
+            .get(channel, row_offset)
+            .ok_or(SstvError::UnsupportedRxMode(self.mode))
+    }
+
     fn decode_next(&mut self, rebuilding: bool) -> Result<Option<usize>, SstvError> {
         let width = self.image.size().width();
         let unit = self.raster_unit;
-        let starts = self.profile.component_starts();
-        let duration = match self.profile.family {
-            RasterFamily::Robot36 => 88_000_000_000,
-            RasterFamily::Robot72 => 138_000_000_000,
-            _ => self.profile.component_ps,
-        };
-        match self.profile.family {
-            RasterFamily::Martin | RasterFamily::Scottie => {
+        match self.profile.organization {
+            RasterOrganization::DirectGbr => {
+                let green = self.segment(ScanChannel::Green, 0)?;
+                let blue = self.segment(ScanChannel::Blue, 0)?;
+                let red = self.segment(ScanChannel::Red, 0)?;
                 for x in 0..width {
-                    let g = self.level_at(unit, starts[0], duration, x)?;
-                    let b = self.level_at(unit, starts[1], duration, x)?;
-                    let r = self.level_at(unit, starts[2], duration, x)?;
+                    let g = self.level_at(unit, green, x)?;
+                    let b = self.level_at(unit, blue, x)?;
+                    let r = self.level_at(unit, red, x)?;
                     self.set_pixel(x, unit, Rgb8::new(r, g, b));
                 }
             }
-            RasterFamily::Robot72 => {
+            RasterOrganization::YCrCb => {
+                let luminance = self.segment(ScanChannel::Luminance, 0)?;
+                let red = self.segment(ScanChannel::RedDifference, 0)?;
+                let blue = self.segment(ScanChannel::BlueDifference, 0)?;
                 for x in 0..width {
-                    let y = self.level_at(unit, starts[0], 138_000_000_000, x)?;
-                    let cr = self.level_at(unit, starts[1], 69_000_000_000, x)?;
-                    let cb = self.level_at(unit, starts[2], 69_000_000_000, x)?;
+                    let y = self.level_at(unit, luminance, x)?;
+                    let cr = self.level_at(unit, red, x)?;
+                    let cb = self.level_at(unit, blue, x)?;
                     self.set_pixel(x, unit, y_cr_cb_to_rgb(YCrCb8 { y, cr, cb }));
                 }
             }
-            RasterFamily::Robot36 => {
+            RasterOrganization::AlternatingYCrCb => {
+                let luminance = self.segment(ScanChannel::Luminance, 0)?;
+                let chroma = self.segment(ScanChannel::RedDifference, 0)?;
                 let selector = self.robot_selector_at(unit)?.unwrap_or_else(|| {
                     self.robot_selector
                         .map(RobotSelector::opposite)
@@ -553,10 +556,10 @@ impl RxDecoder {
                         })
                 });
                 let current_y = (0..width)
-                    .map(|x| self.level_at(unit, starts[0], duration, x))
+                    .map(|x| self.level_at(unit, luminance, x))
                     .collect::<Result<Vec<_>, _>>()?;
                 let current_chroma = (0..width)
-                    .map(|x| self.level_at(unit, starts[1], 44_000_000_000, x))
+                    .map(|x| self.level_at(unit, chroma, x))
                     .collect::<Result<Vec<_>, _>>()?;
                 if let Some(previous_selector) = self.robot_selector
                     && previous_selector != selector
@@ -598,19 +601,26 @@ impl RxDecoder {
                     self.robot_unit = unit;
                 }
             }
-            RasterFamily::Pd => {
+            RasterOrganization::PairedYCrCb => {
+                let first = self.segment(ScanChannel::Luminance, 0)?;
+                let red = self.segment(ScanChannel::RedDifference, 0)?;
+                let blue = self.segment(ScanChannel::BlueDifference, 0)?;
+                let second = self.segment(ScanChannel::Luminance, 1)?;
                 let row = unit * 2;
                 for x in 0..width {
-                    let y0 = self.level_at(unit, starts[0], duration, x)?;
-                    let cr = self.level_at(unit, starts[1], duration, x)?;
-                    let cb = self.level_at(unit, starts[2], duration, x)?;
-                    let y1 = self.level_at(unit, starts[3], duration, x)?;
+                    let y0 = self.level_at(unit, first, x)?;
+                    let cr = self.level_at(unit, red, x)?;
+                    let cb = self.level_at(unit, blue, x)?;
+                    let y1 = self.level_at(unit, second, x)?;
                     self.set_pixel(x, row, y_cr_cb_to_rgb(YCrCb8 { y: y0, cr, cb }));
                     self.set_pixel(x, row + 1, y_cr_cb_to_rgb(YCrCb8 { y: y1, cr, cb }));
                 }
                 if !rebuilding {
                     self.pending_row = Some(row + 1);
                 }
+            }
+            RasterOrganization::DirectRgb | RasterOrganization::PairedLuminance => {
+                return Err(SstvError::UnsupportedRxMode(self.mode));
             }
         }
         self.raster_unit += 1;
@@ -622,70 +632,58 @@ impl RxDecoder {
             .as_mut()
             .expect("input initialized")
             .discard_before(discard);
-        match self.profile.family {
-            RasterFamily::Robot36 if self.robot_selector.is_some() => Ok(None),
-            RasterFamily::Pd => Ok(Some(unit * 2)),
-            RasterFamily::Robot36 => Ok(Some(self.robot_unit)),
+        match self.profile.organization {
+            RasterOrganization::AlternatingYCrCb if self.robot_selector.is_some() => Ok(None),
+            RasterOrganization::PairedYCrCb => Ok(Some(unit * 2)),
+            RasterOrganization::AlternatingYCrCb => Ok(Some(self.robot_unit)),
             _ => Ok(Some(unit)),
         }
     }
 
-    fn level_at(
-        &self,
-        unit: usize,
-        start_ps: u64,
-        duration_ps: u64,
-        x: usize,
-    ) -> Result<u8, SstvError> {
-        let width = self.image.size().width() as u128;
-        let center =
-            u128::from(start_ps) + u128::from(duration_ps) * (2 * x as u128 + 1) / (2 * width);
-        let protocol = u128::from(self.profile.period_ps) * unit as u128 + center;
-        let protocol = u64::try_from(protocol).map_err(|_| SstvError::TimeOverflow)?;
-        let sample = self.clock.expect("clock acquired").sample_at(protocol)?;
-        let input = self.input.as_ref().expect("input initialized");
-        let frequency = input.frequency(sample).ok_or(if self.rebuilding {
-            SstvError::InsufficientStagedData {
-                required_sample: sample,
-            }
-        } else {
-            SstvError::SamplePositionOverflow
-        })?;
-        Ok(frequency_to_level(frequency))
-    }
-
-    fn robot_selector_at(&self, unit: usize) -> Result<Option<RobotSelector>, SstvError> {
-        let clock = self.clock.expect("clock acquired");
-        let unit_start = self
-            .profile
-            .period_ps
-            .checked_mul(unit as u64)
-            .ok_or(SstvError::TimeOverflow)?;
-        let start = clock.sample_at(
-            unit_start
-                .checked_add(100_000_000_000)
-                .ok_or(SstvError::TimeOverflow)?,
-        )?;
-        let end = clock.sample_at(
-            unit_start
-                .checked_add(104_500_000_000)
-                .ok_or(SstvError::TimeOverflow)?,
-        )?;
-        let input = self.input.as_ref().expect("input initialized");
-        let mut sum = 0.0_f64;
-        let mut count = 0_u64;
-        for sample in start..end.max(start + 1) {
-            let frequency = input.frequency(sample).ok_or(if self.rebuilding {
+    fn frequency_at(&self, sample: u64) -> Result<f32, SstvError> {
+        self.input
+            .as_ref()
+            .expect("input initialized")
+            .frequency(sample)
+            .ok_or(if self.rebuilding {
                 SstvError::InsufficientStagedData {
                     required_sample: sample,
                 }
             } else {
                 SstvError::SamplePositionOverflow
-            })?;
-            sum += f64::from(frequency);
-            count += 1;
+            })
+    }
+
+    fn mean_frequency(&self, range: (u64, u64)) -> Result<f64, SstvError> {
+        let (first, end) = range;
+        let mut sum = 0.0_f64;
+        for sample in first..end {
+            sum += f64::from(self.frequency_at(sample)?);
         }
-        let average = sum / count as f64;
+        Ok(sum / (end - first) as f64)
+    }
+
+    fn level_at(&self, unit: usize, segment: PixelSegment, x: usize) -> Result<u8, SstvError> {
+        let clock = self.clock.expect("clock acquired");
+        let sample = self.pixel_sample(clock, unit, segment, x)?;
+        Ok(self.frequency_to_level(f64::from(self.frequency_at(sample)?)))
+    }
+
+    fn frequency_to_level(&self, frequency_hz: f64) -> u8 {
+        let hz = if frequency_hz > 0.0 {
+            (frequency_hz + 0.5) as u32
+        } else {
+            0
+        };
+        self.mode
+            .spec()
+            .signal_band()
+            .frequency_to_level(Frequency::from_hz(hz))
+    }
+
+    fn robot_selector_at(&self, unit: usize) -> Result<Option<RobotSelector>, SstvError> {
+        let clock = self.clock.expect("clock acquired");
+        let average = self.mean_frequency(self.selector_window(clock, unit)?)?;
         Ok(if average <= 1700.0 {
             Some(RobotSelector::Cr)
         } else if average >= 2100.0 {
@@ -819,10 +817,6 @@ impl RxDecoder {
             event => event,
         }
     }
-}
-
-fn frequency_to_level(frequency_hz: f32) -> u8 {
-    LevelFrequencyBand::Wide.frequency_to_level(Frequency::from_hz((frequency_hz + 0.5) as u32))
 }
 
 #[cfg(test)]
@@ -969,7 +963,14 @@ mod tests {
         #[case] component_ps: u64,
     ) {
         let decoder = RxDecoder::new(mode, SAMPLE_RATE).unwrap();
-        assert_eq!(decoder.profile.component_ps, component_ps);
+        assert_eq!(
+            decoder
+                .profile
+                .pixels()
+                .last()
+                .map(|segment| segment.duration_ps),
+            Some(component_ps)
+        );
         assert_eq!(decoder.image().size().width(), mode.spec().width() as usize);
         assert_eq!(
             decoder.image().size().height(),
@@ -1307,11 +1308,11 @@ mod tests {
 
     #[test]
     fn frequency_inverse_matches_transmit_integer_mapping() {
+        let decoder = RxDecoder::new(Mode::Martin1, SAMPLE_RATE).unwrap();
+        let band = Mode::Martin1.spec().signal_band();
         for level in 0..=255_u8 {
-            let frequency = crate::color::LevelFrequencyBand::Wide
-                .level_to_frequency(level)
-                .as_hz() as f32;
-            assert_eq!(frequency_to_level(frequency), level);
+            let frequency = f64::from(band.level_to_frequency(level).as_hz());
+            assert_eq!(decoder.frequency_to_level(frequency), level);
         }
     }
 }

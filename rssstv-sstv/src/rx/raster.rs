@@ -1,71 +1,103 @@
-use crate::mode::Mode;
+use crate::mode::{Mode, RasterOrganization, ScanChannel, ScanContent};
+use crate::signal::TxComponent;
 
-#[derive(Clone, Copy)]
-pub(super) enum RasterFamily {
-    Martin,
-    Scottie,
-    Robot36,
-    Robot72,
-    Pd,
+pub(super) const MAX_PIXEL_SEGMENTS: usize = 4;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PixelSegment {
+    pub(super) channel: ScanChannel,
+    pub(super) row_offset: u8,
+    pub(super) start_ps: u64,
+    pub(super) duration_ps: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct PixelSegments {
+    items: [Option<PixelSegment>; MAX_PIXEL_SEGMENTS],
+    len: usize,
+}
+
+impl PixelSegments {
+    fn push(&mut self, segment: PixelSegment) -> bool {
+        let Some(slot) = self.items.get_mut(self.len) else {
+            return false;
+        };
+        *slot = Some(segment);
+        self.len += 1;
+        true
+    }
+
+    pub(super) fn iter(self) -> impl Iterator<Item = PixelSegment> {
+        self.items.into_iter().take(self.len).flatten()
+    }
+
+    pub(super) fn get(self, channel: ScanChannel, row_offset: u8) -> Option<PixelSegment> {
+        self.iter()
+            .find(|segment| segment.channel == channel && segment.row_offset == row_offset)
+    }
+
+    pub(super) fn last(self) -> Option<PixelSegment> {
+        self.iter().last()
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct RasterProfile {
-    pub(super) family: RasterFamily,
+    pub(super) organization: RasterOrganization,
     pub(super) period_ps: u64,
     pub(super) sync_center_ps: u64,
-    pub(super) component_ps: u64,
+    pixels: PixelSegments,
+    selector_ps: Option<(u64, u64)>,
 }
 
 impl RasterProfile {
     pub(super) fn for_mode(mode: Mode) -> Option<Self> {
-        let (family, sync_center_ps, component_ps) = match mode {
-            Mode::Martin1 => (RasterFamily::Martin, 2_431_000_000, 146_432_000_000),
-            Mode::Martin2 => (RasterFamily::Martin, 2_431_000_000, 73_216_000_000),
-            Mode::Scottie1 => (RasterFamily::Scottie, 283_980_000_000, 138_240_000_000),
-            Mode::Scottie2 => (RasterFamily::Scottie, 183_628_000_000, 88_064_000_000),
-            Mode::ScottieDx => (RasterFamily::Scottie, 698_700_000_000, 345_600_000_000),
-            Mode::Robot36 => (RasterFamily::Robot36, 4_500_000_000, 44_000_000_000),
-            Mode::Robot72 => (RasterFamily::Robot72, 4_500_000_000, 69_000_000_000),
-            Mode::Pd50 => (RasterFamily::Pd, 10_000_000_000, 91_520_000_000),
-            Mode::Pd90 => (RasterFamily::Pd, 10_000_000_000, 170_240_000_000),
-            Mode::Pd120 => (RasterFamily::Pd, 10_000_000_000, 121_600_000_000),
-            Mode::Pd160 => (RasterFamily::Pd, 10_000_000_000, 195_584_000_000),
-            Mode::Pd180 => (RasterFamily::Pd, 10_000_000_000, 183_040_000_000),
-            Mode::Pd240 => (RasterFamily::Pd, 10_000_000_000, 244_480_000_000),
-            Mode::Pd290 => (RasterFamily::Pd, 10_000_000_000, 228_800_000_000),
-            _ => return None,
-        };
+        let scan = mode.scan();
+        if scan.is_empty() {
+            return None;
+        }
+        let mut pixels = PixelSegments::default();
+        let mut selector_ps = None;
+        // Both parities of an alternating raster share one geometry, so unit
+        // zero fully describes receive timing.
+        for (offset, segment) in scan.offsets(0) {
+            let start_ps = offset.as_picos();
+            let duration_ps = segment.duration().as_picos();
+            match segment.content() {
+                ScanContent::Pixels {
+                    channel,
+                    row_offset,
+                } => {
+                    if !pixels.push(PixelSegment {
+                        channel,
+                        row_offset,
+                        start_ps,
+                        duration_ps,
+                    }) {
+                        return None;
+                    }
+                }
+                ScanContent::Tone(_) if segment.component() == TxComponent::ChrominanceSelector => {
+                    selector_ps = Some((start_ps, start_ps + duration_ps));
+                }
+                ScanContent::Tone(_) => {}
+            }
+        }
+        pixels.last()?;
         Some(Self {
-            family,
+            organization: mode.spec().raster_organization(),
             period_ps: mode.spec().period().as_picos(),
-            sync_center_ps,
-            component_ps,
+            sync_center_ps: scan.sync_center(0)?.as_picos(),
+            pixels,
+            selector_ps,
         })
     }
 
-    pub(super) fn component_starts(self) -> [u64; 4] {
-        match self.family {
-            RasterFamily::Martin => [
-                5_434_000_000,
-                6_006_000_000 + self.component_ps,
-                6_578_000_000 + 2 * self.component_ps,
-                0,
-            ],
-            RasterFamily::Scottie => [
-                1_500_000_000,
-                3_000_000_000 + self.component_ps,
-                13_500_000_000 + 2 * self.component_ps,
-                0,
-            ],
-            RasterFamily::Robot36 => [12_000_000_000, 106_000_000_000, 0, 0],
-            RasterFamily::Robot72 => [12_000_000_000, 156_000_000_000, 231_000_000_000, 0],
-            RasterFamily::Pd => [
-                22_080_000_000,
-                22_080_000_000 + self.component_ps,
-                22_080_000_000 + 2 * self.component_ps,
-                22_080_000_000 + 3 * self.component_ps,
-            ],
-        }
+    pub(super) fn pixels(self) -> PixelSegments {
+        self.pixels
+    }
+
+    pub(super) fn selector_window_ps(self) -> Option<(u64, u64)> {
+        self.selector_ps
     }
 }

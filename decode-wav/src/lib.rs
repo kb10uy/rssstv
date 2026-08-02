@@ -33,7 +33,7 @@ pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
         mode,
         sample_rate_hz,
         RxConfig {
-            live_sync: false,
+            live_sync: true,
             auto_stop: false,
             staging: Staging::Memory { max_samples },
         },

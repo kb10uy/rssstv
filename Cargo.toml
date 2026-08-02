@@ -4,6 +4,7 @@ members = [
   "decode-wav",
   "encode-wav",
   "rssstv",
+  "rssstv-audio",
   "rssstv-demodulator",
   "rssstv-dsp",
   "rssstv-fskid",

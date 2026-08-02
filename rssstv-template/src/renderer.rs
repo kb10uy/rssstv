@@ -340,9 +340,10 @@ impl<'a> SvgGenerator<'a> {
         let text = interpolate(&layer.text, self.context.variables)?;
         write!(
             svg,
-            "<text x=\"{x}\" y=\"{y}\" text-anchor=\"{text_anchor}\" dominant-baseline=\"{baseline}\" font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{}\"",
+            "<text x=\"{x}\" y=\"{y}\" text-anchor=\"{text_anchor}\" dominant-baseline=\"{baseline}\" font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{}\" font-style=\"{}\"",
             escape_xml(&layer.font.family),
-            layer.font.weight
+            layer.font.weight,
+            layer.font.style.as_svg()
         )
         .unwrap();
         write_color(svg, "fill", layer.fill);
@@ -672,6 +673,20 @@ mod tests {
             interpolate("${station.callsign}", &variables),
             Err(TemplateError::MissingVariable(_))
         ));
+    }
+
+    #[test]
+    fn emits_italic_svg_text() {
+        let template = Template::parse(
+            "text \"CQ SSTV\" { position x=(fw)0 y=(fh)0; font family=\"Monaspace Argon\" size=(fh)25 weight=700 style=\"italic\"; fill color=\"#ffffff\"; }",
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let mut generator = SvgGenerator::new(RenderSize::new(320, 256).unwrap(), &context);
+        let svg = generator.generate(template.layers()).unwrap();
+
+        assert!(svg.contains("font-style=\"italic\""));
     }
 
     #[test]

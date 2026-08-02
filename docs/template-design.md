@@ -106,7 +106,7 @@ position x=(fw)0 y=(fh)0 anchor="top-left"
 size width=(fw)10 height=(fh)10 fit="contain"
 start x=(fw)0 y=(fh)0
 end x=(fw)100 y=(fh)100
-font family="Noto Sans" size=(fh)9 weight=700
+font family="Noto Sans" size=(fh)9 weight=700 style="italic"
 fill color="#ffffff"
 stroke color="#182030" width=(em)0.08
 ```
@@ -116,6 +116,9 @@ accepts `contain`, `cover`, `stretch`, or `preserve`. `aspect="preserve"` is
 accepted as an equivalent spelling, but `fit` and `aspect` cannot both appear.
 Shapes require both width and height. Images may omit one dimension, in which
 case it is derived from the PNG aspect ratio.
+
+`font.style` is optional, defaults to `normal`, and accepts `normal` or
+`italic`.
 
 Colors use `#RRGGBB` or `#RRGGBBAA`. Layer nodes, child nodes, and properties
 outside this schema are errors. Duplicate properties and duplicate singleton
@@ -211,7 +214,8 @@ render error. Variable names consist of dot-separated ASCII identifier segments.
 ## Text Rendering
 
 Text style is independent of the platform font API. A text layer can specify a
-font family, relative size, weight, fill, alignment, and effects.
+font family, relative size, weight, normal or italic style, fill, alignment, and
+effects.
 
 Outlining is a text effect rather than part of the font identity:
 

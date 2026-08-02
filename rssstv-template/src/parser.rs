@@ -4,8 +4,9 @@ use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
 use crate::TemplateError;
 use crate::scene::{
-    Anchor, Color, EllipseLayer, Font, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length,
-    LineLayer, Position, ReceivedImageLayer, RectangleLayer, Stroke, Template, TextLayer,
+    Anchor, Color, EllipseLayer, Font, FontStyle, GroupLayer, ImageFit, ImageLayer, Layer,
+    LayerSize, Length, LineLayer, Position, ReceivedImageLayer, RectangleLayer, Stroke, Template,
+    TextLayer,
 };
 
 impl Template {
@@ -64,7 +65,7 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
     let children = required_children(node)?;
     validate_child_names(children, &["position", "font", "fill", "stroke"])?;
     let font_node = required_unique_child(children, "font")?;
-    validate_properties(font_node, &["family", "size", "weight"], 0)?;
+    validate_properties(font_node, &["family", "size", "weight", "style"], 0)?;
     let family = required_string(font_node, "family")?.to_owned();
     if family.is_empty() {
         return schema("font family must not be empty");
@@ -74,6 +75,11 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
         .ok()
         .filter(|weight| (1..=1000).contains(weight))
         .ok_or_else(|| TemplateError::Schema("font weight must be between 1 and 1000".into()))?;
+    let style = font_node
+        .get("style")
+        .map(|_| required_string(font_node, "style").and_then(parse_font_style))
+        .transpose()?
+        .unwrap_or_default();
     let fill_node = required_unique_child(children, "fill")?;
     validate_properties(fill_node, &["color"], 0)?;
 
@@ -84,6 +90,7 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
             family,
             size: required_length(font_node, "size")?,
             weight,
+            style,
         },
         fill: parse_color(required_string(fill_node, "color")?)?,
         stroke: optional_unique_child(children, "stroke")?
@@ -236,6 +243,14 @@ fn parse_anchor(value: &str) -> Result<Anchor, TemplateError> {
         "bottom-center" => Ok(Anchor::BottomCenter),
         "bottom-right" => Ok(Anchor::BottomRight),
         _ => schema(format!("unknown anchor `{value}`")),
+    }
+}
+
+fn parse_font_style(value: &str) -> Result<FontStyle, TemplateError> {
+    match value {
+        "normal" => Ok(FontStyle::Normal),
+        "italic" => Ok(FontStyle::Italic),
+        _ => schema(format!("unknown font style `{value}`")),
     }
 }
 
@@ -534,5 +549,32 @@ group {
         )
         .unwrap_err();
         assert!(negative_size.to_string().contains("non-negative"));
+    }
+
+    #[test]
+    fn parses_optional_font_style_and_rejects_unknown_values() {
+        let italic = Template::parse(
+            "text \"CQ SSTV\" { position x=(fw)0 y=(fh)0; font family=\"Monaspace Argon\" size=(fh)25 weight=700 style=\"italic\"; fill color=\"#ffffff\"; }",
+        )
+        .unwrap();
+        let Layer::Text(text) = &italic.layers()[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.font.style, FontStyle::Italic);
+
+        let normal = Template::parse(
+            "text \"CQ SSTV\" { position x=(fw)0 y=(fh)0; font family=\"Monaspace Argon\" size=(fh)25 weight=700; fill color=\"#ffffff\"; }",
+        )
+        .unwrap();
+        let Layer::Text(text) = &normal.layers()[0] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.font.style, FontStyle::Normal);
+
+        let unknown = Template::parse(
+            "text \"CQ SSTV\" { position x=(fw)0 y=(fh)0; font family=\"Monaspace Argon\" size=(fh)25 weight=700 style=\"oblique\"; fill color=\"#ffffff\"; }",
+        )
+        .unwrap_err();
+        assert!(unknown.to_string().contains("unknown font style"));
     }
 }

@@ -92,11 +92,28 @@ pub(crate) struct Stroke {
     pub width: Length,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum FontStyle {
+    #[default]
+    Normal,
+    Italic,
+}
+
+impl FontStyle {
+    pub const fn as_svg(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Italic => "italic",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Font {
     pub family: String,
     pub size: Length,
     pub weight: u16,
+    pub style: FontStyle,
 }
 
 /// A template layer.

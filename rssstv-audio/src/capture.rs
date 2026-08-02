@@ -59,34 +59,24 @@ impl Timeline {
     }
 }
 
-/// Live capture from one input device.
+/// Open capture device.
 ///
-/// The value is bound to the thread that opened it because the underlying
-/// host stream is not `Send` on every platform.
+/// Holding this value keeps the device open; dropping it closes the stream.
+/// It is bound to the thread that opened it because the underlying host
+/// stream is not `Send` on every platform. Samples are read through the
+/// separate [`CaptureReader`], which may be moved to another thread.
 pub struct Capture {
     stream: Stream,
-    consumer: HeapCons<f32>,
-    dropped: Arc<AtomicU64>,
     sample_rate_hz: u32,
     channels: u16,
-    timeline: Timeline,
 }
 
 impl Capture {
-    pub(crate) fn new(
-        stream: Stream,
-        consumer: HeapCons<f32>,
-        dropped: Arc<AtomicU64>,
-        sample_rate_hz: u32,
-        channels: u16,
-    ) -> Self {
+    pub(crate) const fn new(stream: Stream, sample_rate_hz: u32, channels: u16) -> Self {
         Self {
             stream,
-            consumer,
-            dropped,
             sample_rate_hz,
             channels,
-            timeline: Timeline::default(),
         }
     }
 
@@ -98,21 +88,6 @@ impl Capture {
     /// Returns the device's channel count before mono extraction.
     pub const fn channels(&self) -> u16 {
         self.channels
-    }
-
-    /// Returns the total number of samples dropped on overrun.
-    pub fn dropped_samples(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
-    }
-
-    /// Moves available samples into `buffer` without blocking.
-    ///
-    /// The returned count may be zero. Callers own the buffer so the adapter
-    /// never allocates while streaming.
-    pub fn read(&mut self, buffer: &mut [f32]) -> Reading {
-        let dropped_total = self.dropped.load(Ordering::Relaxed);
-        let count = self.consumer.pop_slice(buffer);
-        self.timeline.advance(dropped_total, count)
     }
 
     /// Starts or resumes delivery.
@@ -136,6 +111,61 @@ impl core::fmt::Debug for Capture {
             .debug_struct("Capture")
             .field("sample_rate_hz", &self.sample_rate_hz)
             .field("channels", &self.channels)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Reading end of a capture queue.
+///
+/// This half is `Send`, so the consumer may run on a worker thread while the
+/// [`Capture`] handle stays on the thread that opened the device.
+pub struct CaptureReader {
+    consumer: HeapCons<f32>,
+    dropped: Arc<AtomicU64>,
+    sample_rate_hz: u32,
+    timeline: Timeline,
+}
+
+impl CaptureReader {
+    pub(crate) fn new(
+        consumer: HeapCons<f32>,
+        dropped: Arc<AtomicU64>,
+        sample_rate_hz: u32,
+    ) -> Self {
+        Self {
+            consumer,
+            dropped,
+            sample_rate_hz,
+            timeline: Timeline::default(),
+        }
+    }
+
+    /// Returns the physical capture rate in hertz.
+    pub const fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
+
+    /// Returns the total number of samples dropped on overrun.
+    pub fn dropped_samples(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Moves available samples into `buffer` without blocking.
+    ///
+    /// The returned count may be zero. Callers own the buffer so the adapter
+    /// never allocates while streaming.
+    pub fn read(&mut self, buffer: &mut [f32]) -> Reading {
+        let dropped_total = self.dropped.load(Ordering::Relaxed);
+        let count = self.consumer.pop_slice(buffer);
+        self.timeline.advance(dropped_total, count)
+    }
+}
+
+impl core::fmt::Debug for CaptureReader {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("CaptureReader")
+            .field("sample_rate_hz", &self.sample_rate_hz)
             .field("timeline", &self.timeline)
             .finish_non_exhaustive()
     }

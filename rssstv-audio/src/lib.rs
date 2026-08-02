@@ -17,7 +17,7 @@ use cpal::{Host, SampleFormat, StreamConfig};
 use ringbuf::HeapRb;
 use ringbuf::traits::Split;
 
-pub use capture::{Capture, Reading};
+pub use capture::{Capture, CaptureReader, Reading};
 pub use error::AudioError;
 
 /// Capture rate preferred by the rest of the project.
@@ -92,7 +92,7 @@ impl AudioHost {
         &self,
         device: &InputDevice,
         capacity_samples: usize,
-    ) -> Result<Capture, AudioError> {
+    ) -> Result<(Capture, CaptureReader), AudioError> {
         if capacity_samples == 0 {
             return Err(AudioError::EmptyCapacity);
         }
@@ -152,9 +152,9 @@ impl AudioHost {
         }
         .map_err(|error| AudioError::Backend(error.to_string()))?;
 
-        let capture = Capture::new(stream, consumer, dropped, sample_rate, channels);
+        let capture = Capture::new(stream, sample_rate, channels);
         capture.play()?;
-        Ok(capture)
+        Ok((capture, CaptureReader::new(consumer, dropped, sample_rate)))
     }
 }
 

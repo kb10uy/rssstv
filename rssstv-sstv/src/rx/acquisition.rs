@@ -1,0 +1,170 @@
+use alloc::vec::Vec;
+
+use crate::SstvError;
+
+use super::clock::RasterClock;
+use super::input::SampleBuffer;
+use super::raster::RasterProfile;
+
+pub(super) const ACQUISITION_PERIODS: u64 = 6;
+const REQUIRED_SYNCS: usize = 4;
+const MAX_RATE_ERROR: f64 = 0.08;
+
+pub(super) fn window_samples(profile: RasterProfile, sample_rate_hz: u32) -> u64 {
+    let product = u128::from(profile.period_ps)
+        * u128::from(sample_rate_hz)
+        * u128::from(ACQUISITION_PERIODS);
+    product.div_ceil(1_000_000_000_000) as u64
+}
+
+pub(super) fn acquire(
+    input: &SampleBuffer,
+    profile: RasterProfile,
+    sample_rate_hz: u32,
+) -> Result<RasterClock, SstvError> {
+    let mut centers = Vec::new();
+    let sync = input.sync_values();
+    let mut index = 0;
+    while index < sync.len() {
+        if sync[index] < 0.5 {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        let mut weighted = 0.0_f64;
+        let mut total = 0.0_f64;
+        while index < sync.len() && sync[index] >= 0.5 {
+            weighted += index as f64 * f64::from(sync[index]);
+            total += f64::from(sync[index]);
+            index += 1;
+        }
+        let relative = if total > 0.0 {
+            (weighted / total + 0.5) as u64
+        } else {
+            ((start + index) / 2) as u64
+        };
+        centers.push(input.first() + relative);
+    }
+
+    let nominal = profile.period_ps as f64 * f64::from(sample_rate_hz) / 1_000_000_000_000.0;
+    let tolerance = nominal * 0.08 + 2.0;
+    let mut best: Option<(Vec<u64>, f64, f64)> = None;
+    for &first in &centers {
+        let mut sequence = Vec::with_capacity(ACQUISITION_PERIODS as usize + 1);
+        sequence.push(first);
+        let mut previous = first;
+        for _ in 1..=ACQUISITION_PERIODS as usize {
+            let previous_offset = (previous - first) as f64;
+            let target_offset = previous_offset + nominal;
+            let Some(&found) = centers.iter().min_by(|left, right| {
+                ((**left as i128 - first as i128) as f64 - target_offset)
+                    .abs()
+                    .total_cmp(&(((**right as i128 - first as i128) as f64 - target_offset).abs()))
+            }) else {
+                break;
+            };
+            let difference = ((found as i128 - first as i128) as f64 - target_offset).abs();
+            if difference > tolerance || found <= previous {
+                break;
+            }
+            sequence.push(found);
+            previous = found;
+        }
+        if sequence.len() < REQUIRED_SYNCS {
+            continue;
+        }
+
+        let first_sample = sequence[0];
+        let count = sequence.len() as f64;
+        let mean_step = (sequence.len() - 1) as f64 / 2.0;
+        let mean_offset = sequence
+            .iter()
+            .map(|sample| (*sample - first_sample) as f64)
+            .sum::<f64>()
+            / count;
+        let (numerator, denominator) = sequence.iter().enumerate().fold(
+            (0.0, 0.0),
+            |(numerator, denominator), (step, sample)| {
+                let x = step as f64 - mean_step;
+                let y = (*sample - first_sample) as f64 - mean_offset;
+                (numerator + x * y, denominator + x * x)
+            },
+        );
+        let slope = numerator / denominator;
+        let intercept = mean_offset - slope * mean_step;
+        let residual_squared = sequence
+            .iter()
+            .enumerate()
+            .map(|(step, sample)| {
+                let fitted = intercept + slope * step as f64;
+                let error = (*sample - first_sample) as f64 - fitted;
+                error * error
+            })
+            .sum::<f64>()
+            / count;
+        let candidate = (sequence, slope, residual_squared);
+        if best.as_ref().is_none_or(|current| {
+            candidate.0.len() > current.0.len()
+                || (candidate.0.len() == current.0.len() && candidate.2 < current.2)
+        }) {
+            best = Some(candidate);
+        }
+    }
+    let (sequence, samples_per_period, residual_squared) =
+        best.ok_or(SstvError::RasterNotAcquired)?;
+    let effective = samples_per_period * 1.0e12 / profile.period_ps as f64;
+    let rate_error = (effective / f64::from(sample_rate_hz) - 1.0).abs();
+    if rate_error > MAX_RATE_ERROR || residual_squared > tolerance * tolerance / 4.0 {
+        return Err(SstvError::RasterNotAcquired);
+    }
+    let count = sequence.len() as f64;
+    let mean_step = (sequence.len() - 1) as f64 / 2.0;
+    let mean_offset = sequence
+        .iter()
+        .map(|sample| (*sample - sequence[0]) as f64)
+        .sum::<f64>()
+        / count;
+    let fitted_first = sequence[0] as f64 + mean_offset - samples_per_period * mean_step;
+    let epoch = fitted_first - effective * profile.sync_center_ps as f64 / 1.0e12;
+    RasterClock::from_estimate(epoch, sample_rate_hz, effective)
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use super::*;
+    use crate::mode::Mode;
+    use crate::rx::input::DemodulatedBlock;
+
+    #[test]
+    fn acquisition_selects_longest_sequence_and_fits_effective_rate() {
+        let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
+        let physical_rate = 10_000;
+        let effective_rate = 10_200.0;
+        let period = profile.period_ps as f64 * effective_rate / 1.0e12;
+        let count = window_samples(profile, physical_rate) as usize;
+        let frequency = vec![1900.0; count];
+        let mut sync = vec![0.0; count];
+        for center in [100_usize, 100 + period as usize] {
+            sync[center] = 1.0;
+        }
+        let epoch = 400.0;
+        for unit in 0..6 {
+            let center = epoch
+                + effective_rate * profile.sync_center_ps as f64 / 1.0e12
+                + period * unit as f64;
+            sync[center as usize] = 1.0;
+        }
+        let block = DemodulatedBlock::new(0, &frequency, &sync);
+        let mut input = SampleBuffer::new(0);
+        input.append(block, frequency.len());
+        let clock = acquire(&input, profile, physical_rate).unwrap();
+        assert!((clock.effective_sample_rate_hz() - effective_rate).abs() < 2.0);
+        assert!(
+            clock.source_epoch().abs_diff(epoch as u64) <= 1,
+            "epoch={}",
+            clock.source_epoch()
+        );
+    }
+}

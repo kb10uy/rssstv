@@ -1,8 +1,8 @@
 //! Allocation-backed, `no_std` SSTV protocol primitives for RSSSTV.
 //!
 //! This crate contains mode, image, color, timing, signal, and streaming
-//! transmit types. It deliberately does not depend on audio or user-interface
-//! implementations.
+//! transmit and receive types. It deliberately does not depend on audio or
+//! user-interface implementations.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(missing_docs)]
@@ -17,6 +17,8 @@ pub mod error;
 pub mod image;
 /// SSTV mode inventory and protocol metadata.
 pub mod mode;
+/// Streaming raster acquisition and receive decoding.
+pub mod rx;
 /// Frequencies and timed transmit tones.
 pub mod signal;
 /// Exact protocol durations and transmit deadlines.
@@ -25,4 +27,5 @@ pub mod time;
 pub mod tx;
 
 pub use error::SstvError;
+pub use rx::RxDecoder;
 pub use tx::TxEncoder;

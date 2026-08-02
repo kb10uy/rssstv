@@ -1,0 +1,3 @@
+[submodule "original/mmsstv"]
+	path = original/mmsstv
+	url = https://github.com/n5ac/mmsstv

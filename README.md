@@ -11,10 +11,12 @@ cargo run -p rssstv
 ```
 
 It is currently an interface shell. Tabs, mode selection, DSP toggles, QSO
-fields, locale switching, and the template and stock lists are interactive, but
-there is no audio input or output yet, so it neither receives nor transmits.
-Receive activity is simulated over a generated test pattern. See
-[docs/gui-design.md](docs/gui-design.md) for the design and the remaining work.
+fields, locale switching, and the template and stock lists are interactive.
+Audio capture works: the device list is enumerated from the host and the input
+level meter follows the selected device. Nothing decodes those samples yet, so
+the application does not receive or transmit, and raster progress is simulated
+over a generated test pattern. See [docs/gui-design.md](docs/gui-design.md) for
+the design and the remaining work.
 
 ## Encode WAV
 

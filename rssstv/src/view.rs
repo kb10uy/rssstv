@@ -13,7 +13,6 @@ use crate::i18n::{Locale, number, text as arg};
 const SIDE_PANEL_WIDTH: f32 = 320.0;
 const LIBRARY_HEIGHT: f32 = 246.0;
 const LIST_WIDTH: f32 = 236.0;
-const SAMPLE_RATE_HZ: u32 = 48_000;
 
 fn filler() -> Space {
     Space::new().width(Length::Fill)
@@ -65,8 +64,8 @@ fn toolbar(app: &App) -> Element<'_, Message> {
         filler(),
         text(app.i18n.text("input-device")).size(12),
         pick_list(
-            app.devices.as_slice(),
-            app.device.as_ref(),
+            app.audio.devices.as_slice(),
+            app.audio.device.as_ref(),
             Message::DeviceSelected
         ),
         pick_list(
@@ -204,7 +203,7 @@ fn section<'a>(app: &App, key: &str, content: Element<'a, Message>) -> Element<'
 }
 
 fn rx_status(app: &App) -> Element<'_, Message> {
-    let receiving = app.tab == Tab::Receive;
+    let receiving = app.tab == Tab::Receive && app.audio.is_capturing();
     let sync_key = if receiving {
         "label-signal-detected"
     } else {
@@ -215,13 +214,9 @@ fn rx_status(app: &App) -> Element<'_, Message> {
         row![
             text(app.i18n.text("label-input-level")).size(12),
             filler(),
-            text(format!(
-                "{:.0} dBFS",
-                level_dbfs(app.simulation.input_level)
-            ))
-            .size(11),
+            text(format!("{:.0} dBFS", level_dbfs(app.audio.level()))).size(11),
         ],
-        progress_bar(0.0..=1.0, app.simulation.input_level),
+        progress_bar(0.0..=1.0, app.audio.level()),
         row![
             text(app.i18n.text(sync_key)).size(12),
             filler(),
@@ -423,17 +418,29 @@ fn status_bar(app: &App) -> Element<'_, Message> {
     } else {
         app.i18n.text("status-idle")
     };
-    row![
+    let audio = match app.audio.sample_rate_hz() {
+        Some(rate) => app
+            .i18n
+            .text_with("status-audio", &[("rate", number(rate))]),
+        None => app.i18n.text("status-no-audio"),
+    };
+    let mut bar = row![
         text(status).size(11),
-        text(
-            app.i18n
-                .text_with("status-audio", &[("rate", number(SAMPLE_RATE_HZ))])
-        )
-        .size(11),
+        text(audio).size(11),
         text(app.i18n.text("status-simulated")).size(11),
-        filler(),
-    ]
-    .spacing(16)
-    .padding([4, 12])
-    .into()
+    ];
+    let dropped = app.audio.dropped_samples();
+    if dropped > 0 {
+        bar = bar.push(
+            text(
+                app.i18n
+                    .text_with("status-dropped", &[("samples", number(dropped as u32))]),
+            )
+            .size(11),
+        );
+    }
+    if let Some(error) = &app.audio.error {
+        bar = bar.push(text(error.as_str()).size(11));
+    }
+    bar.push(filler()).spacing(16).padding([4, 12]).into()
 }

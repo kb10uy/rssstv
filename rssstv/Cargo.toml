@@ -8,6 +8,7 @@ authors.workspace = true
 [dependencies]
 fluent-bundle.workspace = true
 iced.workspace = true
+rssstv-audio = { path = "../rssstv-audio" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 unic-langid.workspace = true
 

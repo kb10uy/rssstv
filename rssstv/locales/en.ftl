@@ -62,7 +62,9 @@ badge-history = HISTORY · { $mode }
 
 status-receiving = Receiving ({ $percent }%)
 status-idle = Idle
-status-simulated = SIMULATED
+status-simulated = RASTER SIMULATED
+status-no-audio = No input device
+status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
 status-afc = AFC { $offset } Hz
 

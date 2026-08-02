@@ -49,7 +49,7 @@ platform integration, and application behavior.
 | Receive decoder | Raster acquisition, clock estimation, synchronization, slant correction, and pixel reconstruction | `rssstv-sstv::rx` |
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
 | Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
-| Audio adapters | Platform-specific input and output streams | Not implemented; specified as `rssstv-audio` in [gui-design.md](gui-design.md) |
+| Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture implemented, playback not implemented |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
 | Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` interface shell only; designed in [gui-design.md](gui-design.md) |
@@ -235,7 +235,7 @@ types must not appear in reusable core APIs.
 
 ## Current Crate Structure
 
-The workspace currently contains nine packages:
+The workspace currently contains ten packages:
 
 | Package | Architectural role | Current status |
 | --- | --- | --- |
@@ -247,25 +247,33 @@ The workspace currently contains nine packages:
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
-| `rssstv` | Application composition root | iced interface shell; no audio or live pipeline |
+| `rssstv-audio` | Host audio adapters | Capture implemented; playback not implemented |
+| `rssstv` | Application composition root | iced interface shell; live capture metering, no decode pipeline |
 
 Their current dependency direction is:
 
 ```text
 rssstv-fskid ----------------> rssstv-sstv
 rssstv-dsp ------------------> rssstv-modulator
-rssstv-sstv -----------------> rssstv-modulator
+rssstv-audio ----------+
+rssstv-sstv -----------+-> rssstv-modulator
 rssstv-fskid ---------+-> rssstv-demodulator --+
 rssstv-sstv ----------+                       +-> decode-wav
 rssstv-fskid ----------------------------------+
-rssstv-sstv -----------------> rssstv-template
+rssstv-audio ----------+
+rssstv-sstv -----------+-> rssstv-template
 rssstv-fskid ----------+
 rssstv-modulator ------+
 rssstv-sstv -----------+-> encode-wav
 rssstv-template -------+
 
-rssstv-sstv -----------------> rssstv
+rssstv-audio ----------+
+rssstv-sstv -----------+-> rssstv
 ```
+
+`rssstv-audio` is the platform audio boundary. It exposes normalized mono
+`f32` samples with stream positions and keeps the host API out of its public
+surface, so no core crate gains an audio dependency.
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
@@ -318,7 +326,7 @@ or the filesystem implicitly.
 The architecture is not complete until the following boundaries have production
 implementations:
 
-- Audio source and sink adapters with explicit buffering and backpressure.
+- Audio playback adapters, and a receive worker consuming captured samples.
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.

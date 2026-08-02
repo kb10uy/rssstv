@@ -40,8 +40,8 @@ not add SSTV or DSP behavior.
 
 | Package | Role | Status |
 | --- | --- | --- |
-| `rssstv` | Composition root: window, state, messages, views, worker supervision | Interface shell implemented; no workers yet |
-| `rssstv-audio` | Capture and playback adapters over the host audio API | Not implemented |
+| `rssstv` | Composition root: window, state, messages, views, worker supervision | Interface shell implemented; capture wired, no workers yet |
+| `rssstv-audio` | Capture and playback adapters over the host audio API | Capture implemented; playback not implemented |
 
 `rssstv-audio` is a new crate. It owns device enumeration, stream formats, and
 callback scheduling, and exposes only normalized mono `f32` blocks with sample
@@ -267,12 +267,22 @@ The `rssstv` shell implements the state model, message dispatch, and view
 composition described above. Tabs, mode selection, DSP toggles, QSO fields,
 locale switching, and the template and stock lists are interactive.
 
-Nothing in the shell performs SSTV processing. In place of the receive worker,
-a simulation advances a decoded fraction, an input level, and a synchronization
+Capture is real. The device dropdown lists the host's input devices, selecting
+one opens a capture stream, and the input level meter follows the captured
+signal. The status bar reports the negotiated sample rate and any samples lost
+to queue overrun.
+
+Nothing in the shell performs SSTV processing yet. In place of the receive
+worker, a simulation advances the decoded fraction and the synchronization
 strength on a fixed cycle, and the main canvas draws a generated test pattern
-sized to the selected mode. Controls whose behavior belongs to the audio
-boundary are rendered without an action, so the layout is reviewable without
-implying working transmit or receive.
+sized to the selected mode. Controls whose behavior belongs to the decode and
+transmit pipelines are rendered without an action, so the layout is reviewable
+without implying working transmit or receive.
+
+The interface currently drains the capture queue on its own frame tick rather
+than from a worker. That is adequate for metering, which is all it does with
+the samples; the receive worker described above takes ownership of the queue
+when decoding is connected.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.
@@ -282,10 +292,11 @@ exactly the modes the core can encode or decode.
 The interface cannot perform live reception or transmission until the audio
 boundary exists. The remaining implementation order is:
 
-1. `rssstv-audio`: device enumeration, capture and playback streams, bounded
-   queues, and overflow reporting.
-2. Worker integration: receive and transmit workers over the real audio
-   adapters, replacing the simulation and enabling the pending controls.
+1. Receive worker: `Demodulator` and `RxDecoder` over the capture queue,
+   replacing the simulation and enabling the pending receive controls.
+2. `rssstv-audio` playback: output streams and bounded queues for transmit.
+3. Transmit worker: template rendering, `TransmissionEncoder`, and `Modulator`
+   over the playback queue.
 
 Configuration persistence, template editing, PTT, CAT, and logging remain out
 of scope for this document and are still listed as planned gaps in

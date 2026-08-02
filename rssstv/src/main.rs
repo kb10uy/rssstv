@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod canvas;
 mod i18n;
 mod raster;

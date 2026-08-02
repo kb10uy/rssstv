@@ -62,7 +62,9 @@ badge-history = HISTORY · { $mode }
 
 status-receiving = 受信中 ({ $percent }%)
 status-idle = 待機中
-status-simulated = シミュレーション
+status-simulated = ラスタはシミュレーション
+status-no-audio = 入力デバイスなし
+status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル
 status-afc = AFC { $offset } Hz
 

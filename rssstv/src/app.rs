@@ -3,8 +3,10 @@ use std::time::Instant;
 
 use iced::widget::canvas::Cache;
 use iced::{Element, Subscription};
+use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
+use crate::audio::AudioState;
 use crate::i18n::{I18n, Locale};
 use crate::raster::Raster;
 use crate::view;
@@ -105,14 +107,14 @@ impl Entry {
     }
 }
 
-/// Simulated receive activity.
+/// Simulated raster progress.
 ///
-/// This stands in for the receive worker described in `docs/gui-design.md`
-/// until `rssstv-audio` exists. Nothing here is protocol behavior.
+/// Capture is real, but nothing decodes it yet, so raster progress and
+/// synchronization strength stand in for the receive worker described in
+/// `docs/gui-design.md`. Neither is protocol behavior.
 #[derive(Clone, Copy, Debug)]
 pub struct Simulation {
     pub decoded_fraction: f32,
-    pub input_level: f32,
     pub sync_strength: f32,
 }
 
@@ -120,7 +122,7 @@ pub struct Simulation {
 pub enum Message {
     TabSelected(Tab),
     LocaleSelected(Locale),
-    DeviceSelected(String),
+    DeviceSelected(InputDevice),
     Rx(RxMessage),
     Tx(TxMessage),
     Library(LibraryMessage),
@@ -158,8 +160,7 @@ pub enum QsoMessage {
 pub struct App {
     pub tab: Tab,
     pub i18n: I18n,
-    pub devices: Vec<String>,
-    pub device: Option<String>,
+    pub audio: AudioState,
     pub auto_mode: bool,
     pub rx_mode: ModeChoice,
     pub tx_mode: ModeChoice,
@@ -185,11 +186,7 @@ impl App {
         Self {
             tab: Tab::default(),
             i18n: I18n::new(Locale::default()),
-            devices: vec![
-                "USB Audio CODEC (48 kHz)".to_owned(),
-                "Line In (48 kHz)".to_owned(),
-            ],
-            device: Some("USB Audio CODEC (48 kHz)".to_owned()),
+            audio: AudioState::new(),
             auto_mode: true,
             rx_mode: ModeChoice(DEFAULT_RX_MODE),
             tx_mode: ModeChoice(DEFAULT_TX_MODE),
@@ -222,7 +219,6 @@ impl App {
             stock: 0,
             simulation: Simulation {
                 decoded_fraction: 0.0,
-                input_level: 0.62,
                 sync_strength: 0.94,
             },
             rx_raster: Raster::test_pattern(DEFAULT_RX_MODE),
@@ -256,12 +252,12 @@ impl App {
                     self.i18n = I18n::new(locale);
                 }
             }
-            Message::DeviceSelected(device) => self.device = Some(device),
+            Message::DeviceSelected(device) => self.audio.select(device),
             Message::Rx(message) => self.update_rx(message),
             Message::Tx(message) => self.update_tx(message),
             Message::Library(message) => self.update_library(message),
             Message::Qso(message) => self.update_qso(message),
-            Message::Tick(now) => self.advance_simulation(now),
+            Message::Tick(now) => self.tick(now),
         }
     }
 
@@ -305,7 +301,8 @@ impl App {
         }
     }
 
-    fn advance_simulation(&mut self, now: Instant) {
+    fn tick(&mut self, now: Instant) {
+        self.audio.poll();
         let elapsed = now.duration_since(self.started).as_secs_f32();
         let fraction = (elapsed / SIMULATED_CYCLE_SECONDS).fract();
         if (fraction - self.simulation.decoded_fraction).abs() < f32::EPSILON {
@@ -313,7 +310,6 @@ impl App {
         }
         self.simulation = Simulation {
             decoded_fraction: fraction,
-            input_level: (0.62 + 0.10 * (elapsed * 3.1).sin()).clamp(0.0, 1.0),
             sync_strength: (0.92 + 0.06 * (elapsed * 1.7).sin()).clamp(0.0, 1.0),
         };
         self.main_cache.clear();

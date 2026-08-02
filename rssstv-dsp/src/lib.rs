@@ -20,6 +20,8 @@ pub mod frequency;
 pub mod iir;
 /// Oscillators and voltage-controlled oscillators.
 pub mod oscillator;
+/// Phase-locked frequency discrimination.
+pub mod pll;
 /// Narrow-band resonators.
 pub mod resonator;
 

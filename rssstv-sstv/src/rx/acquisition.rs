@@ -9,22 +9,70 @@ use super::input::SampleBuffer;
 use super::raster::RasterProfile;
 use super::sync::RUN_THRESHOLD;
 
+#[cfg(test)]
 pub(super) const ACQUISITION_PERIODS: u64 = 32;
+pub(super) const STARTUP_PERIODS: u64 = 5;
 const REQUIRED_SYNCS: usize = 4;
 const MAX_RATE_ERROR: f64 = 0.08;
 
+#[cfg(test)]
 pub(super) fn window_samples(profile: RasterProfile, sample_rate_hz: u32) -> u64 {
-    let product = u128::from(profile.period_ps)
-        * u128::from(sample_rate_hz)
-        * u128::from(ACQUISITION_PERIODS);
+    period_samples(profile, sample_rate_hz, ACQUISITION_PERIODS)
+}
+
+pub(super) fn startup_window_samples(profile: RasterProfile, sample_rate_hz: u32) -> u64 {
+    period_samples(profile, sample_rate_hz, STARTUP_PERIODS)
+}
+
+fn period_samples(profile: RasterProfile, sample_rate_hz: u32, periods: u64) -> u64 {
+    let product = u128::from(profile.period_ps) * u128::from(sample_rate_hz) * u128::from(periods);
     product.div_ceil(1_000_000_000_000) as u64
 }
 
+pub(super) fn acquire_startup(
+    input: &SampleBuffer,
+    profile: RasterProfile,
+    sample_rate_hz: u32,
+    sync_detector_delay: SstvDuration,
+    fit_rate: bool,
+) -> Result<RasterClock, SstvError> {
+    acquire_inner(
+        input,
+        profile,
+        sample_rate_hz,
+        sync_detector_delay,
+        STARTUP_PERIODS,
+        fit_rate,
+        true,
+    )
+}
+
+#[cfg(test)]
 pub(super) fn acquire(
     input: &SampleBuffer,
     profile: RasterProfile,
     sample_rate_hz: u32,
     sync_detector_delay: SstvDuration,
+) -> Result<RasterClock, SstvError> {
+    acquire_inner(
+        input,
+        profile,
+        sample_rate_hz,
+        sync_detector_delay,
+        ACQUISITION_PERIODS,
+        true,
+        false,
+    )
+}
+
+fn acquire_inner(
+    input: &SampleBuffer,
+    profile: RasterProfile,
+    sample_rate_hz: u32,
+    sync_detector_delay: SstvDuration,
+    periods: u64,
+    fit_rate: bool,
+    startup: bool,
 ) -> Result<RasterClock, SstvError> {
     let mut centers = Vec::new();
     let sync = input.sync_values();
@@ -54,10 +102,10 @@ pub(super) fn acquire(
     let tolerance = nominal * 0.08 + 2.0;
     let mut best: Option<(Vec<u64>, f64, f64)> = None;
     for &first in &centers {
-        let mut sequence = Vec::with_capacity(ACQUISITION_PERIODS as usize + 1);
+        let mut sequence = Vec::with_capacity(periods as usize + 1);
         sequence.push(first);
         let mut previous = first;
-        for _ in 1..=ACQUISITION_PERIODS as usize {
+        for _ in 1..=periods as usize {
             let previous_offset = (previous - first) as f64;
             let target_offset = previous_offset + nominal;
             let target = first as f64 + target_offset;
@@ -123,21 +171,30 @@ pub(super) fn acquire(
             best = Some(candidate);
         }
     }
-    let (sequence, samples_per_period, residual_squared) =
+    let (sequence, fitted_samples_per_period, residual_squared) =
         best.ok_or(SstvError::RasterNotAcquired)?;
+    let samples_per_period = if fit_rate {
+        fitted_samples_per_period
+    } else {
+        nominal
+    };
     let effective = samples_per_period * 1.0e12 / profile.period_ps as f64;
     let rate_error = (effective / f64::from(sample_rate_hz) - 1.0).abs();
     if rate_error > MAX_RATE_ERROR || residual_squared > tolerance * tolerance / 4.0 {
         return Err(SstvError::RasterNotAcquired);
     }
-    let count = sequence.len() as f64;
-    let mean_step = (sequence.len() - 1) as f64 / 2.0;
-    let mean_offset = sequence
-        .iter()
-        .map(|sample| (*sample - sequence[0]) as f64)
-        .sum::<f64>()
-        / count;
-    let fitted_first = sequence[0] as f64 + mean_offset - samples_per_period * mean_step;
+    let fitted_first = if !startup {
+        let count = sequence.len() as f64;
+        let mean_step = (sequence.len() - 1) as f64 / 2.0;
+        let mean_offset = sequence
+            .iter()
+            .map(|sample| (*sample - sequence[0]) as f64)
+            .sum::<f64>()
+            / count;
+        sequence[0] as f64 + mean_offset - samples_per_period * mean_step
+    } else {
+        sequence[1] as f64 - nominal
+    };
     let epoch = fitted_first
         - effective * profile.sync_center_ps as f64 / 1.0e12
         - sync_detector_delay_samples(sample_rate_hz, sync_detector_delay);
@@ -209,5 +266,27 @@ mod tests {
             "drift={}",
             fitted - expected
         );
+    }
+
+    #[test]
+    fn startup_can_keep_the_nominal_rate_when_slant_is_disabled() {
+        let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
+        let physical_rate = 10_000;
+        let effective_rate = 10_050.0;
+        let count = startup_window_samples(profile, physical_rate) as usize;
+        let frequency = vec![1900.0; count];
+        let mut sync = vec![0.0; count];
+        let period = profile.period_ps as f64 * effective_rate / 1.0e12;
+        for unit in 0..STARTUP_PERIODS {
+            let center = 100.0 + period * unit as f64;
+            sync[center.round() as usize] = 1.0;
+        }
+        let block = DemodulatedBlock::new(10_000, &frequency, &sync);
+        let mut input = SampleBuffer::new(10_000);
+        input.append(block, frequency.len());
+
+        let clock =
+            acquire_startup(&input, profile, physical_rate, SstvDuration::ZERO, false).unwrap();
+        assert_eq!(clock.effective_sample_rate_hz(), f64::from(physical_rate));
     }
 }

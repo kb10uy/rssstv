@@ -7,10 +7,11 @@ authors.workspace = true
 
 [features]
 default = []
-std = []
+std = ["thiserror/std"]
 
 [dependencies]
 libm = "0.2"
+thiserror = { version = "2.0", default-features = false }
 
 [dev-dependencies]
 rstest = "0.26"

@@ -1,41 +1,30 @@
-use core::fmt;
+use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// An invalid DSP design or processor configuration.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum DspError {
     /// Filter attenuation is negative or not finite.
+    #[error("attenuation must be finite and non-negative")]
     InvalidAttenuation,
     /// Resonator bandwidth is negative or not finite.
+    #[error("bandwidth must be finite and non-negative")]
     InvalidBandwidth,
     /// A coefficient array is empty, non-finite, or has an unexpected length.
+    #[error("coefficient count does not match the filter order")]
     InvalidCoefficientCount,
     /// A frequency is non-finite or outside its valid Nyquist interval.
+    #[error("frequency must be finite and within the Nyquist interval")]
     InvalidFrequency,
     /// Filter gain is not finite.
+    #[error("gain must be finite")]
     InvalidGain,
     /// Filter order is zero or unsupported by the selected design.
+    #[error("filter order is invalid")]
     InvalidOrder,
     /// Chebyshev passband ripple is non-positive or not finite.
+    #[error("passband ripple must be finite and positive")]
     InvalidRipple,
     /// Sample rate is non-positive or not finite.
+    #[error("sample rate must be finite and positive")]
     InvalidSampleRate,
 }
-
-impl fmt::Display for DspError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let message = match self {
-            Self::InvalidAttenuation => "attenuation must be finite and non-negative",
-            Self::InvalidBandwidth => "bandwidth must be finite and non-negative",
-            Self::InvalidCoefficientCount => "coefficient count does not match the filter order",
-            Self::InvalidFrequency => "frequency must be finite and within the Nyquist interval",
-            Self::InvalidGain => "gain must be finite",
-            Self::InvalidOrder => "filter order is invalid",
-            Self::InvalidRipple => "passband ripple must be finite and positive",
-            Self::InvalidSampleRate => "sample rate must be finite and positive",
-        };
-        formatter.write_str(message)
-    }
-}
-
-#[cfg(feature = "std")]
-impl std::error::Error for DspError {}

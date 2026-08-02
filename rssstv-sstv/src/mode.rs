@@ -1,8 +1,12 @@
 //! Mode values are derived from `sstv.h`, `sstv.cpp`, and the transmit raster
 //! generators in `Main.cpp` from MMSSTV 1.13A.
 
+mod scan;
+
 use crate::color::LevelFrequencyBand;
 use crate::time::SstvDuration;
+
+pub use scan::{RasterScan, ScanChannel, ScanContent, ScanSegment};
 
 /// An MMSSTV SSTV mode, in the source enum and UI table order.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -147,6 +151,13 @@ impl Mode {
     /// Returns this mode's immutable protocol specification.
     pub const fn spec(self) -> &'static ModeSpec {
         &MODE_SPECS[self as usize]
+    }
+
+    /// Returns the timed raster segments shared by transmit and receive.
+    ///
+    /// Modes without an implemented raster description return an empty scan.
+    pub const fn scan(self) -> RasterScan {
+        scan::for_mode(self)
     }
 }
 

@@ -297,16 +297,30 @@ impl App {
     }
 
     /// Adopts anything the receive worker produced since the last frame.
+    ///
+    /// The canvas is invalidated only when what it draws actually changed, so
+    /// an idle receiver does not retessellate the raster every frame.
     fn tick(&mut self) {
-        if let Some(frame) = self.audio.poll()
-            && let Some(raster) = Raster::from_frame(frame)
+        let previous_fraction = self.decoded_fraction();
+        let mut changed = false;
+        if let Some(frame) = self.audio.poll() {
+            if let Some(raster) = Raster::from_frame(frame) {
+                self.rx_raster = raster;
+            }
+            changed = true;
+        }
+        // A detected mode only takes over the selection while automatic
+        // detection is on; otherwise it would undo the operator's choice.
+        if self.auto_mode
+            && let Some(mode) = self.audio.snapshot().mode
+            && self.rx_mode.0 != mode
         {
-            self.rx_raster = raster;
-        }
-        if let Some(mode) = self.audio.snapshot().mode {
             self.rx_mode = ModeChoice(mode);
+            changed = true;
         }
-        self.main_cache.clear();
+        if changed || self.decoded_fraction() != previous_fraction {
+            self.main_cache.clear();
+        }
     }
 
     /// Fraction of the active tab's raster that is drawn as decoded.

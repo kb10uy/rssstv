@@ -1,15 +1,14 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use rssstv_audio::CaptureReader;
 use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
-use rssstv_sstv::RxDecoder;
 use rssstv_sstv::image::RgbImage;
 use rssstv_sstv::mode::Mode;
 use rssstv_sstv::rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging};
+use rssstv_sstv::{RxDecoder, SstvError};
 
 /// Samples drained from the capture queue per pass.
 const READ_SAMPLES: usize = 4_096;
@@ -24,6 +23,22 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 const RELEASE: f32 = 0.88;
 
 const STAGING_SECONDS: usize = 300;
+
+/// Trailing audio staged between staged-refinement attempts.
+///
+/// A refit raster usually reaches a little past the samples decoded so far, so
+/// the first attempts fail until enough tail has arrived. Retrying on a sample
+/// budget rather than every block keeps the cost of a failed attempt bounded.
+const REFINEMENT_RETRY_SECONDS: usize = 1;
+
+/// Trailing audio staged before staged refinement is abandoned.
+const REFINEMENT_TAIL_SECONDS: usize = 15;
+
+/// Longest a reception may stall before the worker searches for a new signal.
+///
+/// `auto_stop` is left off because its live scoring aborts real receptions
+/// early, so a signal that simply disappears is caught by this timeout instead.
+const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Decoded image published to the interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,6 +114,39 @@ pub struct Snapshot {
     pub error: Option<String>,
 }
 
+/// Single-slot handoff holding the newest observation.
+///
+/// The interface only ever uses the newest snapshot, so the worker overwrites
+/// the slot instead of queueing. This bounds the handoff by construction: an
+/// interface that stops polling cannot make the worker accumulate frames.
+#[derive(Debug, Default)]
+struct Mailbox {
+    slot: Mutex<Option<Snapshot>>,
+}
+
+impl Mailbox {
+    /// Replaces the pending snapshot, keeping payloads not yet collected.
+    fn publish(&self, mut snapshot: Snapshot) {
+        let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(previous) = slot.take() {
+            if snapshot.frame.is_none() {
+                snapshot.frame = previous.frame;
+            }
+            if snapshot.error.is_none() {
+                snapshot.error = previous.error;
+            }
+        }
+        *slot = Some(snapshot);
+    }
+
+    fn take(&self) -> Option<Snapshot> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}
+
 /// Handle to a running receive worker.
 ///
 /// Dropping the handle stops the worker and waits for it to finish, so the
@@ -106,7 +154,7 @@ pub struct Snapshot {
 pub struct Worker {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
-    snapshots: Receiver<Snapshot>,
+    mailbox: Arc<Mailbox>,
     slant: Arc<AtomicBool>,
 }
 
@@ -115,19 +163,20 @@ impl Worker {
     pub fn spawn(reader: CaptureReader, slant: bool) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
-        let (sender, snapshots) = channel();
+        let mailbox = Arc::new(Mailbox::default());
         let join = {
             let stop = Arc::clone(&stop);
             let slant = Arc::clone(&slant);
+            let mailbox = Arc::clone(&mailbox);
             thread::Builder::new()
                 .name("rssstv-receive".to_owned())
-                .spawn(move || run(reader, &sender, &stop, &slant))
+                .spawn(move || run(reader, &mailbox, &stop, &slant))
                 .ok()
         };
         Self {
             stop,
             join,
-            snapshots,
+            mailbox,
             slant,
         }
     }
@@ -136,31 +185,10 @@ impl Worker {
         self.slant.store(enabled, Ordering::Relaxed);
     }
 
-    /// Returns the newest state while preserving transient queued payloads.
+    /// Returns the newest state, or `None` when nothing changed since the last
+    /// call.
     pub fn latest(&self) -> Option<Snapshot> {
-        let mut newest = None;
-        let mut frame = None;
-        let mut error = None;
-        loop {
-            match self.snapshots.try_recv() {
-                Ok(mut snapshot) => {
-                    if snapshot.frame.is_some() {
-                        frame = snapshot.frame.take();
-                    }
-                    if snapshot.error.is_some() {
-                        error = snapshot.error.take();
-                    }
-                    newest = Some(snapshot);
-                }
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
-                    return newest.map(|mut snapshot| {
-                        snapshot.frame = frame;
-                        snapshot.error = error;
-                        snapshot
-                    });
-                }
-            }
-        }
+        self.mailbox.take()
     }
 }
 
@@ -179,6 +207,22 @@ impl core::fmt::Debug for Worker {
     }
 }
 
+/// State of the staged slant refinement that follows a completed raster.
+///
+/// Startup acquisition fits the raster rate from only a few periods, so the
+/// live clock can be off by thousands of parts per million. Refitting the rate
+/// over the whole staged reception is what removes the resulting slant, and it
+/// is not optional for a usable image.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Refinement {
+    /// Staging is off, or the reception cannot be refined.
+    NotApplicable,
+    /// Collecting trailing audio until the refit raster is covered.
+    Waiting,
+    Done,
+    Failed(String),
+}
+
 /// Owns the protocol state for one worker thread.
 struct Session {
     demodulator: Demodulator,
@@ -186,9 +230,12 @@ struct Session {
     sample_rate_hz: u32,
     published_revision: Option<u64>,
     searching: bool,
-    decoder_slant: bool,
-    refinement_attempted: bool,
-    refinement_error: Option<String>,
+    refinement: Refinement,
+    /// Staged length at which the next refinement attempt is worthwhile.
+    refine_next_len: usize,
+    /// Staged length beyond which refinement is abandoned. Zero until the
+    /// first trailing block arrives.
+    refine_limit_len: usize,
 }
 
 impl Session {
@@ -199,9 +246,9 @@ impl Session {
             sample_rate_hz,
             published_revision: None,
             searching: true,
-            decoder_slant: false,
-            refinement_attempted: false,
-            refinement_error: None,
+            refinement: Refinement::NotApplicable,
+            refine_next_len: 0,
+            refine_limit_len: 0,
         })
     }
 
@@ -237,11 +284,25 @@ impl Session {
         Ok(())
     }
 
+    /// Returns whether the reception is over and refinement has resolved.
+    ///
+    /// Refinement needs trailing audio, so the search for the next signal must
+    /// not restart the demodulator while it is still waiting.
     fn reception_finished(&self) -> bool {
         !self.searching
+            && self.refinement != Refinement::Waiting
             && self.decoder.as_ref().is_some_and(|decoder| {
                 matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. })
             })
+    }
+
+    fn take_refinement_error(&mut self) -> Option<String> {
+        let Refinement::Failed(message) = &self.refinement else {
+            return None;
+        };
+        let message = message.clone();
+        self.refinement = Refinement::NotApplicable;
+        Some(message)
     }
 
     /// Feeds one demodulated chunk into the raster decoder.
@@ -254,7 +315,9 @@ impl Session {
                     RxConfig {
                         live_sync: true,
                         fit_initial_rate: slant,
-                        auto_stop: true,
+                        // Live scoring aborts real receptions early, so the
+                        // worker's stall timeout ends dead signals instead.
+                        auto_stop: false,
                         sync_detector_delay: sync_detector_delay(mode),
                         staging: if slant {
                             Staging::Memory {
@@ -270,16 +333,28 @@ impl Session {
             );
             self.published_revision = None;
             self.searching = false;
-            self.decoder_slant = slant;
-            self.refinement_attempted = false;
-            self.refinement_error = None;
+            self.refinement = if slant {
+                Refinement::Waiting
+            } else {
+                Refinement::NotApplicable
+            };
+            self.refine_next_len = 0;
+            self.refine_limit_len = 0;
         }
         if chunk.frequency_hz().is_empty() {
             return Ok(());
         }
-        let Some(decoder) = self.decoder.as_mut() else {
+        // The decoder is moved out so the refinement bookkeeping below can
+        // borrow the session mutably alongside it.
+        let Some(mut decoder) = self.decoder.take() else {
             return Ok(());
         };
+        let result = self.drive(&mut decoder, chunk);
+        self.decoder = Some(decoder);
+        result
+    }
+
+    fn drive(&mut self, decoder: &mut RxDecoder, chunk: &DemodulatedChunk) -> Result<(), String> {
         let mut offset = 0;
         while offset < chunk.frequency_hz().len() {
             let block = DemodulatedBlock::new(
@@ -288,7 +363,12 @@ impl Session {
                 &chunk.sync_strength()[offset..],
             );
             match decoder.state() {
-                RxState::Complete | RxState::Stopped { .. } => {
+                RxState::Complete => {
+                    self.stage_tail(decoder, block);
+                    break;
+                }
+                RxState::Stopped { .. } => {
+                    self.refinement = Refinement::NotApplicable;
                     break;
                 }
                 _ => {}
@@ -312,17 +392,44 @@ impl Session {
                 break;
             }
         }
-        if decoder.state() == RxState::Complete
-            && self.decoder_slant
-            && slant
-            && !self.refinement_attempted
-        {
-            self.refinement_attempted = true;
-            if let Err(error) = decoder.refine_staged() {
-                self.refinement_error = Some(format!("slant refinement failed: {error}"));
+        Ok(())
+    }
+
+    /// Retains trailing audio after completion and refits the raster clock.
+    ///
+    /// A refit raster reaches slightly past the samples decoded live, so the
+    /// tail has to be staged before refinement can succeed. This mirrors what
+    /// the offline `decode-wav` integration does at end of file.
+    fn stage_tail(&mut self, decoder: &mut RxDecoder, block: DemodulatedBlock<'_>) {
+        if self.refinement != Refinement::Waiting {
+            return;
+        }
+        if let Err(error) = decoder.stage_for_refinement(block) {
+            self.refinement =
+                Refinement::Failed(format!("staging the refinement tail failed: {error}"));
+            return;
+        }
+        let staged = decoder.staged_samples_len();
+        let rate = self.sample_rate_hz as usize;
+        if self.refine_limit_len == 0 {
+            self.refine_limit_len = staged.saturating_add(rate * REFINEMENT_TAIL_SECONDS);
+            self.refine_next_len = staged.saturating_add(rate * REFINEMENT_RETRY_SECONDS);
+            return;
+        }
+        if staged < self.refine_next_len {
+            return;
+        }
+        match decoder.refine_staged() {
+            Ok(_) => self.refinement = Refinement::Done,
+            // The refit raster reaches past the tail collected so far. More
+            // audio is still arriving, so wait rather than give up.
+            Err(SstvError::InsufficientStagedData { .. }) if staged < self.refine_limit_len => {
+                self.refine_next_len = staged.saturating_add(rate * REFINEMENT_RETRY_SECONDS);
+            }
+            Err(error) => {
+                self.refinement = Refinement::Failed(format!("slant refinement failed: {error}"));
             }
         }
-        Ok(())
     }
 
     /// Returns a new frame when the decoder image has changed.
@@ -337,17 +444,12 @@ impl Session {
     }
 }
 
-fn run(
-    mut reader: CaptureReader,
-    sender: &Sender<Snapshot>,
-    stop: &AtomicBool,
-    slant: &AtomicBool,
-) {
+fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &AtomicBool) {
     let sample_rate_hz = reader.sample_rate_hz();
     let mut session = match Session::new(sample_rate_hz) {
         Ok(session) => session,
         Err(error) => {
-            let _ = sender.send(Snapshot {
+            mailbox.publish(Snapshot {
                 error: Some(error),
                 ..Snapshot::default()
             });
@@ -360,6 +462,8 @@ fn run(
     let mut callsigns: Vec<String> = Vec::new();
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut error = None;
+    let mut last_progress = Progress::Idle;
+    let mut progress_changed_at = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
         let reading = reader.read(&mut pcm);
@@ -389,7 +493,7 @@ fn run(
                     let _ = session.reset();
                 }
                 if error.is_none() {
-                    error = session.refinement_error.take();
+                    error = session.take_refinement_error();
                 }
             }
             Err(reason) => {
@@ -398,7 +502,18 @@ fn run(
             }
         }
 
-        let progress = session.progress();
+        let mut progress = session.progress();
+        if progress == last_progress {
+            if progress.is_active() && progress_changed_at.elapsed() >= STALL_TIMEOUT {
+                error = Some("reception stalled; searching for a new signal".to_owned());
+                let _ = session.reset();
+                progress = session.progress();
+                progress_changed_at = Instant::now();
+            }
+        } else {
+            last_progress = progress;
+            progress_changed_at = Instant::now();
+        }
         let reception_finished = session.reception_finished();
         let frame = (reception_finished || last_frame.elapsed() >= FRAME_INTERVAL)
             .then(|| session.frame())
@@ -416,9 +531,7 @@ fn run(
             dropped_samples: reader.dropped_samples(),
             error: error.take(),
         };
-        if sender.send(snapshot).is_err() {
-            return;
-        }
+        mailbox.publish(snapshot);
         if reception_finished && let Err(reason) = session.restart_search() {
             error = Some(reason);
         }
@@ -442,8 +555,6 @@ fn follow_peak(current: f32, peak: f32, release: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc::channel;
-
     use rstest::rstest;
 
     use super::*;
@@ -505,36 +616,48 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_coalescing_preserves_the_latest_frame_and_error() {
-        let (sender, snapshots) = channel();
-        let worker = Worker {
-            stop: Arc::new(AtomicBool::new(false)),
-            join: None,
-            snapshots,
-            slant: Arc::new(AtomicBool::new(true)),
-        };
+    fn overwriting_the_mailbox_preserves_uncollected_payloads() {
+        let mailbox = Mailbox::default();
         let frame = Frame {
             width: 1,
             height: 1,
             rgba: vec![1, 2, 3, 255],
         };
-        sender
-            .send(Snapshot {
-                frame: Some(frame.clone()),
-                error: Some("capture gap".to_owned()),
-                ..Snapshot::default()
-            })
-            .unwrap();
-        sender
-            .send(Snapshot {
-                progress: Progress::Decoding { rows: 3, total: 10 },
-                ..Snapshot::default()
-            })
-            .unwrap();
+        mailbox.publish(Snapshot {
+            frame: Some(frame.clone()),
+            error: Some("capture gap".to_owned()),
+            ..Snapshot::default()
+        });
+        mailbox.publish(Snapshot {
+            progress: Progress::Decoding { rows: 3, total: 10 },
+            ..Snapshot::default()
+        });
 
-        let snapshot = worker.latest().unwrap();
+        let snapshot = mailbox.take().unwrap();
         assert_eq!(snapshot.progress, Progress::Decoding { rows: 3, total: 10 });
         assert_eq!(snapshot.frame, Some(frame));
         assert_eq!(snapshot.error.as_deref(), Some("capture gap"));
+    }
+
+    #[test]
+    fn a_collected_mailbox_reports_nothing_until_it_is_written_again() {
+        let mailbox = Mailbox::default();
+        mailbox.publish(Snapshot::default());
+        assert!(mailbox.take().is_some());
+        assert!(mailbox.take().is_none());
+    }
+
+    #[test]
+    fn newer_payloads_replace_uncollected_ones() {
+        let mailbox = Mailbox::default();
+        mailbox.publish(Snapshot {
+            error: Some("first".to_owned()),
+            ..Snapshot::default()
+        });
+        mailbox.publish(Snapshot {
+            error: Some("second".to_owned()),
+            ..Snapshot::default()
+        });
+        assert_eq!(mailbox.take().unwrap().error.as_deref(), Some("second"));
     }
 }

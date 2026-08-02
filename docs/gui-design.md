@@ -66,7 +66,7 @@ Receive:
 audio capture callback
   -> bounded PCM queue
   -> receive worker (Demodulator + RxDecoder)
-  -> bounded snapshot queue
+  -> single-slot snapshot mailbox
   -> iced Subscription
   -> update
 
@@ -117,6 +117,25 @@ rebuilds the completed image with a fitted global raster rate and epoch. The
 control does not replace live phase synchronization, which remains enabled
 independently. Turning Slant on after a reception has started applies to the
 next reception because the earlier samples were not staged.
+
+Staged refinement is what makes the image usable, not a cosmetic extra. Startup
+acquisition fits the raster rate from a few periods only, which on real signals
+lands thousands of parts per million away from the true rate and produces a
+heavily slanted image; refitting over the whole reception brings it back to
+within about one part per million.
+
+A refit raster reaches slightly past the samples decoded live, so refinement
+cannot run the moment the raster completes. The worker keeps feeding trailing
+audio through `RxDecoder::stage_for_refinement` and retries
+`RxDecoder::refine_staged` on a sample budget, treating
+`InsufficientStagedData` as "wait for more audio" rather than as a failure. The
+search for the next signal is held off until refinement resolves, because
+restarting the demodulator would cut off the tail it is waiting for.
+
+`auto_stop` is left disabled. Its live synchronization scoring aborts genuine
+receptions part way through, which loses both the remaining rows and the
+refinement that would have corrected the slant. A reception whose signal simply
+disappears is ended by a worker-side stall timeout instead.
 
 Raster phase acquisition collects four recurring synchronization pulses, as
 MMSSTV does, buffering at most five periods when the first post-VIS pulse is
@@ -192,10 +211,19 @@ variant, not by an ambient flag. For example, `RxMessage::SnapshotReceived`
 originates from the receive subscription, while `RxMessage::ModeSelected`
 originates from the mode dropdown.
 
-Worker snapshots are coalesced. If several snapshots are queued when the
-subscription is polled, the newest state is returned with the latest queued
-image frame and transient error attached. This prevents a newer meter-only
-snapshot from discarding a decoded frame before the interface observes it.
+The worker publishes into a single-slot mailbox rather than a queue. Writing
+replaces the pending snapshot, carrying forward an image frame or error the
+interface has not collected yet, so a newer meter-only snapshot cannot discard
+a decoded frame. Because each snapshot fully describes the receive state, one
+slot is sufficient, and it bounds the handoff by construction: an interface
+that stops polling cannot make the worker accumulate megabyte frames.
+
+The interface invalidates the canvas cache only when the raster, the detected
+mode, or the decoded fraction actually changed, so an idle receiver does not
+retessellate every frame.
+
+A detected mode replaces the operator's selection only while automatic
+detection is on. With it off, the dropdown selection stands.
 
 ## View Composition
 

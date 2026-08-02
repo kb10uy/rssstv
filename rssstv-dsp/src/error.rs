@@ -12,7 +12,10 @@ pub enum DspError {
     /// A buffer length does not match the length required by the processor.
     #[error("buffer length does not match the required length")]
     InvalidBufferLength,
-    /// A coefficient array is empty, non-finite, or has an unexpected length.
+    /// A coefficient array contains a non-finite value.
+    #[error("filter coefficients must be finite")]
+    InvalidCoefficient,
+    /// A coefficient array is empty or has an unexpected length.
     #[error("coefficient count does not match the filter order")]
     InvalidCoefficientCount,
     /// A frequency is non-finite or outside its valid Nyquist interval.

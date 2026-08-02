@@ -3,6 +3,8 @@ use core::f64::consts::TAU;
 
 use crate::DspError;
 
+const SINE_TABLE_LENGTH: usize = 4_096;
+
 #[derive(Clone, Debug)]
 /// A phase-continuous, table-based voltage-controlled sine oscillator.
 pub struct Vco {
@@ -25,12 +27,9 @@ impl Vco {
         if !control_gain_hz.is_finite() {
             return Err(DspError::InvalidFrequency);
         }
-        // Two table points per nominal sample-rate unit retains the reference
-        // table density while interpolation removes its integer-index steps.
-        let table_length = libm::ceil(sample_rate_hz * 2.0) as usize;
-        let mut sine_table = Vec::with_capacity(table_length);
-        for index in 0..table_length {
-            sine_table.push(libm::sin(TAU * index as f64 / table_length as f64));
+        let mut sine_table = Vec::with_capacity(SINE_TABLE_LENGTH);
+        for index in 0..SINE_TABLE_LENGTH {
+            sine_table.push(libm::sin(TAU * index as f64 / SINE_TABLE_LENGTH as f64));
         }
         Ok(Self {
             sample_rate_hz,
@@ -75,13 +74,16 @@ impl Vco {
     /// Advances the oscillator and returns one sine sample.
     ///
     /// Instantaneous frequency is `free_frequency_hz + control * control_gain_hz`.
-    pub fn process_sample(&mut self, control: f64) -> f64 {
+    pub fn process_sample(&mut self, control: f64) -> Result<f64, DspError> {
         let frequency_hz = self.free_frequency_hz + control * self.control_gain_hz;
+        if !frequency_hz.is_finite() || frequency_hz.abs() >= self.sample_rate_hz * 0.5 {
+            return Err(DspError::InvalidFrequency);
+        }
         // Advance before lookup to match the original VCO's sample timing.
         self.phase += frequency_hz / self.sample_rate_hz;
         // x - floor(x) wraps positive and negative frequencies into [0, 1).
         self.phase -= libm::floor(self.phase);
-        self.sine_at_phase(self.phase)
+        Ok(self.sine_at_phase(self.phase))
     }
 
     /// Resets phase to zero without changing oscillator frequencies.
@@ -126,10 +128,10 @@ mod tests {
         let sample_rate = 11_025.0;
         let frequency = 1_900.0;
         let mut oscillator = Vco::new(sample_rate, frequency, 0.0).unwrap();
-        let mut previous = oscillator.process_sample(0.0);
+        let mut previous = oscillator.process_sample(0.0).unwrap();
         let mut crossings = 0;
         for _ in 1..11_025 {
-            let sample = oscillator.process_sample(0.0);
+            let sample = oscillator.process_sample(0.0).unwrap();
             if previous < 0.0 && sample >= 0.0 {
                 crossings += 1;
             }
@@ -141,8 +143,8 @@ mod tests {
     #[test]
     fn control_changes_frequency_and_phase_remains_continuous() {
         let mut oscillator = Vco::new(8_000.0, 1_000.0, 500.0).unwrap();
-        let first = oscillator.process_sample(0.0);
-        let controlled = oscillator.process_sample(1.0);
+        let first = oscillator.process_sample(0.0).unwrap();
+        let controlled = oscillator.process_sample(1.0).unwrap();
         assert!((first - libm::sin(TAU / 8.0)).abs() < 1e-8);
         assert!((controlled - libm::sin(TAU * 2.5 / 8.0)).abs() < 1e-8);
     }
@@ -150,16 +152,37 @@ mod tests {
     #[test]
     fn phase_reset_reproduces_initial_sample() {
         let mut oscillator = Vco::new(11_025.0, 1_900.0, 400.0).unwrap();
-        let expected = oscillator.process_sample(0.25);
-        oscillator.process_sample(-0.5);
+        let expected = oscillator.process_sample(0.25).unwrap();
+        oscillator.process_sample(-0.5).unwrap();
         oscillator.reset_phase();
-        assert_eq!(oscillator.process_sample(0.25), expected);
+        assert_eq!(oscillator.process_sample(0.25).unwrap(), expected);
     }
 
     #[test]
     fn negative_frequency_wraps_phase() {
         let mut oscillator = Vco::new(8_000.0, 1_000.0, 2_000.0).unwrap();
-        let sample = oscillator.process_sample(-1.0);
+        let sample = oscillator.process_sample(-1.0).unwrap();
         assert!((sample + libm::sin(TAU / 8.0)).abs() < 1e-8);
+    }
+
+    #[test]
+    fn rejects_non_finite_and_nyquist_controlled_frequencies() {
+        let mut oscillator = Vco::new(8_000.0, 1_000.0, 2_000.0).unwrap();
+        assert_eq!(
+            oscillator.process_sample(1.5),
+            Err(DspError::InvalidFrequency)
+        );
+        assert_eq!(
+            oscillator.process_sample(f64::NAN),
+            Err(DspError::InvalidFrequency)
+        );
+    }
+
+    #[test]
+    fn table_size_is_independent_of_sample_rate() {
+        let low = Vco::new(8_000.0, 1_000.0, 0.0).unwrap();
+        let high = Vco::new(192_000.0, 1_000.0, 0.0).unwrap();
+        assert_eq!(low.sine_table.len(), SINE_TABLE_LENGTH);
+        assert_eq!(high.sine_table.len(), SINE_TABLE_LENGTH);
     }
 }

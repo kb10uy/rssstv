@@ -160,16 +160,16 @@ impl Pll {
     }
 
     /// Accepts one sample in `-1.0..=1.0` and returns the estimated frequency in hertz.
-    pub fn process_sample(&mut self, sample: f64) -> f64 {
+    pub fn process_sample(&mut self, sample: f64) -> Result<f64, DspError> {
         let normalized = sample * self.update_gain(sample);
         self.control = self
             .loop_filter
             .process_sample(self.phase_error)
             .clamp(-CONTROL_LIMIT, CONTROL_LIMIT);
-        self.vco_output = self.vco.process_sample(self.control);
+        self.vco_output = self.vco.process_sample(self.control)?;
         self.phase_error = self.vco_output * normalized;
         let filtered = self.output_filter.process_sample(self.control);
-        self.free_frequency_hz - filtered * self.shift_hz
+        Ok(self.free_frequency_hz - filtered * self.shift_hz)
     }
 
     /// Clears loop, filter, and gain state without changing the design.
@@ -221,7 +221,7 @@ mod tests {
         let mut estimates = Vec::new();
         for index in 0..count {
             let sample = libm::sin(TAU * frequency_hz * index as f64 / SAMPLE_RATE + phase);
-            let estimate = pll.process_sample(sample);
+            let estimate = pll.process_sample(sample).unwrap();
             if index >= count / 2 {
                 estimates.push(estimate);
             }
@@ -249,7 +249,7 @@ mod tests {
             let mut estimate = 0.0;
             for index in 0..8_192 {
                 let sample = 0.02 * libm::sin(TAU * 2_100.0 * index as f64 / SAMPLE_RATE);
-                estimate = pll.process_sample(sample);
+                estimate = pll.process_sample(sample).unwrap();
             }
             estimate
         };
@@ -266,7 +266,7 @@ mod tests {
         for index in 0..4_096 {
             let frequency_hz = if index < 2_048 { 1_600.0 } else { 2_200.0 };
             phase += TAU * frequency_hz / SAMPLE_RATE;
-            estimate = pll.process_sample(libm::sin(phase));
+            estimate = pll.process_sample(libm::sin(phase)).unwrap();
         }
         assert!((estimate - 2_200.0).abs() < 25.0, "estimate={estimate}");
     }

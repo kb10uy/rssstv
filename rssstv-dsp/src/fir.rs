@@ -50,14 +50,7 @@ impl FirDesign {
                 (self.upper_frequency_hz - self.lower_frequency_hz) * 0.5
             }
         };
-        let alpha = if self.attenuation_db >= 50.0 {
-            0.1102 * (self.attenuation_db - 8.7)
-        } else if self.attenuation_db >= 21.0 {
-            0.5842 * libm::pow(self.attenuation_db - 21.0, 0.4)
-                + 0.07886 * (self.attenuation_db - 21.0)
-        } else {
-            0.0
-        };
+        let alpha = kaiser_alpha(self.attenuation_db);
         let half_order = self.order / 2;
         let angular_cutoff = 2.0 * PI * cutoff_hz / self.sample_rate_hz;
         // Even orders produce an odd-length, linear-phase filter, so only the
@@ -128,8 +121,11 @@ pub struct Fir {
 impl Fir {
     /// Creates a filter from coefficients ordered newest sample first.
     pub fn new(coefficients: Vec<f64>) -> Result<Self, DspError> {
-        if coefficients.is_empty() || coefficients.iter().any(|value| !value.is_finite()) {
+        if coefficients.is_empty() {
             return Err(DspError::InvalidCoefficientCount);
+        }
+        if coefficients.iter().any(|value| !value.is_finite()) {
+            return Err(DspError::InvalidCoefficient);
         }
         let delay = vec![0.0; coefficients.len()];
         Ok(Self {
@@ -190,10 +186,11 @@ impl Fir {
 
     /// Replaces equal-length coefficients while preserving the delay-line state.
     pub fn replace_coefficients(&mut self, coefficients: Vec<f64>) -> Result<(), DspError> {
-        if coefficients.len() != self.coefficients.len()
-            || coefficients.iter().any(|value| !value.is_finite())
-        {
+        if coefficients.len() != self.coefficients.len() {
             return Err(DspError::InvalidCoefficientCount);
+        }
+        if coefficients.iter().any(|value| !value.is_finite()) {
+            return Err(DspError::InvalidCoefficient);
         }
         // Keeping the delay line allows seamless switching between equal-order
         // receive filters without introducing a fresh startup transient.
@@ -267,6 +264,10 @@ impl HilbertTransformer {
 }
 
 /// Designs an odd-symmetric, Hamming-windowed Hilbert FIR.
+///
+/// Orders below eight retain MMSSTV's normalization by the coefficient absolute
+/// sum. Orders of eight and above are unnormalized, so gain is discontinuous at
+/// that boundary for compatibility with the reference implementation.
 pub fn hilbert_coefficients(
     order: usize,
     sample_rate_hz: f64,
@@ -320,6 +321,9 @@ fn validate_fir_design(design: FirDesign) -> Result<(), DspError> {
     if !design.attenuation_db.is_finite() || design.attenuation_db < 0.0 {
         return Err(DspError::InvalidAttenuation);
     }
+    if kaiser_alpha(design.attenuation_db) > 700.0 {
+        return Err(DspError::InvalidAttenuation);
+    }
     if !design.gain.is_finite() {
         return Err(DspError::InvalidGain);
     }
@@ -366,25 +370,50 @@ fn validate_frequency_range(
     Ok(())
 }
 
+fn kaiser_alpha(attenuation_db: f64) -> f64 {
+    if attenuation_db >= 50.0 {
+        0.1102 * (attenuation_db - 8.7)
+    } else if attenuation_db >= 21.0 {
+        0.5842 * libm::pow(attenuation_db - 21.0, 0.4) + 0.07886 * (attenuation_db - 21.0)
+    } else {
+        0.0
+    }
+}
+
 fn bessel_i0(value: f64) -> f64 {
     let mut sum = 1.0;
     let mut term = 1.0;
-    let mut index = 1.0;
-    loop {
+    for index in 1..=1_024 {
+        let index = f64::from(index);
         term *= 0.5 * value / index;
         let square = term * term;
         sum += square;
-        if 1e-8 * sum > square {
+        if !sum.is_finite() || 1e-8 * sum > square {
             return sum;
         }
-        index += 1.0;
     }
+    sum
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    fn response_at(coefficients: &[f64], frequency_hz: f64, sample_rate_hz: f64) -> f64 {
+        let angular = 2.0 * PI * frequency_hz / sample_rate_hz;
+        let (real, imaginary) = coefficients.iter().enumerate().fold(
+            (0.0, 0.0),
+            |(real, imaginary), (index, coefficient)| {
+                let phase = angular * index as f64;
+                (
+                    real + coefficient * libm::cos(phase),
+                    imaginary - coefficient * libm::sin(phase),
+                )
+            },
+        );
+        libm::sqrt(real * real + imaginary * imaginary)
+    }
 
     fn low_pass_design() -> FirDesign {
         FirDesign {
@@ -440,12 +469,79 @@ mod tests {
     }
 
     #[test]
+    fn extreme_attenuation_is_rejected_without_iterating_indefinitely() {
+        let mut design = low_pass_design();
+        design.attenuation_db = f64::MAX;
+        assert_eq!(design.coefficients(), Err(DspError::InvalidAttenuation));
+    }
+
+    #[rstest]
+    #[case(FirKind::LowPass, 200.0, 3_000.0)]
+    #[case(FirKind::HighPass, 3_000.0, 200.0)]
+    #[case(FirKind::BandPass, 1_500.0, 200.0)]
+    #[case(FirKind::BandStop, 200.0, 1_500.0)]
+    fn transformed_filters_pass_and_reject_expected_bands(
+        #[case] kind: FirKind,
+        #[case] pass_frequency_hz: f64,
+        #[case] stop_frequency_hz: f64,
+    ) {
+        let coefficients = FirDesign {
+            kind,
+            order: 128,
+            sample_rate_hz: 8_000.0,
+            lower_frequency_hz: 1_000.0,
+            upper_frequency_hz: 2_000.0,
+            attenuation_db: 60.0,
+            gain: 1.0,
+        }
+        .coefficients()
+        .unwrap();
+        assert!(response_at(&coefficients, pass_frequency_hz, 8_000.0) > 0.95);
+        assert!(response_at(&coefficients, stop_frequency_hz, 8_000.0) < 0.002);
+    }
+
+    #[test]
     fn hilbert_coefficients_are_antisymmetric() {
         let coefficients = hilbert_coefficients(12, 11_025.0, 500.0, 2_800.0).unwrap();
         assert_eq!(coefficients[6], 0.0);
         for (left, right) in coefficients.iter().zip(coefficients.iter().rev()) {
             assert!((left + right).abs() < 1e-15);
         }
+    }
+
+    #[test]
+    fn hilbert_transformer_produces_quadrature_for_a_passband_tone() {
+        let sample_rate_hz = 8_000.0;
+        let frequency_hz = 1_500.0;
+        let mut transformer = HilbertTransformer::new(64, sample_rate_hz, 500.0, 3_000.0).unwrap();
+        let mut in_phase_power = 0.0;
+        let mut quadrature_power = 0.0;
+        let mut cross = 0.0;
+        for index in 0..4_096 {
+            let sample = libm::sin(2.0 * PI * frequency_hz * index as f64 / sample_rate_hz);
+            let analytic = transformer.process_sample(sample);
+            if index >= 512 {
+                in_phase_power += analytic.in_phase * analytic.in_phase;
+                quadrature_power += analytic.quadrature * analytic.quadrature;
+                cross += analytic.in_phase * analytic.quadrature;
+            }
+        }
+        let normalized_cross = cross / libm::sqrt(in_phase_power * quadrature_power);
+        assert!(normalized_cross.abs() < 0.002);
+        assert!((quadrature_power / in_phase_power - 1.0).abs() < 0.02);
+    }
+
+    #[test]
+    fn non_finite_coefficients_have_a_distinct_error() {
+        assert_eq!(
+            Fir::new(vec![1.0, f64::NAN]).err(),
+            Some(DspError::InvalidCoefficient)
+        );
+        let mut filter = Fir::new(vec![1.0, 0.0]).unwrap();
+        assert_eq!(
+            filter.replace_coefficients(vec![1.0, f64::INFINITY]),
+            Err(DspError::InvalidCoefficient)
+        );
     }
 
     #[test]

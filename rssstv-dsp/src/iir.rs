@@ -140,14 +140,15 @@ pub struct IirFilter {
 impl IirFilter {
     /// Creates a filter from one or more finite SOS coefficient sets.
     pub fn new(coefficients: Vec<SosCoefficients>) -> Result<Self, DspError> {
-        if coefficients.is_empty()
-            || coefficients.iter().any(|section| {
-                [section.b0, section.b1, section.b2, section.a1, section.a2]
-                    .iter()
-                    .any(|value| !value.is_finite())
-            })
-        {
+        if coefficients.is_empty() {
             return Err(DspError::InvalidCoefficientCount);
+        }
+        if coefficients.iter().any(|section| {
+            [section.b0, section.b1, section.b2, section.a1, section.a2]
+                .iter()
+                .any(|value| !value.is_finite())
+        }) {
+            return Err(DspError::InvalidCoefficient);
         }
         let states = alloc::vec![SosState::default(); coefficients.len()];
         Ok(Self {
@@ -175,10 +176,10 @@ impl IirFilter {
             state.z1 = coefficient.b1 * sample - coefficient.a1 * output + state.z2;
             state.z2 = coefficient.b2 * sample - coefficient.a2 * output;
             // Prevent subnormal state from degrading sustained real-time work.
-            if state.z1.abs() < 1e-37 {
+            if state.z1.abs() < f64::MIN_POSITIVE {
                 state.z1 = 0.0;
             }
-            if state.z2.abs() < 1e-37 {
+            if state.z2.abs() < f64::MIN_POSITIVE {
                 state.z2 = 0.0;
             }
             sample = output;
@@ -291,5 +292,34 @@ mod tests {
         let expected = block.map(|sample| sample_filter.process_sample(sample));
         block_filter.process_in_place(&mut block);
         assert_eq!(block, expected);
+    }
+
+    #[test]
+    fn non_finite_coefficients_have_a_distinct_error() {
+        let section = SosCoefficients {
+            b0: f64::NAN,
+            b1: 0.0,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        };
+        assert_eq!(
+            IirFilter::new(alloc::vec![section]).err(),
+            Some(DspError::InvalidCoefficient)
+        );
+    }
+
+    #[test]
+    fn normal_f64_values_are_not_flushed_as_denormals() {
+        let mut filter = IirFilter::new(alloc::vec![SosCoefficients {
+            b0: 0.0,
+            b1: 1.0e-100,
+            b2: 0.0,
+            a1: 0.0,
+            a2: 0.0,
+        }])
+        .unwrap();
+        filter.process_sample(1.0);
+        assert_eq!(filter.states[0].z1, 1.0e-100);
     }
 }

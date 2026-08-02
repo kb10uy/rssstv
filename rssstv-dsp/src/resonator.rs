@@ -2,7 +2,7 @@ use core::f64::consts::PI;
 
 use crate::DspError;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 /// A two-pole narrow-band resonator for tone-envelope detection.
 pub struct Resonator {
     sample_rate_hz: f64,
@@ -42,12 +42,25 @@ impl Resonator {
         self.frequency_hz
     }
 
+    /// Returns the current detection bandwidth in hertz.
+    pub fn bandwidth_hz(&self) -> f64 {
+        self.bandwidth_hz
+    }
+
     /// Retunes the center frequency while preserving resonator state.
     pub fn set_frequency(&mut self, frequency_hz: f64) -> Result<(), DspError> {
         validate_parameters(frequency_hz, self.sample_rate_hz, self.bandwidth_hz)?;
         self.frequency_hz = frequency_hz;
         // Retuning intentionally preserves state so AFC updates do not reset the
         // detector envelope.
+        self.update_coefficients();
+        Ok(())
+    }
+
+    /// Changes the detection bandwidth while preserving resonator state.
+    pub fn set_bandwidth(&mut self, bandwidth_hz: f64) -> Result<(), DspError> {
+        validate_parameters(self.frequency_hz, self.sample_rate_hz, bandwidth_hz)?;
+        self.bandwidth_hz = bandwidth_hz;
         self.update_coefficients();
         Ok(())
     }
@@ -59,7 +72,7 @@ impl Resonator {
             + self.state_1 * self.feedback_1
             + self.state_2 * self.feedback_2;
         self.state_2 = self.state_1;
-        if output.abs() < 1e-37 {
+        if output.abs() < f64::MIN_POSITIVE {
             output = 0.0;
         }
         self.state_1 = output;
@@ -146,5 +159,24 @@ mod tests {
         assert_ne!(resonator.process_sample(0.0), 0.0);
         resonator.reset();
         assert_eq!(resonator.process_sample(0.0), 0.0);
+    }
+
+    #[test]
+    fn bandwidth_can_be_retuned_without_clearing_state() {
+        let mut resonator = Resonator::new(1_200.0, 11_025.0, 80.0).unwrap();
+        resonator.process_sample(1.0);
+        resonator.set_bandwidth(120.0).unwrap();
+        assert_eq!(resonator.bandwidth_hz(), 120.0);
+        assert_ne!(resonator.process_sample(0.0), 0.0);
+        assert_eq!(
+            resonator.set_bandwidth(-1.0),
+            Err(DspError::InvalidBandwidth)
+        );
+    }
+
+    #[test]
+    fn normal_f64_values_are_not_flushed_as_denormals() {
+        let mut resonator = Resonator::new(1_200.0, 11_025.0, 80.0).unwrap();
+        assert_ne!(resonator.process_sample(1.0e-100), 0.0);
     }
 }

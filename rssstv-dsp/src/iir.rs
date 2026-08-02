@@ -4,29 +4,49 @@ use core::f64::consts::PI;
 use crate::DspError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Analog low-pass prototype used to design an IIR filter.
 pub enum IirResponse {
+    /// Maximally flat Butterworth response.
     Butterworth,
-    Chebyshev { ripple_db: f64 },
+    /// Chebyshev type-I response.
+    Chebyshev {
+        /// Passband ripple in decibels.
+        ripple_db: f64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Parameters for a bilinear-transform low-pass IIR design.
 pub struct IirLowPassDesign {
+    /// Overall filter order.
     pub order: usize,
+    /// Sampling frequency in hertz.
     pub sample_rate_hz: f64,
+    /// Digital cutoff frequency in hertz.
     pub cutoff_hz: f64,
+    /// Desired analog prototype response.
     pub response: IirResponse,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// Coefficients for one second-order section.
+///
+/// The denominator convention is `1 + a1*z^-1 + a2*z^-2`.
 pub struct SosCoefficients {
+    /// Feed-forward coefficient for the current input.
     pub b0: f64,
+    /// Feed-forward coefficient for the input delayed by one sample.
     pub b1: f64,
+    /// Feed-forward coefficient for the input delayed by two samples.
     pub b2: f64,
+    /// Denominator coefficient for one sample of feedback delay.
     pub a1: f64,
+    /// Denominator coefficient for two samples of feedback delay.
     pub a2: f64,
 }
 
 impl IirLowPassDesign {
+    /// Designs the filter as a cascade of second-order sections.
     pub fn coefficients(self) -> Result<Vec<SosCoefficients>, DspError> {
         validate_design(self)?;
         let section_count = self.order.div_ceil(2);
@@ -111,12 +131,14 @@ struct SosState {
 }
 
 #[derive(Clone, Debug)]
+/// An owned cascade of transposed direct-form-II sections.
 pub struct IirFilter {
     coefficients: Vec<SosCoefficients>,
     states: Vec<SosState>,
 }
 
 impl IirFilter {
+    /// Creates a filter from one or more finite SOS coefficient sets.
     pub fn new(coefficients: Vec<SosCoefficients>) -> Result<Self, DspError> {
         if coefficients.is_empty()
             || coefficients.iter().any(|section| {
@@ -134,14 +156,17 @@ impl IirFilter {
         })
     }
 
+    /// Designs and creates a low-pass filter.
     pub fn from_low_pass(design: IirLowPassDesign) -> Result<Self, DspError> {
         Self::new(design.coefficients()?)
     }
 
+    /// Returns the sections in processing order.
     pub fn coefficients(&self) -> &[SosCoefficients] {
         &self.coefficients
     }
 
+    /// Processes one sample through every section without allocating.
     pub fn process_sample(&mut self, mut sample: f64) -> f64 {
         for (coefficient, state) in self.coefficients.iter().zip(&mut self.states) {
             // Transposed direct form II limits internal state growth while using
@@ -161,12 +186,14 @@ impl IirFilter {
         sample
     }
 
+    /// Filters a block in place with the same state transitions as per-sample processing.
     pub fn process_in_place(&mut self, samples: &mut [f64]) {
         for sample in samples {
             *sample = self.process_sample(*sample);
         }
     }
 
+    /// Clears all section delay states without changing coefficients.
     pub fn reset(&mut self) {
         self.states.fill(SosState::default());
     }

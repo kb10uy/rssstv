@@ -3,6 +3,7 @@ use core::f64::consts::PI;
 use crate::DspError;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+/// A two-pole narrow-band resonator for tone-envelope detection.
 pub struct Resonator {
     sample_rate_hz: f64,
     frequency_hz: f64,
@@ -15,6 +16,7 @@ pub struct Resonator {
 }
 
 impl Resonator {
+    /// Creates a resonator centered at `frequency_hz` with the requested bandwidth.
     pub fn new(
         frequency_hz: f64,
         sample_rate_hz: f64,
@@ -35,10 +37,12 @@ impl Resonator {
         Ok(resonator)
     }
 
+    /// Returns the current center frequency in hertz.
     pub fn frequency_hz(&self) -> f64 {
         self.frequency_hz
     }
 
+    /// Retunes the center frequency while preserving resonator state.
     pub fn set_frequency(&mut self, frequency_hz: f64) -> Result<(), DspError> {
         validate_parameters(frequency_hz, self.sample_rate_hz, self.bandwidth_hz)?;
         self.frequency_hz = frequency_hz;
@@ -48,6 +52,7 @@ impl Resonator {
         Ok(())
     }
 
+    /// Processes one sample without allocating.
     pub fn process_sample(&mut self, sample: f64) -> f64 {
         // Two-pole resonator: y[n] = a0*x[n] + b1*y[n-1] + b2*y[n-2].
         let mut output = sample * self.input_gain
@@ -61,12 +66,14 @@ impl Resonator {
         output
     }
 
+    /// Processes a block in place.
     pub fn process_in_place(&mut self, samples: &mut [f64]) {
         for sample in samples {
             *sample = self.process_sample(*sample);
         }
     }
 
+    /// Clears the resonator history without changing its tuning.
     pub fn reset(&mut self) {
         self.state_1 = 0.0;
         self.state_2 = 0.0;

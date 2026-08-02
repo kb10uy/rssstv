@@ -1,14 +1,23 @@
 use core::fmt;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// An invalid DSP design or processor configuration.
 pub enum DspError {
+    /// Filter attenuation is negative or not finite.
     InvalidAttenuation,
+    /// Resonator bandwidth is negative or not finite.
     InvalidBandwidth,
+    /// A coefficient array is empty, non-finite, or has an unexpected length.
     InvalidCoefficientCount,
+    /// A frequency is non-finite or outside its valid Nyquist interval.
     InvalidFrequency,
+    /// Filter gain is not finite.
     InvalidGain,
+    /// Filter order is zero or unsupported by the selected design.
     InvalidOrder,
+    /// Chebyshev passband ripple is non-positive or not finite.
     InvalidRipple,
+    /// Sample rate is non-positive or not finite.
     InvalidSampleRate,
 }
 

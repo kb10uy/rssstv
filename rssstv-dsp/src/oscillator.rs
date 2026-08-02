@@ -4,6 +4,7 @@ use core::f64::consts::TAU;
 use crate::DspError;
 
 #[derive(Clone, Debug)]
+/// A phase-continuous, table-based voltage-controlled sine oscillator.
 pub struct Vco {
     sample_rate_hz: f64,
     free_frequency_hz: f64,
@@ -13,6 +14,7 @@ pub struct Vco {
 }
 
 impl Vco {
+    /// Creates a VCO with frequencies in hertz and a linearly interpolated sine table.
     pub fn new(
         sample_rate_hz: f64,
         free_frequency_hz: f64,
@@ -39,24 +41,29 @@ impl Vco {
         })
     }
 
+    /// Returns the sampling frequency in hertz.
     pub fn sample_rate_hz(&self) -> f64 {
         self.sample_rate_hz
     }
 
+    /// Returns the free-running frequency in hertz.
     pub fn free_frequency_hz(&self) -> f64 {
         self.free_frequency_hz
     }
 
+    /// Returns the frequency deviation produced by one control unit, in hertz.
     pub fn control_gain_hz(&self) -> f64 {
         self.control_gain_hz
     }
 
+    /// Changes the free-running frequency without resetting phase.
     pub fn set_free_frequency(&mut self, frequency_hz: f64) -> Result<(), DspError> {
         validate_frequency(frequency_hz, self.sample_rate_hz)?;
         self.free_frequency_hz = frequency_hz;
         Ok(())
     }
 
+    /// Changes the frequency deviation per control unit without resetting phase.
     pub fn set_control_gain(&mut self, gain_hz: f64) -> Result<(), DspError> {
         if !gain_hz.is_finite() {
             return Err(DspError::InvalidFrequency);
@@ -65,6 +72,9 @@ impl Vco {
         Ok(())
     }
 
+    /// Advances the oscillator and returns one sine sample.
+    ///
+    /// Instantaneous frequency is `free_frequency_hz + control * control_gain_hz`.
     pub fn process_sample(&mut self, control: f64) -> f64 {
         let frequency_hz = self.free_frequency_hz + control * self.control_gain_hz;
         // Advance before lookup to match the original VCO's sample timing.
@@ -74,6 +84,7 @@ impl Vco {
         self.sine_at_phase(self.phase)
     }
 
+    /// Resets phase to zero without changing oscillator frequencies.
     pub fn reset_phase(&mut self) {
         self.phase = 0.0;
     }

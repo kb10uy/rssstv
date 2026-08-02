@@ -1,6 +1,11 @@
 use crate::DspError;
 
 #[derive(Clone, Debug)]
+/// Measures instantaneous frequency from interpolated zero crossings.
+///
+/// Both crossing polarities are used, producing at most one measurement per
+/// half-cycle. Smoothing and application-specific range limiting are left to
+/// the caller.
 pub struct ZeroCrossingFrequency {
     sample_rate_hz: f64,
     previous_sample: Option<f64>,
@@ -9,6 +14,7 @@ pub struct ZeroCrossingFrequency {
 }
 
 impl ZeroCrossingFrequency {
+    /// Creates a frequency meter for the given sampling frequency.
     pub fn new(sample_rate_hz: f64) -> Result<Self, DspError> {
         if !sample_rate_hz.is_finite() || sample_rate_hz <= 0.0 {
             return Err(DspError::InvalidSampleRate);
@@ -21,6 +27,7 @@ impl ZeroCrossingFrequency {
         })
     }
 
+    /// Accepts one sample and returns hertz when a complete half-cycle is available.
     pub fn process_sample(&mut self, sample: f64) -> Option<f64> {
         let previous_sample = self.previous_sample.replace(sample);
         // Both polarities are measured, yielding one estimate per half-cycle.
@@ -48,6 +55,7 @@ impl ZeroCrossingFrequency {
         frequency
     }
 
+    /// Discards sample and crossing history.
     pub fn reset(&mut self) {
         self.previous_sample = None;
         self.sample_index = 0;

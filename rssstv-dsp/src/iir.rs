@@ -31,6 +31,8 @@ impl IirLowPassDesign {
         validate_design(self)?;
         let section_count = self.order.div_ceil(2);
         let mut sections = Vec::with_capacity(section_count);
+        // Prewarp the digital cutoff before mapping the analog prototype poles
+        // through the bilinear transform.
         let warped_cutoff = libm::tan(PI * self.cutoff_hz / self.sample_rate_hz);
         let chebyshev_u = match self.response {
             IirResponse::Butterworth => None,
@@ -41,6 +43,7 @@ impl IirLowPassDesign {
         };
         let mut pole_index = (self.order & 1) + 1;
 
+        // Pair conjugate prototype poles into real second-order sections.
         for _ in 0..self.order / 2 {
             let angle = pole_index as f64 * PI / (2.0 * self.order as f64);
             let (natural_frequency, damping) = if let Some(u) = chebyshev_u {
@@ -60,12 +63,15 @@ impl IirLowPassDesign {
                 b0,
                 b1: 2.0 * b0,
                 b2: b0,
+                // The source recurrence stores positive feedback terms; the
+                // public SOS representation uses the standard denominator signs.
                 a1: -recursive_1,
                 a2: -recursive_2,
             });
             pole_index += 2;
         }
 
+        // An even-order Chebyshev response reaches its ripple minimum at DC.
         if let IirResponse::Chebyshev { ripple_db } = self.response
             && self.order.is_multiple_of(2)
         {
@@ -138,9 +144,12 @@ impl IirFilter {
 
     pub fn process_sample(&mut self, mut sample: f64) -> f64 {
         for (coefficient, state) in self.coefficients.iter().zip(&mut self.states) {
+            // Transposed direct form II limits internal state growth while using
+            // only two delay values per section.
             let output = coefficient.b0 * sample + state.z1;
             state.z1 = coefficient.b1 * sample - coefficient.a1 * output + state.z2;
             state.z2 = coefficient.b2 * sample - coefficient.a2 * output;
+            // Prevent subnormal state from degrading sustained real-time work.
             if state.z1.abs() < 1e-37 {
                 state.z1 = 0.0;
             }

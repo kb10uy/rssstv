@@ -42,11 +42,14 @@ impl Resonator {
     pub fn set_frequency(&mut self, frequency_hz: f64) -> Result<(), DspError> {
         validate_parameters(frequency_hz, self.sample_rate_hz, self.bandwidth_hz)?;
         self.frequency_hz = frequency_hz;
+        // Retuning intentionally preserves state so AFC updates do not reset the
+        // detector envelope.
         self.update_coefficients();
         Ok(())
     }
 
     pub fn process_sample(&mut self, sample: f64) -> f64 {
+        // Two-pole resonator: y[n] = a0*x[n] + b1*y[n-1] + b2*y[n-2].
         let mut output = sample * self.input_gain
             + self.state_1 * self.feedback_1
             + self.state_2 * self.feedback_2;
@@ -71,11 +74,13 @@ impl Resonator {
 
     fn update_coefficients(&mut self) {
         let angular_frequency = 2.0 * PI * self.frequency_hz / self.sample_rate_hz;
+        // Bandwidth places the pole radius; frequency places the pole angle.
         self.feedback_1 = 2.0
             * libm::exp(-PI * self.bandwidth_hz / self.sample_rate_hz)
             * libm::cos(angular_frequency);
         self.feedback_2 = libm::exp(-2.0 * PI * self.bandwidth_hz / self.sample_rate_hz);
         self.feedback_2 = -self.feedback_2;
+        // Preserve the detector scaling used by MMSSTV's tone-envelope bank.
         self.input_gain = if self.bandwidth_hz == 0.0 {
             libm::sin(angular_frequency)
         } else {

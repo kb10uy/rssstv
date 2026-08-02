@@ -23,6 +23,8 @@ impl Vco {
         if !control_gain_hz.is_finite() {
             return Err(DspError::InvalidFrequency);
         }
+        // Two table points per nominal sample-rate unit retains the reference
+        // table density while interpolation removes its integer-index steps.
         let table_length = libm::ceil(sample_rate_hz * 2.0) as usize;
         let mut sine_table = Vec::with_capacity(table_length);
         for index in 0..table_length {
@@ -65,7 +67,9 @@ impl Vco {
 
     pub fn process_sample(&mut self, control: f64) -> f64 {
         let frequency_hz = self.free_frequency_hz + control * self.control_gain_hz;
+        // Advance before lookup to match the original VCO's sample timing.
         self.phase += frequency_hz / self.sample_rate_hz;
+        // x - floor(x) wraps positive and negative frequencies into [0, 1).
         self.phase -= libm::floor(self.phase);
         self.sine_at_phase(self.phase)
     }
@@ -79,6 +83,8 @@ impl Vco {
         let lower_index = position as usize % self.sine_table.len();
         let upper_index = (lower_index + 1) % self.sine_table.len();
         let fraction = position - libm::floor(position);
+        // Linear interpolation favors spectral quality over bit compatibility
+        // with MMSSTV's truncated table lookup.
         self.sine_table[lower_index]
             + fraction * (self.sine_table[upper_index] - self.sine_table[lower_index])
     }

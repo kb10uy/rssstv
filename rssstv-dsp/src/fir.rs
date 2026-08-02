@@ -27,6 +27,8 @@ impl FirDesign {
     pub fn coefficients(self) -> Result<Vec<f64>, DspError> {
         validate_fir_design(self)?;
 
+        // Design one normalized low-pass prototype, then spectrally transform it
+        // into the requested response. This preserves MMSSTV's order convention.
         let cutoff_hz = match self.kind {
             FirKind::LowPass => self.lower_frequency_hz,
             FirKind::HighPass => self.sample_rate_hz * 0.5 - self.lower_frequency_hz,
@@ -44,6 +46,8 @@ impl FirDesign {
         };
         let half_order = self.order / 2;
         let angular_cutoff = 2.0 * PI * cutoff_hz / self.sample_rate_hz;
+        // Even orders produce an odd-length, linear-phase filter, so only the
+        // center coefficient and one symmetric half need to be calculated.
         let mut half = vec![0.0; half_order + 1];
 
         for (index, coefficient) in half.iter_mut().enumerate() {
@@ -60,6 +64,7 @@ impl FirDesign {
             };
         }
 
+        // Normalize the prototype at DC before applying a spectral transform.
         let sum = half[0] + 2.0 * half[1..].iter().sum::<f64>();
         if sum > 0.0 {
             for coefficient in &mut half {
@@ -138,6 +143,8 @@ impl Fir {
         self.delay[self.write_index] = sample;
         let mut delay_index = self.write_index;
         let mut output = 0.0;
+        // Coefficient zero multiplies the newest sample. Walking the ring
+        // backwards avoids shifting the complete delay line for every sample.
         for coefficient in &self.coefficients {
             output += coefficient * self.delay[delay_index];
             delay_index = if delay_index == 0 {
@@ -165,6 +172,8 @@ impl Fir {
         {
             return Err(DspError::InvalidCoefficientCount);
         }
+        // Keeping the delay line allows seamless switching between equal-order
+        // receive filters without introducing a fresh startup transient.
         self.coefficients = coefficients;
         Ok(())
     }
@@ -215,6 +224,7 @@ impl HilbertTransformer {
     pub fn process_sample(&mut self, sample: f64) -> AnalyticSample {
         let quadrature = self.filter.process_sample(sample);
         AnalyticSample {
+            // Match the real path to the Hilbert FIR's linear-phase delay.
             in_phase: self.filter.delayed_sample(self.filter.order() / 2),
             quadrature,
         }
@@ -240,6 +250,8 @@ pub fn hilbert_coefficients(
     let upper_angular = 2.0 * PI * upper_frequency_hz;
     let mut coefficients = Vec::with_capacity(order + 1);
 
+    // The difference of two band-limited ideal Hilbert responses is windowed
+    // directly. Its odd symmetry fixes the quadrature polarity used downstream.
     for index in 0..=order {
         let offset = index as isize - center as isize;
         let (lower, upper) = if offset == 0 {

@@ -175,8 +175,8 @@ fn parse_position(node: &KdlNode, allow_anchor: bool) -> Result<Position, Templa
         .transpose()?
         .unwrap_or_default();
     Ok(Position {
-        x: required_length(node, "x")?,
-        y: required_length(node, "y")?,
+        x: required_coordinate(node, "x")?,
+        y: required_coordinate(node, "y")?,
         anchor,
     })
 }
@@ -269,12 +269,26 @@ fn parse_color(value: &str) -> Result<Color, TemplateError> {
 }
 
 fn required_length(node: &KdlNode, name: &str) -> Result<Length, TemplateError> {
-    optional_length(node, name)?.ok_or_else(|| {
+    parse_optional_length(node, name, false)?.ok_or_else(|| {
         TemplateError::Schema(format!("`{}` requires property `{name}`", node.name()))
     })
 }
 
 fn optional_length(node: &KdlNode, name: &str) -> Result<Option<Length>, TemplateError> {
+    parse_optional_length(node, name, false)
+}
+
+fn required_coordinate(node: &KdlNode, name: &str) -> Result<Length, TemplateError> {
+    parse_optional_length(node, name, true)?.ok_or_else(|| {
+        TemplateError::Schema(format!("`{}` requires property `{name}`", node.name()))
+    })
+}
+
+fn parse_optional_length(
+    node: &KdlNode,
+    name: &str,
+    allow_negative: bool,
+) -> Result<Option<Length>, TemplateError> {
     let Some(entry) = unique_property(node, name)? else {
         return Ok(None);
     };
@@ -283,8 +297,13 @@ fn optional_length(node: &KdlNode, name: &str) -> Result<Option<Length>, Templat
         KdlValue::Float(value) => *value,
         _ => return schema(format!("property `{name}` must be a number")),
     };
-    if !value.is_finite() || value < 0.0 {
-        return schema(format!("property `{name}` must be finite and non-negative"));
+    if !value.is_finite() || (!allow_negative && value < 0.0) {
+        let constraint = if allow_negative {
+            "finite"
+        } else {
+            "finite and non-negative"
+        };
+        return schema(format!("property `{name}` must be {constraint}"));
     }
     let unit = entry
         .ty()
@@ -496,5 +515,24 @@ group {
         )
         .unwrap_err();
         assert!(unitless.to_string().contains("requires a unit"));
+    }
+
+    #[test]
+    fn accepts_negative_coordinates_but_rejects_negative_sizes() {
+        let template = Template::parse(
+            "rect { position x=(fw)-5 y=(fh)-1.5; size width=(fw)10 height=(fh)20; fill color=\"#ffffff\"; }",
+        )
+        .unwrap();
+        let Layer::Rectangle(rectangle) = &template.layers()[0] else {
+            panic!("expected rectangle");
+        };
+        assert_eq!(rectangle.position.x, Length::FrameWidth(-5.0));
+        assert_eq!(rectangle.position.y, Length::FrameHeight(-1.5));
+
+        let negative_size = Template::parse(
+            "rect { position x=(fw)0 y=(fh)0; size width=(fw)-1 height=(fh)20; fill color=\"#ffffff\"; }",
+        )
+        .unwrap_err();
+        assert!(negative_size.to_string().contains("non-negative"));
     }
 }

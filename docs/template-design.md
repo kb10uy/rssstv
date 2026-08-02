@@ -143,6 +143,9 @@ KDL type annotations identify relative units without quoting values:
 
 Thus `(fw)100` is the full frame width and `(fh)100` is the full frame height.
 Coordinates remain floating-point values until rasterization.
+Position, line endpoint, and group-offset values may be negative, allowing a
+layer to extend beyond the top or left frame edge. Sizes, font sizes, and stroke
+widths remain non-negative.
 
 Anchors define which point of an object is placed at its position. Expected
 anchors include `top-left`, `top-center`, `top-right`, `center`, `bottom-left`,

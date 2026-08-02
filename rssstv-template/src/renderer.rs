@@ -728,6 +728,28 @@ group {
         assert_eq!(image.pixels()[99], Rgba8::new(255, 255, 255, 255));
     }
 
+    #[test]
+    fn clips_layers_with_negative_positions_to_the_frame() {
+        let template = Template::parse(
+            r##"
+rect {
+    position x=(fw)-50 y=(fh)0
+    size width=(fw)100 height=(fh)100
+    fill color="#ff0000"
+}
+"##,
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let image = Renderer::new()
+            .render(&template, RenderSize::new(10, 10).unwrap(), &context)
+            .unwrap();
+
+        assert_eq!(image.pixels()[0], Rgba8::new(255, 0, 0, 255));
+        assert_eq!(image.pixels()[9], Rgba8::default());
+    }
+
     struct SingleAsset(Vec<u8>);
 
     impl AssetProvider for SingleAsset {

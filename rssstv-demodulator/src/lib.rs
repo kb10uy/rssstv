@@ -366,7 +366,7 @@ impl Afc {
         let duration = self.run_samples as f64 / self.sample_rate_hz;
         self.run_samples = 0;
         if self.inhibit_samples > 0
-            || !(0.003..=0.020).contains(&duration)
+            || !(0.003..=0.050).contains(&duration)
             || self.measurements.len() < 2
         {
             self.measurements.clear();
@@ -536,6 +536,26 @@ mod tests {
         let samples = vis_signal(Mode::Scottie2, 8_000, 0.0);
         let output = demodulate(&samples, 8_000).unwrap();
         assert_eq!(output.mode(), Mode::Scottie2);
+    }
+
+    #[test]
+    fn tracks_repeated_offset_sync_pulses() {
+        let rate = 8_000.0;
+        let mut afc = Afc::new(rate);
+        afc.enabled = true;
+        for _ in 0..24 {
+            for sample in 0..(rate * 0.009) as usize {
+                afc.process(0.8, (sample % 3 == 0).then_some(1_240.0));
+            }
+            for _ in 0..(rate * 0.11) as usize {
+                afc.process(0.1, None);
+            }
+        }
+        assert!(
+            (afc.offset_hz - 40.0).abs() < 1.0,
+            "offset was {} Hz",
+            afc.offset_hz
+        );
     }
 
     #[test]

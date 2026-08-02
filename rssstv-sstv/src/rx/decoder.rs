@@ -48,10 +48,8 @@ pub struct RxDecoder {
     delivered_rows: usize,
     pending_row: Option<usize>,
     pending_events: VecDeque<RxEvent>,
-    robot_y: Vec<u8>,
-    robot_cr: Vec<u8>,
+    robot_chroma: [Vec<u8>; 2],
     robot_selector: Option<RobotSelector>,
-    robot_unit: usize,
     observations: VecDeque<SyncObservation>,
     staged_observations: Vec<SyncObservation>,
     phase_displacements: VecDeque<i64>,
@@ -73,6 +71,13 @@ impl RobotSelector {
         match self {
             Self::Cr => Self::Cb,
             Self::Cb => Self::Cr,
+        }
+    }
+
+    const fn plane(self) -> usize {
+        match self {
+            Self::Cr => 0,
+            Self::Cb => 1,
         }
     }
 }
@@ -114,10 +119,8 @@ impl RxDecoder {
             delivered_rows: 0,
             pending_row: None,
             pending_events: VecDeque::with_capacity(3),
-            robot_y: vec![0; size.width()],
-            robot_cr: vec![128; size.width()],
+            robot_chroma: [vec![128; size.width()], vec![128; size.width()]],
             robot_selector: None,
-            robot_unit: 0,
             observations: VecDeque::with_capacity(16),
             staged_observations: Vec::new(),
             phase_displacements: VecDeque::with_capacity(PHASE_AGREEMENT),
@@ -326,10 +329,8 @@ impl RxDecoder {
         let old_delivered_rows = self.delivered_rows;
         let old_pending_row = self.pending_row;
         let old_pending_events = self.pending_events.clone();
-        let old_robot_y = self.robot_y.clone();
-        let old_robot_cr = self.robot_cr.clone();
+        let old_robot_chroma = self.robot_chroma.clone();
         let old_robot_selector = self.robot_selector;
-        let old_robot_unit = self.robot_unit;
         let old_state = self.state;
         let saved_input = self.input.take();
         self.input = Some(staged);
@@ -338,13 +339,12 @@ impl RxDecoder {
         self.raster_unit = 0;
         self.delivered_rows = 0;
         self.pending_row = None;
-        self.robot_y.fill(0);
-        self.robot_cr.fill(128);
+        for plane in &mut self.robot_chroma {
+            plane.fill(128);
+        }
         self.robot_selector = None;
-        self.robot_unit = 0;
         self.pending_events.clear();
-        let units = self.mode.spec().active_rows() as usize
-            / self.mode.spec().rows_per_raster_unit() as usize;
+        let units = self.raster_units();
         self.rebuilding = true;
         let rebuild_result = (|| {
             while self.raster_unit < units {
@@ -362,10 +362,8 @@ impl RxDecoder {
             self.delivered_rows = old_delivered_rows;
             self.pending_row = old_pending_row;
             self.pending_events = old_pending_events;
-            self.robot_y = old_robot_y;
-            self.robot_cr = old_robot_cr;
+            self.robot_chroma = old_robot_chroma;
             self.robot_selector = old_robot_selector;
-            self.robot_unit = old_robot_unit;
             self.state = old_state;
             return Err(error);
         }
@@ -507,6 +505,9 @@ impl RxDecoder {
     }
 
     fn can_decode_next(&self) -> Result<bool, SstvError> {
+        if self.raster_unit >= self.raster_units() {
+            return Ok(false);
+        }
         Ok(self.input.as_ref().expect("input initialized").end() >= self.required_end()?)
     }
 
@@ -544,6 +545,8 @@ impl RxDecoder {
                 }
             }
             RasterOrganization::AlternatingYCrCb => {
+                // Only one chrominance plane arrives per raster unit, so every
+                // row is drawn from the received plane and the retained one.
                 let luminance = self.segment(ScanChannel::Luminance, 0)?;
                 let chroma = self.segment(ScanChannel::RedDifference, 0)?;
                 let selector = self.robot_selector_at(unit)?.unwrap_or_else(|| {
@@ -555,51 +558,15 @@ impl RxDecoder {
                             RobotSelector::Cb
                         })
                 });
-                let current_y = (0..width)
-                    .map(|x| self.level_at(unit, luminance, x))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let current_chroma = (0..width)
-                    .map(|x| self.level_at(unit, chroma, x))
-                    .collect::<Result<Vec<_>, _>>()?;
-                if let Some(previous_selector) = self.robot_selector
-                    && previous_selector != selector
-                {
-                    let previous_unit = self.robot_unit;
-                    for x in 0..width {
-                        let (cr, cb) = if previous_selector == RobotSelector::Cr {
-                            (self.robot_cr[x], current_chroma[x])
-                        } else {
-                            (current_chroma[x], self.robot_cr[x])
-                        };
-                        self.set_pixel(
-                            x,
-                            previous_unit,
-                            y_cr_cb_to_rgb(YCrCb8 {
-                                y: self.robot_y[x],
-                                cr,
-                                cb,
-                            }),
-                        );
-                        self.set_pixel(
-                            x,
-                            unit,
-                            y_cr_cb_to_rgb(YCrCb8 {
-                                y: current_y[x],
-                                cr,
-                                cb,
-                            }),
-                        );
-                    }
-                    if !rebuilding {
-                        self.pending_row = Some(unit);
-                    }
-                    self.robot_selector = None;
-                } else {
-                    self.robot_y.copy_from_slice(&current_y);
-                    self.robot_cr.copy_from_slice(&current_chroma);
-                    self.robot_selector = Some(selector);
-                    self.robot_unit = unit;
+                for x in 0..width {
+                    let y = self.level_at(unit, luminance, x)?;
+                    let received = self.level_at(unit, chroma, x)?;
+                    self.robot_chroma[selector.plane()][x] = received;
+                    let cr = self.robot_chroma[0][x];
+                    let cb = self.robot_chroma[1][x];
+                    self.set_pixel(x, unit, y_cr_cb_to_rgb(YCrCb8 { y, cr, cb }));
                 }
+                self.robot_selector = Some(selector);
             }
             RasterOrganization::PairedYCrCb => {
                 let first = self.segment(ScanChannel::Luminance, 0)?;
@@ -632,12 +599,9 @@ impl RxDecoder {
             .as_mut()
             .expect("input initialized")
             .discard_before(discard);
-        match self.profile.organization {
-            RasterOrganization::AlternatingYCrCb if self.robot_selector.is_some() => Ok(None),
-            RasterOrganization::PairedYCrCb => Ok(Some(unit * 2)),
-            RasterOrganization::AlternatingYCrCb => Ok(Some(self.robot_unit)),
-            _ => Ok(Some(unit)),
-        }
+        Ok(Some(
+            unit * self.mode.spec().rows_per_raster_unit() as usize,
+        ))
     }
 
     fn frequency_at(&self, sample: u64) -> Result<f32, SstvError> {
@@ -694,8 +658,11 @@ impl RxDecoder {
     }
 
     fn set_pixel(&mut self, x: usize, y: usize, pixel: Rgb8) {
-        let width = self.image.size().width();
-        self.image.pixels_mut()[y * width + x] = pixel;
+        let size = self.image.size();
+        if x >= size.width() || y >= size.height() {
+            return;
+        }
+        self.image.pixels_mut()[y * size.width() + x] = pixel;
     }
 
     fn deliver_row(&mut self, row: usize) -> RxEvent {
@@ -1275,15 +1242,8 @@ mod tests {
     #[test]
     fn robot36_tcs_classification_overrides_parity_and_initial_selector() {
         let (mut frequency, sync) = sampled_body(Mode::Robot36, 0);
-        let profile = RasterProfile::for_mode(Mode::Robot36).unwrap();
-        for (unit, value) in [(0_u64, 2300.0), (1, 1500.0)] {
-            let unit_start = u128::from(profile.period_ps) * u128::from(unit);
-            let start = ((unit_start + 100_000_000_000) * u128::from(SAMPLE_RATE)
-                / 1_000_000_000_000) as usize;
-            let end = ((unit_start + 104_500_000_000) * u128::from(SAMPLE_RATE) / 1_000_000_000_000)
-                as usize;
-            frequency[start..end].fill(value);
-        }
+        fill_robot36_selector(&mut frequency, 0..1, 2300.0);
+        fill_robot36_selector(&mut frequency, 1..2, 1500.0);
         let mut decoder = RxDecoder::new(Mode::Robot36, SAMPLE_RATE).unwrap();
         let block = DemodulatedBlock::new(0, &frequency, &sync);
         let mut input = SampleBuffer::new(0);
@@ -1303,6 +1263,37 @@ mod tests {
         assert_eq!(
             rows,
             (0..Mode::Robot36.spec().active_rows() as usize).collect::<Vec<_>>()
+        );
+    }
+
+    fn fill_robot36_selector(frequency: &mut [f32], units: impl Iterator<Item = u64>, value: f32) {
+        let profile = RasterProfile::for_mode(Mode::Robot36).unwrap();
+        let (start_ps, end_ps) = profile.selector_window_ps().unwrap();
+        for unit in units {
+            let unit_start = u128::from(profile.period_ps) * u128::from(unit);
+            let sample = |offset_ps: u64| {
+                ((unit_start + u128::from(offset_ps)) * u128::from(SAMPLE_RATE) / 1_000_000_000_000)
+                    as usize
+            };
+            let (start, end) = (sample(start_ps), sample(end_ps));
+            if end <= frequency.len() {
+                frequency[start..end].fill(value);
+            }
+        }
+    }
+
+    #[test]
+    fn robot36_delivers_every_active_row_when_the_selector_never_alternates() {
+        let (mut frequency, sync) = sampled_body(Mode::Robot36, 311);
+        fill_robot36_selector(&mut frequency, 0..240, 1500.0);
+        let (image, rows, _) = decode(Mode::Robot36, &frequency, &sync, &[71, 4093, 13]);
+        assert_eq!(
+            rows,
+            (0..Mode::Robot36.spec().active_rows() as usize).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            image.get(0, Mode::Robot36.spec().active_rows() as usize),
+            Some(Rgb8::default())
         );
     }
 

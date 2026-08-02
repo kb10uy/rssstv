@@ -2,6 +2,23 @@
 
 Rust SSTV protocol, DSP, template-rendering, and WAV integration components.
 
+## Application
+
+`rssstv` is the desktop interface, built with iced:
+
+```text
+cargo run -p rssstv
+```
+
+It receives. Selecting an input device opens a capture stream and starts a
+worker that demodulates the audio, detects the mode from VIS, and decodes the
+image progressively. Mode, decoded rows, input level, synchronization strength,
+and any decoded FSKID callsign come from that worker.
+
+Transmit is not implemented yet, and completed receptions are not stored. See
+[docs/gui-design.md](docs/gui-design.md) for the design and the remaining
+work.
+
 ## Encode WAV
 
 `encode-wav` renders a KDL template over a background image and writes a

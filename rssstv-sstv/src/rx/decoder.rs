@@ -8,7 +8,7 @@ use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
 use crate::signal::Frequency;
 use crate::{RxProcessError, SstvError};
 
-use super::acquisition::{acquire, window_samples};
+use super::acquisition::{acquire_startup, startup_window_samples};
 use super::clock::{RasterClock, ceil_sample};
 use super::config::{RxConfig, Staging, sync_detector_delay_samples};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
@@ -17,8 +17,10 @@ use super::raster::{PixelSegment, RasterProfile};
 use super::slant::{SlantEstimate, SlantEstimator};
 use super::sync::{MIN_CONFIDENCE, SyncObservation, observe, push_bounded};
 
-const BAD_SYNC_SCORE_LIMIT: u8 = 12;
-const BAD_SYNC_PENALTY: u8 = 2;
+const BAD_SYNC_SCORE_LIMIT: u8 = 8;
+const BAD_SYNC_PENALTY: u8 = 1;
+const GOOD_SYNC_REWARD: u8 = 2;
+const AUTO_STOP_WARMUP: usize = 8;
 const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
 const MIN_PHASE_DISPLACEMENT: u64 = 2;
@@ -51,6 +53,7 @@ pub struct RxDecoder {
     phase_displacements: VecDeque<i64>,
     last_phase_adjustment: Option<usize>,
     bad_sync_score: u8,
+    sync_checks: usize,
     staged: Option<SampleBuffer>,
     image_revision: u64,
     rebuilding: bool,
@@ -143,6 +146,7 @@ impl RxDecoder {
             phase_displacements: VecDeque::with_capacity(PHASE_AGREEMENT),
             last_phase_adjustment: None,
             bad_sync_score: 0,
+            sync_checks: 0,
             staged: None,
             image_revision: 0,
             rebuilding: false,
@@ -250,13 +254,14 @@ impl RxDecoder {
         loop {
             if self.decode.clock.is_none() {
                 let input = self.input.as_ref().expect("input initialized");
-                let target = window_samples(self.profile, self.sample_rate_hz);
+                let target = startup_window_samples(self.profile, self.sample_rate_hz);
                 if input.len() as u64 >= target {
-                    match acquire(
+                    match acquire_startup(
                         input,
                         self.profile,
                         self.sample_rate_hz,
                         self.config.sync_detector_delay,
+                        self.config.fit_initial_rate,
                     ) {
                         Ok(clock) => {
                             self.decode.clock = Some(clock);
@@ -625,9 +630,9 @@ impl RxDecoder {
                         .robot_selector
                         .map(RobotSelector::opposite)
                         .unwrap_or(if unit & 1 == 0 {
-                            RobotSelector::Cr
-                        } else {
                             RobotSelector::Cb
+                        } else {
+                            RobotSelector::Cr
                         })
                 });
                 for x in 0..width {
@@ -663,6 +668,9 @@ impl RxDecoder {
             }
         }
         self.decode.raster_unit += 1;
+        if !rebuilding {
+            self.image_revision = self.image_revision.saturating_add(1);
+        }
         let discard = self
             .decode
             .clock
@@ -705,8 +713,8 @@ impl RxDecoder {
     fn level_at(&self, unit: usize, segment: PixelSegment, x: usize) -> Result<u8, SstvError> {
         let clock = self.decode.clock.expect("clock acquired");
         let window = self.pixel_window(clock, unit, segment, x)?;
-        // Averaging the whole transmitted pixel keeps every demodulated sample
-        // instead of discarding all but one centre reading.
+        // Averaging the guarded pixel interior suppresses boundary transitions
+        // without reducing the demodulated stream's sample rate.
         Ok(self.frequency_to_level(self.mean_frequency(window)?))
     }
 
@@ -725,7 +733,7 @@ impl RxDecoder {
     fn robot_selector_at(&self, unit: usize) -> Result<Option<RobotSelector>, SstvError> {
         let clock = self.decode.clock.expect("clock acquired");
         let average = self.mean_frequency(self.selector_window(clock, unit)?)?;
-        Ok(if average <= 1700.0 {
+        Ok(if average < 1700.0 {
             Some(RobotSelector::Cr)
         } else if average >= 2100.0 {
             Some(RobotSelector::Cb)
@@ -849,12 +857,19 @@ impl RxDecoder {
     }
 
     fn note_bad_sync(&mut self) -> Result<bool, SstvError> {
+        self.sync_checks += 1;
+        if self.sync_checks <= AUTO_STOP_WARMUP {
+            return Ok(true);
+        }
         self.bad_sync_score = self.bad_sync_score.saturating_add(BAD_SYNC_PENALTY);
         self.check_auto_stop()
     }
 
     fn note_good_sync(&mut self) {
-        self.bad_sync_score = self.bad_sync_score.saturating_sub(1);
+        self.sync_checks += 1;
+        if self.sync_checks > AUTO_STOP_WARMUP {
+            self.bad_sync_score = self.bad_sync_score.saturating_sub(GOOD_SYNC_REWARD);
+        }
     }
 
     fn queue_event(&mut self, event: RxEvent) {
@@ -922,7 +937,7 @@ mod tests {
 
     /// Samples between the end of the raster and the end of the stream, which a
     /// live receiver always has because audio keeps arriving.
-    const TAIL: usize = 1_024;
+    const TAIL: usize = 4_096;
 
     fn sampled_image_body(mode: Mode, image: RgbImage, padding: usize) -> (Vec<f32>, Vec<f32>) {
         let mut frequency = vec![1900.0; padding];
@@ -1009,9 +1024,11 @@ mod tests {
                 Some(RxEvent::RowDecoded { row }) => rows.push(row),
                 Some(_) => {}
                 None if result.consumed() == 0 => panic!(
-                    "decoder made no progress: mode={mode:?} state={:?} offset={offset} len={}",
+                    "decoder made no progress: mode={mode:?} state={:?} offset={offset} len={} required_end={:?} available_end={:?}",
                     decoder.state(),
-                    frequency.len()
+                    frequency.len(),
+                    decoder.required_end(),
+                    decoder.input.as_ref().map(SampleBuffer::end)
                 ),
                 None => {}
             }
@@ -1068,8 +1085,8 @@ mod tests {
         let (image, _, _) = decode(mode, &frequency, &sync, &[usize::MAX]);
         let width = source.size().width();
         for row in 0..mode.spec().active_rows() as usize {
-            // The first raster unit of an alternating mode has no retained
-            // chrominance yet, exactly as in the reference decoder.
+            // Each even alternating row still uses one chrominance plane from
+            // the preceding pair, exactly as in the reference decoder.
             if mode.spec().raster_organization() == RasterOrganization::AlternatingYCrCb
                 && row % 2 == 0
             {
@@ -1106,6 +1123,32 @@ mod tests {
         let contiguous = decode(Mode::Martin2, &frequency, &sync, &[usize::MAX]);
         let fragmented = decode(Mode::Martin2, &frequency, &sync, &[1, 2, 31, 997, 7]);
         assert_eq!(contiguous, fragmented);
+    }
+
+    #[test]
+    fn normal_decoding_advances_the_image_revision() {
+        let (frequency, sync) = sampled_body(Mode::Robot36, 311);
+        let mut decoder = RxDecoder::new(Mode::Robot36, SAMPLE_RATE).unwrap();
+        let mut offset = 0;
+        let mut previous_revision = 0;
+        while decoder.state() != RxState::Complete {
+            let result = decoder
+                .process(DemodulatedBlock::new(
+                    offset as u64,
+                    &frequency[offset..],
+                    &sync[offset..],
+                ))
+                .unwrap();
+            offset += result.consumed();
+            if matches!(result.event(), Some(RxEvent::RowDecoded { .. })) {
+                assert!(decoder.image_revision() > previous_revision);
+                previous_revision = decoder.image_revision();
+            }
+        }
+        assert_eq!(
+            decoder.image_revision(),
+            Mode::Robot36.spec().active_rows() as u64
+        );
     }
 
     #[test]
@@ -1271,7 +1314,7 @@ mod tests {
     #[test]
     fn unsuccessful_acquisition_window_is_consumed_without_error() {
         let decoder = RxDecoder::new(Mode::Martin2, SAMPLE_RATE).unwrap();
-        let count = window_samples(decoder.profile, SAMPLE_RATE) as usize;
+        let count = startup_window_samples(decoder.profile, SAMPLE_RATE) as usize;
         let frequency = vec![1500.0; count];
         let sync = vec![0.0; count];
         let mut decoder = decoder;
@@ -1287,7 +1330,7 @@ mod tests {
     #[test]
     fn process_errors_report_the_consumed_prefix() {
         let mut decoder = RxDecoder::new(Mode::Martin2, SAMPLE_RATE).unwrap();
-        let count = window_samples(decoder.profile, SAMPLE_RATE) as usize;
+        let count = startup_window_samples(decoder.profile, SAMPLE_RATE) as usize;
         let mut frequency = vec![1500.0; count + 1];
         let sync = vec![0.0; count + 1];
         frequency[count] = f32::NAN;
@@ -1314,6 +1357,37 @@ mod tests {
             "epoch={epoch} expected={}",
             40_000 + noise as u64
         );
+    }
+
+    #[rstest]
+    #[case(Mode::Martin2)]
+    #[case(Mode::Scottie2)]
+    #[case(Mode::Robot36)]
+    #[case(Mode::Pd50)]
+    fn first_row_is_decoded_from_the_startup_buffer(#[case] mode: Mode) {
+        let (frequency, sync) = sampled_body(mode, 0);
+        let mut decoder = RxDecoder::new(mode, SAMPLE_RATE).unwrap();
+        let startup = startup_window_samples(decoder.profile, SAMPLE_RATE) as usize;
+        let available = startup + 1;
+        let absolute_start = 40_000;
+        let mut offset = 0;
+        let mut first_row = None;
+        for _ in 0..16 {
+            let result = decoder
+                .process(DemodulatedBlock::new(
+                    absolute_start + offset as u64,
+                    &frequency[offset..available],
+                    &sync[offset..available],
+                ))
+                .unwrap();
+            offset += result.consumed();
+            if let Some(RxEvent::RowDecoded { row }) = result.event() {
+                first_row = Some(row);
+                break;
+            }
+        }
+        assert!(offset <= available);
+        assert_eq!(first_row, Some(0));
     }
 
     fn drive_configured(
@@ -1484,14 +1558,18 @@ mod tests {
     #[test]
     fn auto_stop_score_leaks_instead_of_resetting_after_one_good_line() {
         let mut decoder = RxDecoder::new(Mode::Martin2, SAMPLE_RATE).unwrap();
+        for _ in 0..AUTO_STOP_WARMUP {
+            decoder.note_bad_sync().unwrap();
+        }
+        assert_eq!(decoder.bad_sync_score, 0);
         for _ in 0..5 {
             decoder.note_bad_sync().unwrap();
         }
-        assert_eq!(decoder.bad_sync_score, 10);
+        assert_eq!(decoder.bad_sync_score, 5);
         decoder.note_good_sync();
-        assert_eq!(decoder.bad_sync_score, 9);
+        assert_eq!(decoder.bad_sync_score, 3);
         decoder.note_bad_sync().unwrap();
-        assert_eq!(decoder.bad_sync_score, 11);
+        assert_eq!(decoder.bad_sync_score, 4);
     }
 
     #[rstest]
@@ -1512,6 +1590,7 @@ mod tests {
             },
         );
         let staged_len = decoder.staged_samples_len();
+        let decoded_revision = decoder.image_revision();
         let first = decoder.refine_staged().unwrap();
         let first_image = decoder.image().clone();
         assert_eq!(decoder.poll_event(), None);
@@ -1519,7 +1598,8 @@ mod tests {
         let second = decoder.refine_staged().unwrap();
         assert_eq!(first.slant, second.slant);
         assert_eq!(first_image, *decoder.image());
-        assert_eq!(second.revision, 2);
+        assert_eq!(first.revision, decoded_revision + 1);
+        assert_eq!(second.revision, decoded_revision + 2);
     }
 
     #[test]
@@ -1589,6 +1669,23 @@ mod tests {
             rows,
             (0..Mode::Robot36.spec().active_rows() as usize).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn robot36_ambiguous_selector_matches_mmsstv_initial_alternation() {
+        let (mut frequency, sync) = sampled_body(Mode::Robot36, 0);
+        fill_robot36_selector(&mut frequency, 0..2, 1700.0);
+        let mut decoder = RxDecoder::new(Mode::Robot36, SAMPLE_RATE).unwrap();
+        let block = DemodulatedBlock::new(0, &frequency, &sync);
+        let mut input = SampleBuffer::new(0);
+        input.append(block, frequency.len());
+        decoder.input = Some(input);
+        decoder.decode.clock = Some(RasterClock::from_estimate(0.0, SAMPLE_RATE as f64).unwrap());
+        assert_eq!(decoder.robot_selector_at(0).unwrap(), None);
+        decoder.decode_next(false).unwrap();
+        assert_eq!(decoder.decode.robot_selector, Some(RobotSelector::Cb));
+        decoder.decode_next(false).unwrap();
+        assert_eq!(decoder.decode.robot_selector, Some(RobotSelector::Cr));
     }
 
     fn fill_robot36_selector(frequency: &mut [f32], units: impl Iterator<Item = u64>, value: f32) {

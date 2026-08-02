@@ -4,6 +4,7 @@ members = [
   "decode-wav",
   "encode-wav",
   "rssstv",
+  "rssstv-audio",
   "rssstv-demodulator",
   "rssstv-dsp",
   "rssstv-fskid",
@@ -20,7 +21,9 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 
 [workspace.dependencies]
 anyhow = "1.0"
+fluent-bundle = "0.16"
 hound = "3.5"
+iced = { version = "0.14", features = ["canvas", "image"] }
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
 kdl = "6.7"
 libm = "0.2"
@@ -28,3 +31,4 @@ proptest = "1.7"
 resvg = "0.47"
 rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }
+unic-langid = "0.9"

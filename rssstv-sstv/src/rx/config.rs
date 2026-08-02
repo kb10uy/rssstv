@@ -20,10 +20,12 @@ pub enum Staging {
 /// Live synchronization accepts a pulse only when its peak is at least `0.35`
 /// and its local peak-to-background contrast is at least `0.20`; these are
 /// relative normalized criteria, not MMSSTV's integer-domain thresholds.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RxConfig {
     /// Enables stable live raster epoch corrections without altering input samples.
     pub live_sync: bool,
+    /// Fits the initial raster rate from recurring synchronization pulses.
+    pub fit_initial_rate: bool,
     /// Stops normally after synchronization failures persist in leaky history.
     pub auto_stop: bool,
     /// Compensates synchronization-envelope delay relative to frequency input.
@@ -33,6 +35,18 @@ pub struct RxConfig {
     pub sync_detector_delay: SstvDuration,
     /// Controls immutable sample retention for whole-image refinement.
     pub staging: Staging,
+}
+
+impl Default for RxConfig {
+    fn default() -> Self {
+        Self {
+            live_sync: false,
+            fit_initial_rate: true,
+            auto_stop: false,
+            sync_detector_delay: SstvDuration::ZERO,
+            staging: Staging::Disabled,
+        }
+    }
 }
 
 pub(super) fn sync_detector_delay_samples(

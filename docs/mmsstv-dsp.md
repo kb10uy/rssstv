@@ -286,6 +286,15 @@ After a correction, AutoSync suppresses further corrections for several lines.
 The same skip mechanism compensates group-delay changes when receive filters,
 the manual notch, or LMS processing are changed.
 
+MMSSTV does not normally downsample the live receive stream. Audio capture,
+front-end DSP, and the demodulated frequency/sync page buffers remain one sample
+in and one sample out. At higher rates the Hilbert discriminator compares phase
+over two or four samples but still emits one result per input sample. FFT display
+collection is decimated separately and does not feed SSTV decoding. Raster
+conversion is the many-to-one step: MMSSTV selects the first demodulated sample
+entering each output pixel bin, with an optional look-ahead maximum, rather than
+averaging the bin.
+
 ## Automatic Frequency Control
 
 AFC measures frequency-discriminator output during a mode-specific interior

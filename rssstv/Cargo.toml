@@ -6,3 +6,13 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+fluent-bundle.workspace = true
+iced.workspace = true
+rssstv-audio = { path = "../rssstv-audio" }
+rssstv-demodulator = { path = "../rssstv-demodulator" }
+rssstv-fskid = { path = "../rssstv-fskid" }
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+unic-langid.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

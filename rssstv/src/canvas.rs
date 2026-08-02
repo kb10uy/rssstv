@@ -5,8 +5,8 @@ use iced::{Color, Point, Rectangle, Renderer, Size, Theme};
 
 use crate::raster::Raster;
 
-const VIEWPORT: Color = Color::from_rgb(0.11, 0.11, 0.12);
-const PENDING: Color = Color::from_rgb(0.06, 0.06, 0.07);
+const VIEWPORT: Color = Color::from_rgb(0.04, 0.04, 0.05);
+const PENDING: Color = Color::from_rgb(0.09, 0.09, 0.10);
 const SCAN_LINE: Color = Color::from_rgb(0.58, 0.77, 0.99);
 
 /// Main image view.
@@ -22,6 +22,14 @@ pub struct ImageCanvas<'a> {
 }
 
 impl<'a> ImageCanvas<'a> {
+    /// Every canvas needs its own `cache`.
+    ///
+    /// A [`Cache`] holds the geometry of one canvas at one size, and rescales
+    /// that geometry when it is asked for a different size. Sharing a cache
+    /// between two canvases therefore draws one of them at the other's scale.
+    ///
+    /// The cache holds the whole view, including the scan boundary, so callers
+    /// invalidate it whenever `decoded_fraction` advances.
     pub fn new(cache: &'a Cache, raster: &'a Raster, decoded_fraction: f32) -> Self {
         Self {
             cache,
@@ -46,31 +54,45 @@ impl<Message> canvas::Program<Message> for ImageCanvas<'_> {
             let area = frame.size();
             frame.fill_rectangle(Point::ORIGIN, area, VIEWPORT);
 
-            let frame_rect = letterbox(area, self.raster.aspect_ratio());
-            frame.draw_image(
-                frame_rect,
-                canvas::Image::new(self.raster.handle().clone())
-                    .filter_method(FilterMethod::Nearest)
-                    .snap(true),
+            let rect = letterbox(area, self.raster.aspect_ratio());
+            let decoded_height = rect.height * self.decoded_fraction;
+            let boundary = rect.y + decoded_height;
+
+            if self.decoded_fraction < 1.0 {
+                frame.fill_rectangle(
+                    Point::new(rect.x, boundary),
+                    Size::new(rect.width, rect.height - decoded_height),
+                    PENDING,
+                );
+            }
+
+            // A frame draws its images above its fills and strokes regardless
+            // of call order, so the undecoded region is excluded by clipping
+            // the raster rather than by covering it.
+            frame.with_clip(
+                Rectangle::new(
+                    Point::new(rect.x, rect.y),
+                    Size::new(rect.width, decoded_height),
+                ),
+                |frame| {
+                    frame.draw_image(
+                        rect,
+                        canvas::Image::new(self.raster.handle().clone())
+                            .filter_method(FilterMethod::Nearest)
+                            .snap(true),
+                    );
+                },
             );
 
-            if self.decoded_fraction >= 1.0 {
-                return;
+            if self.decoded_fraction < 1.0 {
+                frame.stroke(
+                    &Path::line(
+                        Point::new(rect.x, boundary),
+                        Point::new(rect.x + rect.width, boundary),
+                    ),
+                    Stroke::default().with_color(SCAN_LINE).with_width(2.0),
+                );
             }
-            let decoded_height = frame_rect.height * self.decoded_fraction;
-            let boundary = frame_rect.y + decoded_height;
-            frame.fill_rectangle(
-                Point::new(frame_rect.x, boundary),
-                Size::new(frame_rect.width, frame_rect.height - decoded_height),
-                PENDING,
-            );
-            frame.stroke(
-                &Path::line(
-                    Point::new(frame_rect.x, boundary),
-                    Point::new(frame_rect.x + frame_rect.width, boundary),
-                ),
-                Stroke::default().with_color(SCAN_LINE).with_width(2.0),
-            );
         });
         vec![geometry]
     }

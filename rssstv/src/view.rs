@@ -84,7 +84,7 @@ fn toolbar(app: &App) -> Element<'_, Message> {
 fn main_pane(app: &App) -> Element<'_, Message> {
     let viewport = stack![
         canvas(ImageCanvas::new(
-            &app.canvas_cache,
+            &app.main_cache,
             app.active_raster(),
             app.decoded_fraction(),
         ))
@@ -404,7 +404,7 @@ fn composite(app: &App) -> Element<'_, Message> {
         .spacing(6)
         .align_y(Alignment::Center),
         container(
-            canvas(ImageCanvas::new(&app.canvas_cache, &app.tx_raster, 1.0))
+            canvas(ImageCanvas::new(&app.preview_cache, &app.tx_raster, 1.0))
                 .width(Length::Fill)
                 .height(Length::Fill)
         )

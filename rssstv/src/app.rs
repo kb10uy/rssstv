@@ -175,7 +175,8 @@ pub struct App {
     pub simulation: Simulation,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
-    pub canvas_cache: Cache,
+    pub main_cache: Cache,
+    pub preview_cache: Cache,
     started: Instant,
 }
 
@@ -226,7 +227,8 @@ impl App {
             },
             rx_raster: Raster::test_pattern(DEFAULT_RX_MODE),
             tx_raster: Raster::test_pattern(DEFAULT_TX_MODE),
-            canvas_cache: Cache::new(),
+            main_cache: Cache::new(),
+            preview_cache: Cache::new(),
             started: Instant::now(),
         }
     }
@@ -247,12 +249,11 @@ impl App {
         match message {
             Message::TabSelected(tab) => {
                 self.tab = tab;
-                self.canvas_cache.clear();
+                self.main_cache.clear();
             }
             Message::LocaleSelected(locale) => {
                 if locale != self.i18n.locale() {
                     self.i18n = I18n::new(locale);
-                    self.canvas_cache.clear();
                 }
             }
             Message::DeviceSelected(device) => self.device = Some(device),
@@ -270,7 +271,7 @@ impl App {
             RxMessage::ModeSelected(mode) => {
                 self.rx_mode = mode;
                 self.rx_raster = Raster::test_pattern(mode.0);
-                self.canvas_cache.clear();
+                self.main_cache.clear();
             }
             RxMessage::DspToggled(dsp) => self.dsp.toggle(dsp),
             RxMessage::AutoHistoryToggled(enabled) => self.auto_history = enabled,
@@ -282,7 +283,8 @@ impl App {
             TxMessage::ModeSelected(mode) => {
                 self.tx_mode = mode;
                 self.tx_raster = Raster::test_pattern(mode.0);
-                self.canvas_cache.clear();
+                self.main_cache.clear();
+                self.preview_cache.clear();
             }
         }
     }
@@ -314,7 +316,7 @@ impl App {
             input_level: (0.62 + 0.10 * (elapsed * 3.1).sin()).clamp(0.0, 1.0),
             sync_strength: (0.92 + 0.06 * (elapsed * 1.7).sin()).clamp(0.0, 1.0),
         };
-        self.canvas_cache.clear();
+        self.main_cache.clear();
     }
 
     /// Fraction of the active tab's raster that is drawn as decoded.

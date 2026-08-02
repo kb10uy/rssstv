@@ -1,0 +1,14 @@
+[package]
+name = "rssstv-modulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rssstv-dsp = { path = "../rssstv-dsp", features = ["std"] }
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+rstest.workspace = true

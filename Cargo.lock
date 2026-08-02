@@ -720,6 +720,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rssstv-modulator"
+version = "0.1.0"
+dependencies = [
+ "rssstv-dsp",
+ "rssstv-sstv",
+ "rstest",
+ "thiserror",
+]
+
+[[package]]
 name = "rssstv-sstv"
 version = "0.1.0"
 dependencies = [

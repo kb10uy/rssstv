@@ -27,13 +27,23 @@ impl RasterClock {
         })
     }
 
-    pub(super) fn sample_at(&self, protocol_ps: u64) -> Result<u64, SstvError> {
-        let sample =
+    /// Returns the fractional sample position of a protocol instant.
+    pub(super) fn position_at(&self, protocol_ps: u64) -> Result<f64, SstvError> {
+        let position =
             self.source_epoch + self.effective_sample_rate_hz * protocol_ps as f64 / 1.0e12;
-        if !sample.is_finite() || sample < 0.0 || sample > u64::MAX as f64 {
+        if !position.is_finite() || position < 0.0 || position > u64::MAX as f64 {
             return Err(SstvError::SamplePositionOverflow);
         }
-        Ok(sample as u64)
+        Ok(position)
+    }
+
+    pub(super) fn sample_at(&self, protocol_ps: u64) -> Result<u64, SstvError> {
+        Ok(self.position_at(protocol_ps)? as u64)
+    }
+
+    /// Returns the first sample whose instant is at or after `protocol_ps`.
+    pub(super) fn sample_from(&self, protocol_ps: u64) -> Result<u64, SstvError> {
+        Ok(ceil_sample(self.position_at(protocol_ps)?))
     }
 
     pub(super) fn samples_for(&self, protocol_ps: u64) -> Result<u64, SstvError> {
@@ -65,4 +75,10 @@ impl RasterClock {
         self.source_epoch = epoch;
         Ok(())
     }
+}
+
+/// Returns the first whole sample at or after a non-negative sample position.
+pub(super) fn ceil_sample(position: f64) -> u64 {
+    let whole = position as u64;
+    whole + u64::from((whole as f64) < position)
 }

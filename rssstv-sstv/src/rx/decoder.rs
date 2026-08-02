@@ -9,7 +9,7 @@ use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
 use crate::signal::Frequency;
 
 use super::acquisition::{acquire, window_samples};
-use super::clock::RasterClock;
+use super::clock::{RasterClock, ceil_sample};
 use super::config::{RxConfig, Staging};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
 use super::input::{DemodulatedBlock, SampleBuffer};
@@ -23,6 +23,7 @@ const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
 const MIN_PHASE_DISPLACEMENT: i64 = 2;
 const MIN_SYNC_CONFIDENCE: f32 = 0.20;
+const PIXEL_GUARD: f64 = 0.25;
 
 /// Result of rebuilding an image from staged immutable samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -424,19 +425,36 @@ impl RxDecoder {
         spec.active_rows() as usize / spec.rows_per_raster_unit() as usize
     }
 
-    fn pixel_sample(
+    /// Returns the half-open sample range averaged for one transmitted pixel.
+    ///
+    /// A guard band at both edges keeps sub-sample timing error from pulling a
+    /// neighbouring porch or component into the average. Pixels too short to
+    /// hold a guarded sample fall back to the reading nearest their centre.
+    fn pixel_window(
         &self,
         clock: RasterClock,
         unit: usize,
         segment: PixelSegment,
         x: usize,
-    ) -> Result<u64, SstvError> {
+    ) -> Result<(u64, u64), SstvError> {
         let width = self.image.size().width() as u128;
-        let center = u128::from(segment.start_ps)
-            + u128::from(segment.duration_ps) * (2 * x as u128 + 1) / (2 * width);
-        let protocol = u128::from(self.profile.period_ps) * unit as u128 + center;
-        let protocol = u64::try_from(protocol).map_err(|_| SstvError::TimeOverflow)?;
-        clock.sample_at(protocol)
+        let base = u128::from(self.profile.period_ps) * unit as u128 + u128::from(segment.start_ps);
+        let edge = |index: u128| -> Result<f64, SstvError> {
+            let protocol = base + u128::from(segment.duration_ps) * index / width;
+            let protocol = u64::try_from(protocol).map_err(|_| SstvError::TimeOverflow)?;
+            clock.position_at(protocol)
+        };
+        let left = edge(x as u128)?;
+        let right = edge(x as u128 + 1)?;
+        let guard = (right - left) * PIXEL_GUARD;
+        let first = ceil_sample(left + guard);
+        let end = ceil_sample(right - guard);
+        if end > first {
+            Ok((first, end))
+        } else {
+            let center = ceil_sample((left + right) * 0.5 - 0.5);
+            Ok((center, center + 1))
+        }
     }
 
     fn selector_window(&self, clock: RasterClock, unit: usize) -> Result<(u64, u64), SstvError> {
@@ -450,7 +468,7 @@ impl RxDecoder {
             .checked_mul(unit as u64)
             .ok_or(SstvError::TimeOverflow)?;
         let edge = |offset_ps: u64| -> Result<u64, SstvError> {
-            clock.sample_at(
+            clock.sample_from(
                 unit_start
                     .checked_add(offset_ps)
                     .ok_or(SstvError::TimeOverflow)?,
@@ -469,9 +487,8 @@ impl RxDecoder {
             .last()
             .ok_or(SstvError::UnsupportedRxMode(self.mode))?;
         let width = self.image.size().width();
-        self.pixel_sample(clock, self.raster_unit, last, width - 1)?
-            .checked_add(1)
-            .ok_or(SstvError::SamplePositionOverflow)
+        let (_, end) = self.pixel_window(clock, self.raster_unit, last, width - 1)?;
+        Ok(end)
     }
 
     fn validate_staged_coverage(
@@ -490,10 +507,13 @@ impl RxDecoder {
             }
         };
         for unit in 0..self.raster_units() {
+            // Sampling positions increase monotonically, so covering the first
+            // and last sample of every segment covers everything between them.
             for segment in self.profile.pixels().iter() {
-                for x in 0..width {
-                    require(self.pixel_sample(clock, unit, segment, x)?)?;
-                }
+                let (first, _) = self.pixel_window(clock, unit, segment, 0)?;
+                let (_, end) = self.pixel_window(clock, unit, segment, width - 1)?;
+                require(first)?;
+                require(end - 1)?;
             }
             if self.profile.selector_window_ps().is_some() {
                 let (first, end) = self.selector_window(clock, unit)?;
@@ -629,8 +649,10 @@ impl RxDecoder {
 
     fn level_at(&self, unit: usize, segment: PixelSegment, x: usize) -> Result<u8, SstvError> {
         let clock = self.clock.expect("clock acquired");
-        let sample = self.pixel_sample(clock, unit, segment, x)?;
-        Ok(self.frequency_to_level(f64::from(self.frequency_at(sample)?)))
+        let window = self.pixel_window(clock, unit, segment, x)?;
+        // Averaging the whole transmitted pixel keeps every demodulated sample
+        // instead of discarding all but one centre reading.
+        Ok(self.frequency_to_level(self.mean_frequency(window)?))
     }
 
     fn frequency_to_level(&self, frequency_hz: f64) -> u8 {
@@ -806,10 +828,36 @@ mod tests {
         RgbImage::new(size, Rgb8::new(64, 128, 192))
     }
 
+    fn band_image(mode: Mode) -> RgbImage {
+        let spec = mode.spec();
+        let size = ImageSize::new(spec.width() as usize, spec.height() as usize).unwrap();
+        let mut image = RgbImage::new(size, Rgb8::default());
+        let width = size.width();
+        for (index, pixel) in image.pixels_mut().iter_mut().enumerate() {
+            // Two-row bands keep every chrominance pair inside one colour, so
+            // subsampled modes stay exactly reproducible.
+            let band = (index / width / 2) as u32;
+            *pixel = Rgb8::new(
+                (band * 7 % 251) as u8,
+                (band * 29 % 241) as u8,
+                (band * 53 % 239) as u8,
+            );
+        }
+        image
+    }
+
     fn sampled_body(mode: Mode, padding: usize) -> (Vec<f32>, Vec<f32>) {
+        sampled_image_body(mode, source_image(mode), padding)
+    }
+
+    /// Samples between the end of the raster and the end of the stream, which a
+    /// live receiver always has because audio keeps arriving.
+    const TAIL: usize = 1_024;
+
+    fn sampled_image_body(mode: Mode, image: RgbImage, padding: usize) -> (Vec<f32>, Vec<f32>) {
         let mut frequency = vec![1900.0; padding];
         let mut sync = vec![0.0; padding];
-        for tone in TxEncoder::new(mode, source_image(mode)).unwrap().skip(13) {
+        for tone in TxEncoder::new(mode, image).unwrap().skip(13) {
             let relative_end = tone.until().as_picos() - VIS_END_PS;
             let end_sample = (u128::from(relative_end) * u128::from(SAMPLE_RATE))
                 .div_ceil(1_000_000_000_000) as usize;
@@ -824,6 +872,8 @@ mod tests {
                 },
             );
         }
+        frequency.resize(frequency.len() + TAIL, 1900.0);
+        sync.resize(frequency.len(), 0.0);
         (frequency, sync)
     }
 
@@ -900,6 +950,54 @@ mod tests {
                 Some(Rgb8::default())
             );
         }
+    }
+
+    #[rstest]
+    #[case(Mode::Martin1, false)]
+    #[case(Mode::Martin2, false)]
+    #[case(Mode::Scottie2, false)]
+    #[case(Mode::Robot72, true)]
+    #[case(Mode::Pd50, true)]
+    #[case(Mode::Robot36, true)]
+    fn non_uniform_image_survives_a_transmit_receive_round_trip(
+        #[case] mode: Mode,
+        #[case] subsampled: bool,
+    ) {
+        let source = band_image(mode);
+        let (frequency, sync) = sampled_image_body(mode, source.clone(), 512);
+        let (image, _, _) = decode(mode, &frequency, &sync, &[usize::MAX]);
+        let width = source.size().width();
+        for row in 0..mode.spec().active_rows() as usize {
+            // The first raster unit of an alternating mode has no retained
+            // chrominance yet, exactly as in the reference decoder.
+            if mode.spec().raster_organization() == RasterOrganization::AlternatingYCrCb
+                && row % 2 == 0
+            {
+                continue;
+            }
+            // Component edges are left out because the acquired sample rate
+            // still carries a few parts per million of fitting error.
+            for x in [width / 4, width / 2, 3 * width / 4] {
+                let expected = source.get(x, row).unwrap();
+                let expected = if subsampled {
+                    y_cr_cb_to_rgb(crate::color::rgb_to_y_cr_cb(expected))
+                } else {
+                    expected
+                };
+                assert_eq!(image.get(x, row), Some(expected), "{mode:?} ({x}, {row})");
+            }
+        }
+    }
+
+    #[rstest]
+    #[case(Mode::Martin1, 2)]
+    #[case(Mode::Martin2, 1)]
+    fn pixel_window_averages_only_what_a_pixel_can_hold(#[case] mode: Mode, #[case] expected: u64) {
+        let decoder = RxDecoder::new(mode, SAMPLE_RATE).unwrap();
+        let clock = RasterClock::from_estimate(0.0, SAMPLE_RATE, f64::from(SAMPLE_RATE)).unwrap();
+        let segment = decoder.segment(ScanChannel::Green, 0).unwrap();
+        let (first, end) = decoder.pixel_window(clock, 0, segment, 10).unwrap();
+        assert_eq!(end - first, expected);
     }
 
     #[test]

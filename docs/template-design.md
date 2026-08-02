@@ -287,3 +287,21 @@ The editor should preserve document order because it defines the layer order.
 Frame-relative geometry should be the normal editing mode so switching between
 PD120, Scottie 2, and other modes does not create separate templates solely due
 to resolution differences.
+
+## Composition Example
+
+The `rssstv-template` crate includes a command-line library example that renders
+a KDL template at the background image dimensions and saves the composed RGB
+image:
+
+```text
+cargo run -p rssstv-template --example compose -- template.kdl background.png output.png
+```
+
+`rssstv-template/examples/sample.kdl` is a variable-free sample suitable for a
+quick render.
+
+The example resolves `image` references relative to the process current working
+directory, explicitly loads system fonts, and supplies an opaque white image for
+every `rximage` layer. It supplies no text variables, so a template containing a
+`${...}` expression fails with the normal missing-variable error.

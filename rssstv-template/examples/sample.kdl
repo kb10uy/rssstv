@@ -1,0 +1,11 @@
+rximage {
+    position x=(fw)5 y=(fh)5
+    size width=(fw)30 height=(fh)30 fit="stretch"
+}
+
+rect {
+    position x=(fw)10 y=(fh)70
+    size width=(fw)80 height=(fh)20
+    fill color="#102040c0"
+    stroke color="#ffffff" width=(fh)0.5
+}

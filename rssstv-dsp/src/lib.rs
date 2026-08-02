@@ -10,6 +10,8 @@ extern crate alloc;
 
 /// Errors reported while validating DSP configurations.
 pub mod error;
+/// Discrete Fourier transforms and windowed spectra.
+pub mod fft;
 /// Finite impulse response filters and Hilbert transforms.
 pub mod fir;
 /// Frequency measurement primitives.

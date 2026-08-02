@@ -1,0 +1,16 @@
+[package]
+name = "rssstv-dsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[features]
+default = []
+std = []
+
+[dependencies]
+libm = "0.2"
+
+[dev-dependencies]
+rstest = "0.26"

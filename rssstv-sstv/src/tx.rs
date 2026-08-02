@@ -1,54 +1,29 @@
 //! Streaming encoders for the conventional-VIS SSTV modes supported by RSSSTV.
 
 use crate::SstvError;
-use crate::color::{LevelFrequencyBand, rgb_to_y_cr_cb};
-use crate::image::{ImageSize, Rgb8, RgbImage};
-use crate::mode::{Mode, ModeFamily, Support};
+use crate::color::rgb_to_y_cr_cb;
+use crate::image::{ImageSize, RgbImage};
+use crate::mode::{Mode, ScanChannel, ScanContent, Support};
 use crate::signal::{Frequency, TimedTone, Tone, TxComponent};
 use crate::time::TxInstant;
 
 const PS_PER_MS: u64 = 1_000_000_000;
 const VIS_END_PS: u64 = 910 * PS_PER_MS;
 
-#[derive(Clone, Copy)]
-enum Family {
-    Martin { component_ps: u64 },
-    Scottie { component_ps: u64 },
-    Robot36,
-    Robot72,
-    Pd { component_ps: u64 },
-}
-
-#[derive(Clone, Copy)]
-enum Segment {
-    Fixed(TxComponent, u32, u64),
-    Pixels(TxComponent, PixelSource, u64),
-}
-
-#[derive(Clone, Copy)]
-enum PixelSource {
-    Red,
-    Green,
-    Blue,
-    Y(usize),
-    Cr(usize),
-    Cb(usize),
-}
-
 /// A bounded, pull-based encoder for one owned SSTV image.
 ///
-/// Iteration emits conventional VIS framing, Scottie's initial synchronization
-/// tone when applicable, and the image raster. It does not emit VOX framing,
-/// footers, or station identification.
+/// Iteration emits conventional VIS framing, the mode's leading segments when
+/// applicable, and the image raster described by [`Mode::scan`]. It does not
+/// emit VOX framing, footers, or station identification. Image rows beyond the
+/// mode's active row count are not transmitted.
 pub struct TxEncoder {
     mode: Mode,
-    family: Family,
     image: RgbImage,
     deadline_ps: u64,
     vis_index: u8,
-    initial_sync_pending: bool,
-    line: usize,
-    segment: u8,
+    leading: usize,
+    unit: usize,
+    segment: usize,
     pixel: usize,
     segment_start_ps: u64,
 }
@@ -58,11 +33,8 @@ impl TxEncoder {
     pub fn new(mode: Mode, image: RgbImage) -> Result<Self, SstvError> {
         let spec = mode.spec();
         if spec.encode_support() != Support::Supported
-            || !matches!(
-                spec.family(),
-                ModeFamily::Martin | ModeFamily::Scottie | ModeFamily::Robot | ModeFamily::Pd
-            )
-            || matches!(mode, Mode::Robot24 | Mode::Bw8 | Mode::Bw12)
+            || mode.scan().is_empty()
+            || spec.raw_vis().is_none()
         {
             return Err(SstvError::UnsupportedTxMode(mode));
         }
@@ -74,66 +46,29 @@ impl TxEncoder {
                 actual: image.size(),
             });
         }
-        let family = match mode {
-            Mode::Martin1 => Family::Martin {
-                component_ps: 146_432_000_000,
-            },
-            Mode::Martin2 => Family::Martin {
-                component_ps: 73_216_000_000,
-            },
-            Mode::Scottie1 => Family::Scottie {
-                component_ps: 138_240_000_000,
-            },
-            Mode::Scottie2 => Family::Scottie {
-                component_ps: 88_064_000_000,
-            },
-            Mode::ScottieDx => Family::Scottie {
-                component_ps: 345_600_000_000,
-            },
-            Mode::Robot36 => Family::Robot36,
-            Mode::Robot72 => Family::Robot72,
-            Mode::Pd50 => Family::Pd {
-                component_ps: 91_520_000_000,
-            },
-            Mode::Pd90 => Family::Pd {
-                component_ps: 170_240_000_000,
-            },
-            Mode::Pd120 => Family::Pd {
-                component_ps: 121_600_000_000,
-            },
-            Mode::Pd160 => Family::Pd {
-                component_ps: 195_584_000_000,
-            },
-            Mode::Pd180 => Family::Pd {
-                component_ps: 183_040_000_000,
-            },
-            Mode::Pd240 => Family::Pd {
-                component_ps: 244_480_000_000,
-            },
-            Mode::Pd290 => Family::Pd {
-                component_ps: 228_800_000_000,
-            },
-            _ => return Err(SstvError::UnsupportedTxMode(mode)),
-        };
         Ok(Self {
             mode,
-            family,
             image,
             deadline_ps: 0,
             vis_index: 0,
-            initial_sync_pending: matches!(family, Family::Scottie { .. }),
-            line: 0,
+            leading: 0,
+            unit: 0,
             segment: 0,
             pixel: 0,
             segment_start_ps: VIS_END_PS,
         })
     }
 
-    fn emit_fixed(&mut self, component: TxComponent, hz: u32, duration_ps: u64) -> TimedTone {
+    fn emit(
+        &mut self,
+        component: TxComponent,
+        frequency: Frequency,
+        duration_ps: u64,
+    ) -> TimedTone {
         self.deadline_ps += duration_ps;
         TimedTone::new(
             component,
-            Tone::new(Frequency::from_hz(hz)),
+            Tone::new(frequency),
             TxInstant::from_picos(self.deadline_ps),
         )
     }
@@ -160,168 +95,25 @@ impl TxEncoder {
             _ => unreachable!(),
         };
         self.vis_index += 1;
-        Some(self.emit_fixed(component, hz, duration_ms * PS_PER_MS))
+        Some(self.emit(component, Frequency::from_hz(hz), duration_ms * PS_PER_MS))
     }
 
-    fn line_count(&self) -> usize {
-        let rows = self.mode.spec().active_rows() as usize;
-        if matches!(self.family, Family::Pd { .. }) {
-            rows / 2
-        } else {
-            rows
-        }
+    fn unit_count(&self) -> usize {
+        let spec = self.mode.spec();
+        spec.active_rows() as usize / spec.rows_per_raster_unit() as usize
     }
 
-    fn segment(&self) -> Option<Segment> {
-        match self.family {
-            Family::Martin { component_ps } => match self.segment {
-                0 => Some(Segment::Fixed(TxComponent::Sync, 1200, 4_862_000_000)),
-                1 => Some(Segment::Fixed(TxComponent::Porch, 1500, 572_000_000)),
-                2 => Some(Segment::Pixels(
-                    TxComponent::Green,
-                    PixelSource::Green,
-                    component_ps,
-                )),
-                3 => Some(Segment::Fixed(TxComponent::Porch, 1500, 572_000_000)),
-                4 => Some(Segment::Pixels(
-                    TxComponent::Blue,
-                    PixelSource::Blue,
-                    component_ps,
-                )),
-                5 => Some(Segment::Fixed(TxComponent::Porch, 1500, 572_000_000)),
-                6 => Some(Segment::Pixels(
-                    TxComponent::Red,
-                    PixelSource::Red,
-                    component_ps,
-                )),
-                7 => Some(Segment::Fixed(TxComponent::Porch, 1500, 572_000_000)),
-                _ => None,
-            },
-            Family::Scottie { component_ps } => match self.segment {
-                0 => Some(Segment::Fixed(TxComponent::Porch, 1500, 1_500_000_000)),
-                1 => Some(Segment::Pixels(
-                    TxComponent::Green,
-                    PixelSource::Green,
-                    component_ps,
-                )),
-                2 => Some(Segment::Fixed(TxComponent::Porch, 1500, 1_500_000_000)),
-                3 => Some(Segment::Pixels(
-                    TxComponent::Blue,
-                    PixelSource::Blue,
-                    component_ps,
-                )),
-                4 => Some(Segment::Fixed(TxComponent::Sync, 1200, 9_000_000_000)),
-                5 => Some(Segment::Fixed(TxComponent::Porch, 1500, 1_500_000_000)),
-                6 => Some(Segment::Pixels(
-                    TxComponent::Red,
-                    PixelSource::Red,
-                    component_ps,
-                )),
-                _ => None,
-            },
-            Family::Robot36 => match self.segment {
-                0 => Some(Segment::Fixed(TxComponent::Sync, 1200, 9_000_000_000)),
-                1 => Some(Segment::Fixed(TxComponent::Porch, 1500, 3_000_000_000)),
-                2 => Some(Segment::Pixels(
-                    TxComponent::Luminance,
-                    PixelSource::Y(0),
-                    88_000_000_000,
-                )),
-                3 => Some(Segment::Fixed(
-                    TxComponent::ChrominanceSelector,
-                    if self.line & 1 == 0 { 1500 } else { 2300 },
-                    4_500_000_000,
-                )),
-                4 => Some(Segment::Fixed(TxComponent::Porch, 1900, 1_500_000_000)),
-                5 if self.line & 1 == 0 => Some(Segment::Pixels(
-                    TxComponent::RedDifference,
-                    PixelSource::Cr(0),
-                    44_000_000_000,
-                )),
-                5 => Some(Segment::Pixels(
-                    TxComponent::BlueDifference,
-                    PixelSource::Cb(0),
-                    44_000_000_000,
-                )),
-                _ => None,
-            },
-            Family::Robot72 => match self.segment {
-                0 => Some(Segment::Fixed(TxComponent::Sync, 1200, 9_000_000_000)),
-                1 => Some(Segment::Fixed(TxComponent::Porch, 1500, 3_000_000_000)),
-                2 => Some(Segment::Pixels(
-                    TxComponent::Luminance,
-                    PixelSource::Y(0),
-                    138_000_000_000,
-                )),
-                3 => Some(Segment::Fixed(TxComponent::Porch, 1500, 4_500_000_000)),
-                4 => Some(Segment::Fixed(TxComponent::Porch, 1900, 1_500_000_000)),
-                5 => Some(Segment::Pixels(
-                    TxComponent::RedDifference,
-                    PixelSource::Cr(0),
-                    69_000_000_000,
-                )),
-                6 => Some(Segment::Fixed(TxComponent::Porch, 2300, 4_500_000_000)),
-                7 => Some(Segment::Fixed(TxComponent::Porch, 1900, 1_500_000_000)),
-                8 => Some(Segment::Pixels(
-                    TxComponent::BlueDifference,
-                    PixelSource::Cb(0),
-                    69_000_000_000,
-                )),
-                _ => None,
-            },
-            Family::Pd { component_ps } => match self.segment {
-                0 => Some(Segment::Fixed(TxComponent::Sync, 1200, 20_000_000_000)),
-                1 => Some(Segment::Fixed(TxComponent::Porch, 1500, 2_080_000_000)),
-                2 => Some(Segment::Pixels(
-                    TxComponent::Luminance,
-                    PixelSource::Y(0),
-                    component_ps,
-                )),
-                3 => Some(Segment::Pixels(
-                    TxComponent::RedDifference,
-                    PixelSource::Cr(0),
-                    component_ps,
-                )),
-                4 => Some(Segment::Pixels(
-                    TxComponent::BlueDifference,
-                    PixelSource::Cb(0),
-                    component_ps,
-                )),
-                5 => Some(Segment::Pixels(
-                    TxComponent::Luminance,
-                    PixelSource::Y(1),
-                    component_ps,
-                )),
-                _ => None,
-            },
-        }
-    }
-
-    fn pixel(&self, source: PixelSource, x: usize) -> Rgb8 {
-        let row = self.line
-            * if matches!(self.family, Family::Pd { .. }) {
-                2
-            } else {
-                1
-            }
-            + match source {
-                PixelSource::Y(offset) | PixelSource::Cr(offset) | PixelSource::Cb(offset) => {
-                    offset
-                }
-                _ => 0,
-            };
-        self.image.get(x, row).expect("validated image coordinates")
-    }
-
-    fn pixel_level(&self, source: PixelSource, x: usize) -> u8 {
-        let pixel = self.pixel(source, x);
-        match source {
-            PixelSource::Red => pixel.r,
-            PixelSource::Green => pixel.g,
-            PixelSource::Blue => pixel.b,
-            PixelSource::Y(_) => rgb_to_y_cr_cb(pixel).y,
-            PixelSource::Cr(_) => rgb_to_y_cr_cb(pixel).cr,
-            PixelSource::Cb(_) => rgb_to_y_cr_cb(pixel).cb,
+    fn pixel_level(&self, channel: ScanChannel, row_offset: u8, x: usize) -> u8 {
+        let row =
+            self.unit * self.mode.spec().rows_per_raster_unit() as usize + row_offset as usize;
+        let pixel = self.image.get(x, row).expect("validated image coordinates");
+        match channel {
+            ScanChannel::Red => pixel.r,
+            ScanChannel::Green => pixel.g,
+            ScanChannel::Blue => pixel.b,
+            ScanChannel::Luminance => rgb_to_y_cr_cb(pixel).y,
+            ScanChannel::RedDifference => rgb_to_y_cr_cb(pixel).cr,
+            ScanChannel::BlueDifference => rgb_to_y_cr_cb(pixel).cb,
         }
     }
 }
@@ -333,39 +125,45 @@ impl Iterator for TxEncoder {
         if let Some(tone) = self.next_vis() {
             return Some(tone);
         }
-        if self.initial_sync_pending {
-            self.initial_sync_pending = false;
-            self.segment_start_ps += 9_000_000_000;
-            return Some(self.emit_fixed(TxComponent::Sync, 1200, 9_000_000_000));
+        let scan = self.mode.scan();
+        if let Some(segment) = scan.leading().get(self.leading).copied() {
+            self.leading += 1;
+            if let ScanContent::Tone(frequency) = segment.content() {
+                let duration_ps = segment.duration().as_picos();
+                self.segment_start_ps += duration_ps;
+                return Some(self.emit(segment.component(), frequency, duration_ps));
+            }
         }
         loop {
-            if self.line >= self.line_count() {
+            if self.unit >= self.unit_count() {
                 return None;
             }
-            let Some(segment) = self.segment() else {
-                self.line += 1;
+            let Some(segment) = scan.unit(self.unit).get(self.segment).copied() else {
+                self.unit += 1;
                 self.segment = 0;
                 self.pixel = 0;
                 continue;
             };
-            match segment {
-                Segment::Fixed(component, hz, duration_ps) => {
+            let duration_ps = segment.duration().as_picos();
+            match segment.content() {
+                ScanContent::Tone(frequency) => {
                     self.segment += 1;
                     self.segment_start_ps += duration_ps;
-                    return Some(self.emit_fixed(component, hz, duration_ps));
+                    return Some(self.emit(segment.component(), frequency, duration_ps));
                 }
-                Segment::Pixels(component, source, duration_ps) => {
+                ScanContent::Pixels {
+                    channel,
+                    row_offset,
+                } => {
                     let width = self.image.size().width();
                     let x = self.pixel;
                     self.pixel += 1;
                     self.deadline_ps =
                         self.segment_start_ps + duration_ps * self.pixel as u64 / width as u64;
+                    let level = self.pixel_level(channel, row_offset, x);
                     let tone = TimedTone::new(
-                        component,
-                        Tone::new(
-                            LevelFrequencyBand::Wide
-                                .level_to_frequency(self.pixel_level(source, x)),
-                        ),
+                        segment.component(),
+                        Tone::new(self.mode.spec().signal_band().level_to_frequency(level)),
                         TxInstant::from_picos(self.deadline_ps),
                     );
                     if self.pixel == width {
@@ -386,6 +184,8 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::image::Rgb8;
+    use crate::mode::ModeFamily;
 
     fn image(mode: Mode, fill: Rgb8) -> RgbImage {
         let spec = mode.spec();

@@ -15,6 +15,8 @@ The repository contains:
 - `docs/mmsstv-dsp.md`: analysis of the original signal-processing
   implementation.
 - `docs/sstv-formats.md`: supported SSTV modes, identifiers, and timing.
+- `docs/architecture.md`: target Rust architecture and current implementation
+  mapping.
 - `docs/mmsstv-porting.md`: proposed boundaries and guidance for the Rust port.
 
 Treat `original/mmsstv/` as reference material. Do not modify the submodule
@@ -73,6 +75,13 @@ in the original DSP classes.
 - Keep platform-specific types and dependencies out of reusable core APIs.
 - Use `rstest` features for parameterized tests, fixtures, and test cases where
   they improve coverage or reduce repetition.
+
+## Documentation
+
+- Write documentation in English.
+- When a new implementation or fix changes behavior, APIs, architecture, mode
+  support, limitations, or any other documented area, update the relevant
+  documentation in the same change.
 
 ## Build and Test
 

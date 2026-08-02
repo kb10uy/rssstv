@@ -40,7 +40,7 @@ not add SSTV or DSP behavior.
 
 | Package | Role | Status |
 | --- | --- | --- |
-| `rssstv` | Composition root: window, state, messages, views, worker supervision | Placeholder |
+| `rssstv` | Composition root: window, state, messages, views, worker supervision | Interface shell implemented; no workers yet |
 | `rssstv-audio` | Capture and playback adapters over the host audio API | Not implemented |
 
 `rssstv-audio` is a new crate. It owns device enumeration, stream formats, and
@@ -261,17 +261,31 @@ expensive than doing it now, and the string volume is small.
 Locale selection is explicit in application configuration, defaulting to the
 system locale when it matches an available translation.
 
+## Current Implementation
+
+The `rssstv` shell implements the state model, message dispatch, and view
+composition described above. Tabs, mode selection, DSP toggles, QSO fields,
+locale switching, and the template and stock lists are interactive.
+
+Nothing in the shell performs SSTV processing. In place of the receive worker,
+a simulation advances a decoded fraction, an input level, and a synchronization
+strength on a fixed cycle, and the main canvas draws a generated test pattern
+sized to the selected mode. Controls whose behavior belongs to the audio
+boundary are rendered without an action, so the layout is reviewable without
+implying working transmit or receive.
+
+The mode dropdowns are already driven by `ModeSpec` support, so they list
+exactly the modes the core can encode or decode.
+
 ## Prerequisites
 
 The interface cannot perform live reception or transmission until the audio
-boundary exists. The implementation order is therefore:
+boundary exists. The remaining implementation order is:
 
 1. `rssstv-audio`: device enumeration, capture and playback streams, bounded
    queues, and overflow reporting.
-2. `rssstv`: application shell, state, messages, and views, driven initially by
-   file-backed sources so the interface is testable without hardware.
-3. Worker integration: receive and transmit workers over the real audio
-   adapters.
+2. Worker integration: receive and transmit workers over the real audio
+   adapters, replacing the simulation and enabling the pending controls.
 
 Configuration persistence, template editing, PTT, CAT, and logging remain out
 of scope for this document and are still listed as planned gaps in

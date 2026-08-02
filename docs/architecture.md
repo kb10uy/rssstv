@@ -52,7 +52,7 @@ platform integration, and application behavior.
 | Audio adapters | Platform-specific input and output streams | Not implemented; specified as `rssstv-audio` in [gui-design.md](gui-design.md) |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
-| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder, designed in [gui-design.md](gui-design.md) |
+| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` interface shell only; designed in [gui-design.md](gui-design.md) |
 
 These are responsibility boundaries, not a requirement that every row become a
 separate crate. Closely related protocol types currently live together in
@@ -247,7 +247,7 @@ The workspace currently contains nine packages:
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
-| `rssstv` | Application composition root | Placeholder only |
+| `rssstv` | Application composition root | iced interface shell; no audio or live pipeline |
 
 Their current dependency direction is:
 
@@ -264,7 +264,7 @@ rssstv-modulator ------+
 rssstv-sstv -----------+-> encode-wav
 rssstv-template -------+
 
-rssstv  (currently has no dependencies on the other packages)
+rssstv-sstv -----------------> rssstv
 ```
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by

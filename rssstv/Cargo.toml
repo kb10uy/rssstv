@@ -6,3 +6,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+fluent-bundle.workspace = true
+iced.workspace = true
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+unic-langid.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true

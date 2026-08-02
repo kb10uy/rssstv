@@ -1,0 +1,69 @@
+app-title = rssstv
+
+menu-file = ファイル
+menu-edit = 編集
+menu-view = 表示
+menu-settings = 設定
+menu-rig = リグコントロール
+menu-help = ヘルプ
+
+tab-receive = 受信
+tab-transmit = 送信
+tab-history = 履歴
+
+input-device = 入力デバイス
+
+section-rx-status = 受信ステータス
+label-input-level = 入力レベル
+label-signal-detected = 有効な受信信号を検出
+label-no-signal = 信号なし
+label-sync = SYNC { $percent }%
+
+section-mode = モード
+label-auto-vis = 自動判定 (VIS)
+hint-auto-mode = 自動判定をオフにすると手動でモードを選択できます。
+hint-tx-mode = 送信する SSTV モードを選択します。
+mode-detecting = { $mode }（自動検出中）
+
+section-dsp = DSP
+dsp-afc = AFC
+dsp-lms = LMS
+dsp-slant = 傾き補正
+
+section-qso = QSO
+qso-call = コール
+qso-rsv = RSV
+qso-nr = NR
+qso-record = 記録
+qso-clear = クリア
+
+action-lock = ロック
+action-resync = 再同期
+action-auto-history = 自動履歴
+action-save = 保存
+action-copy = コピー
+action-zoom = 拡大
+action-paste = 貼付
+action-edit = 編集
+action-set-transmit = 送信にセット
+action-transmit = TX
+action-tone = 1750
+action-cw = CW
+action-fskid = FSKID
+
+section-templates = テンプレート
+section-stocks = ストック画像
+section-composite = 合成プレビュー
+
+badge-receiving = RECEIVING · { $mode } · { $percent }%
+badge-complete = COMPLETE · { $mode }
+badge-transmit-ready = TX READY · { $mode }
+badge-history = HISTORY · { $mode }
+
+status-receiving = 受信中 ({ $percent }%)
+status-idle = 待機中
+status-simulated = シミュレーション
+status-audio = { $rate } Hz / モノラル
+status-afc = AFC { $offset } Hz
+
+geometry = { $mode } · { $width }×{ $height }

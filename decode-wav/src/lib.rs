@@ -2,12 +2,29 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
-use rssstv_demodulator::demodulate;
+use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
 use rssstv_fskid::FskId;
 use rssstv_sstv::RxDecoder;
 use rssstv_sstv::image::RgbImage;
 use rssstv_sstv::mode::Mode;
 use rssstv_sstv::rx::{DemodulatedBlock, RxConfig, RxOutcome, RxState, Staging};
+
+const DEFAULT_PCM_PACKET_SIZE: usize = 1_024;
+
+/// Configuration for the offline packetized receive pipeline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecodeOptions {
+    /// Number of first-channel mono PCM samples processed per packet.
+    pub pcm_packet_size: usize,
+}
+
+impl Default for DecodeOptions {
+    fn default() -> Self {
+        Self {
+            pcm_packet_size: DEFAULT_PCM_PACKET_SIZE,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecodeStatus {
@@ -26,76 +43,19 @@ pub struct DecodeReport {
 }
 
 pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
-    let (samples, sample_rate_hz) = read_wav(input)?;
-    let demodulated = demodulate(&samples, sample_rate_hz)
-        .with_context(|| format!("failed to demodulate {}", input.display()))?;
-    let mode = demodulated.mode();
-    let max_samples = demodulated.frequency_hz().len();
-    let mut decoder = RxDecoder::with_config(
-        mode,
-        sample_rate_hz,
-        RxConfig {
-            live_sync: true,
-            auto_stop: false,
-            sync_detector_delay: demodulated.sync_detector_delay(),
-            staging: Staging::Memory { max_samples },
-        },
-    )
-    .with_context(|| format!("cannot decode VIS mode {}", mode.spec().name()))?;
-
-    let mut offset = 0;
-    while offset < demodulated.frequency_hz().len()
-        && !matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. })
-    {
-        let block = DemodulatedBlock::new(
-            demodulated.first_sample() + offset as u64,
-            &demodulated.frequency_hz()[offset..],
-            &demodulated.sync_strength()[offset..],
-        );
-        let processed = decoder.process(block).map_err(|error| {
-            anyhow::anyhow!(
-                "receive decoding failed at sample {}: {}",
-                demodulated.first_sample() + offset as u64 + error.consumed() as u64,
-                error.error()
-            )
-        })?;
-        offset += processed.consumed();
-        if processed.consumed() == 0 && processed.event().is_none() {
-            bail!("receive decoder made no progress");
-        }
-    }
-
-    if decoder.state() == RxState::Complete {
-        if offset < demodulated.frequency_hz().len() {
-            decoder.stage_for_refinement(DemodulatedBlock::new(
-                demodulated.first_sample() + offset as u64,
-                &demodulated.frequency_hz()[offset..],
-                &demodulated.sync_strength()[offset..],
-            ))?;
-        }
-        decoder
-            .refine_staged()
-            .context("failed to refine raster slant from staged synchronization")?;
-    }
-    let effective_sample_rate_hz = decoder.effective_sample_rate_hz();
-    let (image, status) = match decoder.finish() {
-        RxOutcome::Complete(image) => (image, DecodeStatus::Complete),
-        RxOutcome::Incomplete { image, .. } => (image, DecodeStatus::Incomplete),
-        RxOutcome::Stopped { image, .. } => (image, DecodeStatus::SynchronizationLost),
-    };
-    save_image(&image, output)?;
-    Ok(DecodeReport {
-        mode,
-        status,
-        frequency_offset_hz: demodulated.frequency_offset_hz(),
-        effective_sample_rate_hz,
-        fsk_ids: demodulated.fsk_ids().to_vec(),
-    })
+    decode_file_with_options(input, output, DecodeOptions::default())
 }
 
-fn read_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
-    let mut reader = WavReader::open(path)
-        .with_context(|| format!("failed to open WAV file {}", path.display()))?;
+pub fn decode_file_with_options(
+    input: &Path,
+    output: &Path,
+    options: DecodeOptions,
+) -> Result<DecodeReport> {
+    if options.pcm_packet_size == 0 {
+        bail!("PCM packet size must be greater than zero");
+    }
+    let mut reader = WavReader::open(input)
+        .with_context(|| format!("failed to open WAV file {}", input.display()))?;
     let spec = reader.spec();
     if spec.channels == 0 {
         bail!("WAV file has no channels");
@@ -107,40 +67,185 @@ fn read_wav(path: &Path) -> Result<(Vec<f32>, u32)> {
         );
     }
     let channels = spec.channels as usize;
-    let samples = match spec.sample_format {
+    let max_samples = reader.duration() as usize;
+    let pipeline = ReceivePipeline::new(spec.sample_rate, max_samples)?;
+    let result = match spec.sample_format {
         SampleFormat::Int => {
             if spec.bits_per_sample == 0 || spec.bits_per_sample > 32 {
                 bail!("unsupported PCM depth: {} bits", spec.bits_per_sample);
             }
             let scale = 2_f64.powi(i32::from(spec.bits_per_sample) - 1);
-            reader
+            let samples = reader
                 .samples::<i32>()
                 .enumerate()
                 .filter_map(|(index, sample)| (index % channels == 0).then_some(sample))
                 .map(|sample| {
-                    sample
-                        .map(|value| (f64::from(value) / scale) as f32)
-                        .context("failed to read integer PCM sample")
-                })
-                .collect::<Result<Vec<_>>>()?
+                    let value = sample.context("failed to read integer PCM sample")?;
+                    Ok((f64::from(value) / scale) as f32)
+                });
+            decode_samples(pipeline, samples, options.pcm_packet_size)
         }
-        SampleFormat::Float => reader
-            .samples::<f32>()
-            .enumerate()
-            .filter_map(|(index, sample)| (index % channels == 0).then_some(sample))
-            .map(|sample| {
-                let value = sample.context("failed to read floating-point PCM sample")?;
-                if !value.is_finite() {
-                    bail!("WAV contains a non-finite floating-point sample");
-                }
-                Ok(value.clamp(-1.0, 1.0))
-            })
-            .collect::<Result<Vec<_>>>()?,
+        SampleFormat::Float => {
+            let samples = reader
+                .samples::<f32>()
+                .enumerate()
+                .filter_map(|(index, sample)| (index % channels == 0).then_some(sample))
+                .map(|sample| {
+                    let value = sample.context("failed to read floating-point PCM sample")?;
+                    if !value.is_finite() {
+                        bail!("WAV contains a non-finite floating-point sample");
+                    }
+                    Ok(value.clamp(-1.0, 1.0))
+                });
+            decode_samples(pipeline, samples, options.pcm_packet_size)
+        }
     };
-    if samples.is_empty() {
+    let result = result.with_context(|| format!("failed to decode {}", input.display()))?;
+    save_image(&result.image, output)?;
+    Ok(result.report)
+}
+
+struct ReceivePipeline {
+    demodulator: Demodulator,
+    decoder: Option<RxDecoder>,
+    max_samples: usize,
+    fsk_ids: Vec<FskId>,
+}
+
+impl ReceivePipeline {
+    fn new(sample_rate_hz: u32, max_samples: usize) -> Result<Self> {
+        Ok(Self {
+            demodulator: Demodulator::new(sample_rate_hz)?,
+            decoder: None,
+            max_samples,
+            fsk_ids: Vec::new(),
+        })
+    }
+
+    fn process_pcm(&mut self, samples: &[f32]) -> Result<()> {
+        let output = self.demodulator.process(samples)?;
+        self.process_demodulated(&output)
+    }
+
+    fn process_demodulated(&mut self, output: &DemodulatedChunk) -> Result<()> {
+        self.fsk_ids.extend_from_slice(output.fsk_ids());
+        if let Some(mode) = output.detected_mode() {
+            self.decoder = Some(
+                RxDecoder::with_config(
+                    mode,
+                    self.demodulator.sample_rate_hz(),
+                    RxConfig {
+                        live_sync: true,
+                        auto_stop: false,
+                        sync_detector_delay: sync_detector_delay(mode),
+                        staging: Staging::Memory {
+                            max_samples: self.max_samples,
+                        },
+                    },
+                )
+                .with_context(|| format!("cannot decode VIS mode {}", mode.spec().name()))?,
+            );
+        }
+        if output.frequency_hz().is_empty() {
+            return Ok(());
+        }
+        let decoder = self
+            .decoder
+            .as_mut()
+            .context("demodulator produced image data before VIS detection")?;
+        let mut offset = 0;
+        while offset < output.frequency_hz().len() {
+            match decoder.state() {
+                RxState::Complete => {
+                    decoder.stage_for_refinement(DemodulatedBlock::new(
+                        output.first_sample() + offset as u64,
+                        &output.frequency_hz()[offset..],
+                        &output.sync_strength()[offset..],
+                    ))?;
+                    break;
+                }
+                RxState::Stopped { .. } => break,
+                _ => {}
+            }
+            let processed = decoder
+                .process(DemodulatedBlock::new(
+                    output.first_sample() + offset as u64,
+                    &output.frequency_hz()[offset..],
+                    &output.sync_strength()[offset..],
+                ))
+                .map_err(|error| {
+                    anyhow::anyhow!(
+                        "receive decoding failed at sample {}: {}",
+                        output.first_sample() + offset as u64 + error.consumed() as u64,
+                        error.error()
+                    )
+                })?;
+            offset += processed.consumed();
+            if processed.consumed() == 0 && processed.event().is_none() {
+                bail!("receive decoder made no progress");
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<PipelineResult> {
+        let mode = self.demodulator.finish()?;
+        let frequency_offset_hz = self.demodulator.frequency_offset_hz();
+        let mut decoder = self.decoder.take().context("VIS mode was not detected")?;
+        if decoder.state() == RxState::Complete {
+            decoder
+                .refine_staged()
+                .context("failed to refine raster slant from staged synchronization")?;
+        }
+        let effective_sample_rate_hz = decoder.effective_sample_rate_hz();
+        let (image, status) = match decoder.finish() {
+            RxOutcome::Complete(image) => (image, DecodeStatus::Complete),
+            RxOutcome::Incomplete { image, .. } => (image, DecodeStatus::Incomplete),
+            RxOutcome::Stopped { image, .. } => (image, DecodeStatus::SynchronizationLost),
+        };
+        Ok(PipelineResult {
+            image,
+            report: DecodeReport {
+                mode,
+                status,
+                frequency_offset_hz,
+                effective_sample_rate_hz,
+                fsk_ids: self.fsk_ids,
+            },
+        })
+    }
+}
+
+struct PipelineResult {
+    image: RgbImage,
+    report: DecodeReport,
+}
+
+fn decode_samples<I>(
+    mut pipeline: ReceivePipeline,
+    samples: I,
+    packet_size: usize,
+) -> Result<PipelineResult>
+where
+    I: Iterator<Item = Result<f32>>,
+{
+    let mut packet = Vec::with_capacity(packet_size);
+    let mut sample_count = 0_u64;
+    for sample in samples {
+        packet.push(sample?);
+        sample_count += 1;
+        if packet.len() == packet_size {
+            pipeline.process_pcm(&packet)?;
+            packet.clear();
+        }
+    }
+    if sample_count == 0 {
         bail!("WAV file contains no samples");
     }
-    Ok((samples, spec.sample_rate))
+    if !packet.is_empty() {
+        pipeline.process_pcm(&packet)?;
+    }
+    pipeline.finish()
 }
 
 fn save_image(image: &RgbImage, path: &Path) -> Result<()> {
@@ -168,7 +273,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decodes_stereo_wav_and_saves_png_by_extension() {
+    fn packet_sizes_preserve_stereo_wav_decode() {
         let mode = Mode::Robot36;
         let size =
             ImageSize::new(mode.spec().width() as usize, mode.spec().height() as usize).unwrap();
@@ -176,7 +281,6 @@ mod tests {
         let sample_rate = 8_000_u32;
         let unique = format!("decode-wav-{}", std::process::id());
         let input = std::env::temp_dir().join(format!("{unique}.wav"));
-        let output = std::env::temp_dir().join(format!("{unique}.png"));
         let mut writer = WavWriter::create(
             &input,
             WavSpec {
@@ -236,15 +340,38 @@ mod tests {
         }
         writer.finalize().unwrap();
 
-        let report = decode_file(&input, &output).unwrap();
-        assert_eq!(report.mode, mode);
-        assert_eq!(report.status, DecodeStatus::Complete);
-        assert_eq!(report.fsk_ids[0].as_str(), "JL1HIS");
-        let saved = image::open(&output).unwrap();
-        assert_eq!(saved.width(), size.width() as u32);
-        assert_eq!(saved.height(), size.height() as u32);
+        let mut expected_report = None;
+        let mut expected_image = None;
+        let mut outputs = Vec::new();
+        for packet_size in [73, 1_024, 4_093] {
+            let output = std::env::temp_dir().join(format!("{unique}-{packet_size}.png"));
+            let report = decode_file_with_options(
+                &input,
+                &output,
+                DecodeOptions {
+                    pcm_packet_size: packet_size,
+                },
+            )
+            .unwrap();
+            assert_eq!(report.mode, mode);
+            assert_eq!(report.status, DecodeStatus::Complete);
+            assert_eq!(report.fsk_ids[0].as_str(), "JL1HIS");
+            let saved = image::open(&output).unwrap().to_rgb8();
+            assert_eq!(saved.width(), size.width() as u32);
+            assert_eq!(saved.height(), size.height() as u32);
+            if let Some(expected) = &expected_report {
+                assert_eq!(&report, expected);
+                assert_eq!(&saved, expected_image.as_ref().unwrap());
+            } else {
+                expected_report = Some(report);
+                expected_image = Some(saved);
+            }
+            outputs.push(output);
+        }
 
         fs::remove_file(input).unwrap();
-        fs::remove_file(output).unwrap();
+        for output in outputs {
+            fs::remove_file(output).unwrap();
+        }
     }
 }

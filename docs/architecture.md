@@ -87,17 +87,20 @@ The complete receive integration currently available is the offline
 
 ```text
 WAV file
-  -> first-channel normalized PCM
-  -> rssstv-demodulator::demodulate
+  -> packetized first-channel normalized PCM
+  -> rssstv-demodulator::Demodulator
+  -> incremental demodulated blocks
   -> rssstv-sstv::RxDecoder
   -> staged global slant refinement
   -> BMP/JPEG/PNG image
 ```
 
-This validates the separation between audio decoding, demodulation, and raster
-decoding, but it is a batch integration. The complete WAV and demodulated arrays
-are retained in memory, and there is no public incremental demodulator or live
-audio source yet.
+`decode-wav` reads and processes PCM packets without retaining the complete WAV
+or a separate complete demodulated array. Its packet size defaults to 1024 mono
+samples and is configurable with `--packet-size`. Demodulation and raster
+decoding run sequentially in one thread, while bounded staging may retain
+demodulated samples for the optional whole-image refinement pass. There is no
+live audio source yet.
 
 ### Current Transmit Flow
 
@@ -226,7 +229,7 @@ The workspace currently contains six packages:
 | `rssstv-dsp` | Portable numerical layer | Implemented |
 | `rssstv-sstv` | Protocol model, images, transmit encoder, and receive decoder | 14 modes implemented |
 | `rssstv-fskid` | FSKID protocol decoder | Callsign receive implemented |
-| `rssstv-demodulator` | Receive front end | Conventional-VIS batch demodulation implemented |
+| `rssstv-demodulator` | Receive front end | Incremental conventional-VIS demodulation implemented |
 | `decode-wav` | Offline receive integration | Implemented |
 | `rssstv` | Application composition root | Placeholder only |
 
@@ -254,24 +257,27 @@ phase-continuous VCO, PLL frequency discrimination, and resonator tone
 detection. The standalone FFT and PLL are not currently part of the WAV receive
 path; that path uses a Hilbert phase-difference discriminator.
 
-`rssstv-demodulator` currently provides one batch function over normalized mono
-PCM. It performs band-pass filtering, level normalization, VIS/FSK tone
+`rssstv-demodulator` provides a stateful `Demodulator` that accepts contiguous
+normalized mono PCM packets and emits owned demodulated chunks with absolute
+sample positions, a one-shot VIS mode event, and completed FSK identifiers. The
+existing `demodulate` batch function is a convenience wrapper over that API. The
+front end performs band-pass filtering, level normalization, VIS/FSK tone
 detection, conventional VIS decoding, zero-crossing AFC measurement, and
 Hilbert frequency discrimination. Its synchronization envelope is causal, with
 its calibrated delay relative to the frequency output carried as metadata rather
 than implemented by shifting the sample array. It requires at least a 6000 Hz
 sample rate.
 
-`decode-wav` composes the existing receive stages. It uses the first WAV channel,
-enables live raster synchronization and in-memory staging, performs global slant
-refinement, and saves BMP, JPEG, or PNG according to the output extension.
+`decode-wav` composes the existing receive stages packet by packet. It uses the
+first WAV channel, enables live raster synchronization and bounded in-memory
+staging, performs global slant refinement, and saves BMP, JPEG, or PNG according
+to the output extension.
 
 ## Planned Gaps
 
 The architecture is not complete until the following boundaries have production
 implementations:
 
-- Incremental demodulation suitable for a real-time receive stream.
 - A modulator that converts `TimedTone` deadlines to phase-continuous PCM.
 - Audio source and sink adapters with explicit buffering and backpressure.
 - Transmit and receive raster processing for the remaining modes.

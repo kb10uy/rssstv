@@ -34,15 +34,177 @@ pub enum DemodulatorError {
     /// A PCM sample was not finite.
     #[error("PCM sample {index} is not finite")]
     NonFiniteSample {
-        /// Zero-based PCM sample index.
-        index: usize,
+        /// Zero-based absolute PCM sample position.
+        index: u64,
     },
+    /// Processing was requested after the stream was finished.
+    #[error("demodulator stream is already finished")]
+    AlreadyFinished,
+    /// The absolute PCM sample position overflowed.
+    #[error("PCM sample position overflow")]
+    SamplePositionOverflow,
     /// A DSP processor rejected its configuration.
     #[error(transparent)]
     Dsp(#[from] rssstv_dsp::DspError),
     /// No complete supported conventional VIS sequence was found.
     #[error("no supported conventional VIS code was detected")]
     VisNotDetected,
+}
+
+/// Owned output produced from one incremental PCM input packet.
+#[derive(Clone, Debug)]
+pub struct DemodulatedChunk {
+    detected_mode: Option<Mode>,
+    first_sample: u64,
+    frequency_hz: Vec<f32>,
+    sync_strength: Vec<f32>,
+    fsk_ids: Vec<FskId>,
+}
+
+impl DemodulatedChunk {
+    /// Returns a mode when conventional VIS was first detected in this packet.
+    pub const fn detected_mode(&self) -> Option<Mode> {
+        self.detected_mode
+    }
+
+    /// Returns the absolute position of the first output sample.
+    pub const fn first_sample(&self) -> u64 {
+        self.first_sample
+    }
+
+    /// Returns AFC-corrected instantaneous image frequencies.
+    pub fn frequency_hz(&self) -> &[f32] {
+        &self.frequency_hz
+    }
+
+    /// Returns causal normalized horizontal-sync confidence.
+    pub fn sync_strength(&self) -> &[f32] {
+        &self.sync_strength
+    }
+
+    /// Returns validated station identifiers completed in this packet.
+    pub fn fsk_ids(&self) -> &[FskId] {
+        &self.fsk_ids
+    }
+}
+
+/// Stateful incremental SSTV receive front end.
+pub struct Demodulator {
+    front_end: FrontEnd,
+    sample_rate_hz: u32,
+    next_sample: u64,
+    mode: Option<Mode>,
+    finished: bool,
+}
+
+impl Demodulator {
+    /// Constructs a receive front end for a physical PCM sample rate.
+    pub fn new(sample_rate_hz: u32) -> Result<Self, DemodulatorError> {
+        if sample_rate_hz < 6_000 {
+            return Err(DemodulatorError::SampleRateTooLow(sample_rate_hz));
+        }
+        Ok(Self {
+            front_end: FrontEnd::new(f64::from(sample_rate_hz))?,
+            sample_rate_hz,
+            next_sample: 0,
+            mode: None,
+            finished: false,
+        })
+    }
+
+    /// Processes one contiguous packet of normalized mono PCM.
+    pub fn process(&mut self, samples: &[f32]) -> Result<DemodulatedChunk, DemodulatorError> {
+        if self.finished {
+            return Err(DemodulatorError::AlreadyFinished);
+        }
+        let end_sample = self
+            .next_sample
+            .checked_add(samples.len() as u64)
+            .ok_or(DemodulatorError::SamplePositionOverflow)?;
+        for (offset, sample) in samples.iter().enumerate() {
+            if !sample.is_finite() {
+                return Err(DemodulatorError::NonFiniteSample {
+                    index: self.next_sample + offset as u64,
+                });
+            }
+        }
+
+        let mut detected_mode = None;
+        let mut first_sample = self.next_sample;
+        let mut frequency_hz = Vec::with_capacity(if self.mode.is_some() {
+            samples.len()
+        } else {
+            0
+        });
+        let mut sync_strength = Vec::with_capacity(frequency_hz.capacity());
+        let mut fsk_ids = Vec::new();
+        for &sample in samples {
+            let output = self.front_end.process(f64::from(sample))?;
+            self.next_sample += 1;
+            if let Some(id) = output.fsk_id {
+                fsk_ids.push(id);
+            }
+            if self.mode.is_none()
+                && let Some(mode) = output.mode
+            {
+                self.mode = Some(mode);
+                detected_mode = Some(mode);
+                first_sample = self.next_sample;
+                self.front_end.enable_afc();
+                continue;
+            }
+            if self.mode.is_some() {
+                if frequency_hz.is_empty() {
+                    first_sample = self.next_sample - 1;
+                }
+                frequency_hz.push(output.frequency_hz as f32);
+                sync_strength.push(output.sync_strength as f32);
+            }
+        }
+        debug_assert_eq!(self.next_sample, end_sample);
+
+        Ok(DemodulatedChunk {
+            detected_mode,
+            first_sample: if frequency_hz.is_empty() {
+                self.next_sample
+            } else {
+                first_sample
+            },
+            frequency_hz,
+            sync_strength,
+            fsk_ids,
+        })
+    }
+
+    /// Finishes pending AFC state and returns the detected mode.
+    pub fn finish(&mut self) -> Result<Mode, DemodulatorError> {
+        if self.finished {
+            return Err(DemodulatorError::AlreadyFinished);
+        }
+        self.front_end.finish_afc()?;
+        self.finished = true;
+        self.mode.ok_or(DemodulatorError::VisNotDetected)
+    }
+
+    /// Returns the detected conventional VIS mode, if available.
+    pub const fn mode(&self) -> Option<Mode> {
+        self.mode
+    }
+
+    /// Returns the current smoothed receiver frequency offset.
+    pub const fn frequency_offset_hz(&self) -> f64 {
+        self.front_end.afc.offset_hz
+    }
+
+    /// Returns the absolute position of the next PCM sample.
+    pub const fn next_sample(&self) -> u64 {
+        self.next_sample
+    }
+
+    /// Returns the configured physical PCM sample rate.
+    pub const fn sample_rate_hz(&self) -> u32 {
+        self.sample_rate_hz
+    }
 }
 
 /// Demodulated SSTV data and the mode selected from conventional VIS.
@@ -99,47 +261,17 @@ pub fn demodulate(
     samples: &[f32],
     sample_rate_hz: u32,
 ) -> Result<DemodulatedAudio, DemodulatorError> {
-    if sample_rate_hz < 6_000 {
-        return Err(DemodulatorError::SampleRateTooLow(sample_rate_hz));
-    }
-    for (index, sample) in samples.iter().enumerate() {
-        if !sample.is_finite() {
-            return Err(DemodulatorError::NonFiniteSample { index });
-        }
-    }
-
-    let rate = sample_rate_hz as f64;
-    let mut front_end = FrontEnd::new(rate)?;
-    let mut frequency_hz = Vec::with_capacity(samples.len());
-    let mut sync_strength = Vec::with_capacity(samples.len());
-    let mut fsk_ids = Vec::new();
-    let mut detection = None;
-
-    for (index, &sample) in samples.iter().enumerate() {
-        let output = front_end.process(sample as f64)?;
-        frequency_hz.push(output.frequency_hz as f32);
-        sync_strength.push(output.sync_strength as f32);
-        if let Some(id) = output.fsk_id {
-            fsk_ids.push(id);
-        }
-        if detection.is_none()
-            && let Some(mode) = output.mode
-        {
-            detection = Some((mode, index + 1));
-            front_end.enable_afc();
-        }
-    }
-    front_end.finish_afc()?;
-
-    let (mode, first) = detection.ok_or(DemodulatorError::VisNotDetected)?;
+    let mut demodulator = Demodulator::new(sample_rate_hz)?;
+    let output = demodulator.process(samples)?;
+    let mode = demodulator.finish()?;
     Ok(DemodulatedAudio {
         mode,
-        first_sample: first as u64,
-        frequency_hz: frequency_hz.split_off(first),
-        sync_strength: sync_strength.split_off(first),
+        first_sample: output.first_sample,
+        frequency_hz: output.frequency_hz,
+        sync_strength: output.sync_strength,
         sync_detector_delay: sync_detector_delay(mode),
-        frequency_offset_hz: front_end.afc.offset_hz,
-        fsk_ids,
+        frequency_offset_hz: demodulator.frequency_offset_hz(),
+        fsk_ids: output.fsk_ids,
     })
 }
 
@@ -729,6 +861,55 @@ mod tests {
 
         assert_eq!(output.fsk_ids().len(), 1);
         assert_eq!(output.fsk_ids()[0].as_str(), "JL1HIS");
+    }
+
+    #[rstest]
+    #[case(1)]
+    #[case(73)]
+    #[case(1_024)]
+    fn incremental_packets_match_batch_output(#[case] packet_size: usize) {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Scottie2, rate, 0.0);
+        let mut phase = 0.0;
+        fsk_id_signal(&mut samples, rate, &mut phase);
+        let expected = demodulate(&samples, rate).unwrap();
+        let mut demodulator = Demodulator::new(rate).unwrap();
+        let mut detected = Vec::new();
+        let mut first_sample = None;
+        let mut frequency_hz = Vec::new();
+        let mut sync_strength = Vec::new();
+        let mut fsk_ids = Vec::new();
+        for packet in samples.chunks(packet_size) {
+            let output = demodulator.process(packet).unwrap();
+            detected.extend(output.detected_mode());
+            if !output.frequency_hz().is_empty() {
+                first_sample.get_or_insert(output.first_sample());
+            }
+            frequency_hz.extend_from_slice(output.frequency_hz());
+            sync_strength.extend_from_slice(output.sync_strength());
+            fsk_ids.extend_from_slice(output.fsk_ids());
+        }
+        assert_eq!(demodulator.finish().unwrap(), expected.mode());
+        assert_eq!(detected, [expected.mode()]);
+        assert_eq!(first_sample, Some(expected.first_sample()));
+        assert_eq!(frequency_hz, expected.frequency_hz());
+        assert_eq!(sync_strength, expected.sync_strength());
+        assert_eq!(fsk_ids, expected.fsk_ids());
+        assert_eq!(
+            demodulator.process(&[]).unwrap_err().to_string(),
+            DemodulatorError::AlreadyFinished.to_string()
+        );
+    }
+
+    #[test]
+    fn incremental_error_reports_absolute_sample_position_without_consuming_packet() {
+        let mut demodulator = Demodulator::new(8_000).unwrap();
+        demodulator.process(&[0.0; 10]).unwrap();
+        assert!(matches!(
+            demodulator.process(&[0.0, f32::NAN]),
+            Err(DemodulatorError::NonFiniteSample { index: 11 })
+        ));
+        assert_eq!(demodulator.next_sample(), 10);
     }
 
     #[rstest]

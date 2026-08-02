@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Result, bail};
-use decode_wav::{DecodeStatus, decode_file};
+use decode_wav::{DecodeOptions, DecodeStatus, decode_file_with_options};
 
 fn main() -> ExitCode {
     match run() {
@@ -21,16 +21,28 @@ fn main() -> ExitCode {
 
 fn run() -> Result<DecodeStatus> {
     let mut args = env::args_os().skip(1);
-    let Some(input) = args.next() else {
-        return usage();
-    };
-    let Some(output) = args.next() else {
-        return usage();
-    };
-    if args.next().is_some() {
-        return usage();
+    let mut options = DecodeOptions::default();
+    let mut positional = Vec::with_capacity(2);
+    while let Some(argument) = args.next() {
+        if argument == "--packet-size" {
+            let Some(value) = args.next() else {
+                return usage();
+            };
+            options.pcm_packet_size = value
+                .to_str()
+                .and_then(|value| value.parse().ok())
+                .filter(|&value| value > 0)
+                .ok_or_else(|| anyhow::anyhow!("--packet-size must be a positive integer"))?;
+        } else if argument.to_string_lossy().starts_with("--") {
+            return usage();
+        } else {
+            positional.push(argument);
+        }
     }
-    let report = decode_file(&PathBuf::from(input), &PathBuf::from(output))?;
+    let [input, output] = positional.as_slice() else {
+        return usage();
+    };
+    let report = decode_file_with_options(&PathBuf::from(input), &PathBuf::from(output), options)?;
     println!(
         "mode: {}, AFC: {:+.1} Hz, raster rate: {}",
         report.mode.spec().name(),
@@ -47,5 +59,5 @@ fn run() -> Result<DecodeStatus> {
 }
 
 fn usage<T>() -> Result<T> {
-    bail!("usage: decode-wav <INPUT.wav> <OUTPUT_IMAGE>")
+    bail!("usage: decode-wav [--packet-size SAMPLES] <INPUT.wav> <OUTPUT_IMAGE>")
 }

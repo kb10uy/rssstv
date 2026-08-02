@@ -99,6 +99,18 @@ impl RgbImage {
         &mut self.pixels
     }
 
+    /// Returns one immutable row if `y` is in bounds.
+    pub fn row(&self, y: usize) -> Option<&[Rgb8]> {
+        let start = y.checked_mul(self.size.width)?;
+        self.pixels.get(start..start + self.size.width)
+    }
+
+    /// Returns one mutable row if `y` is in bounds.
+    pub fn row_mut(&mut self, y: usize) -> Option<&mut [Rgb8]> {
+        let start = y.checked_mul(self.size.width)?;
+        self.pixels.get_mut(start..start + self.size.width)
+    }
+
     /// Returns a pixel if the coordinates are in bounds.
     pub fn get(&self, x: usize, y: usize) -> Option<Rgb8> {
         if x >= self.size.width || y >= self.size.height {
@@ -133,5 +145,7 @@ mod tests {
         let image = RgbImage::new(size, Rgb8::new(1, 2, 3));
         assert_eq!(image.get(1, 1), Some(Rgb8::new(1, 2, 3)));
         assert_eq!(image.get(2, 0), None);
+        assert_eq!(image.row(1), Some(&[Rgb8::new(1, 2, 3); 2][..]));
+        assert_eq!(image.row(2), None);
     }
 }

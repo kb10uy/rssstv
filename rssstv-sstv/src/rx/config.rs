@@ -18,7 +18,7 @@ pub enum Staging {
 /// Live synchronization accepts a pulse only when its peak is at least `0.35`
 /// and its local peak-to-background contrast is at least `0.20`; these are
 /// relative normalized criteria, not MMSSTV's integer-domain thresholds.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RxConfig {
     /// Enables stable live raster epoch corrections without altering input samples.
     pub live_sync: bool,
@@ -26,14 +26,4 @@ pub struct RxConfig {
     pub auto_stop: bool,
     /// Controls immutable sample retention for whole-image refinement.
     pub staging: Staging,
-}
-
-impl Default for RxConfig {
-    fn default() -> Self {
-        Self {
-            live_sync: false,
-            auto_stop: false,
-            staging: Staging::Disabled,
-        }
-    }
 }

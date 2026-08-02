@@ -80,3 +80,28 @@ pub enum SstvError {
         actual: ImageSize,
     },
 }
+
+/// A receive processing failure with the consumed input prefix preserved.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("receive processing failed after consuming {consumed} samples: {error}")]
+pub struct RxProcessError {
+    consumed: usize,
+    #[source]
+    error: SstvError,
+}
+
+impl RxProcessError {
+    pub(crate) const fn new(consumed: usize, error: SstvError) -> Self {
+        Self { consumed, error }
+    }
+
+    /// Returns the consumed prefix length of the supplied block.
+    pub const fn consumed(&self) -> usize {
+        self.consumed
+    }
+
+    /// Returns the processing error.
+    pub const fn error(&self) -> SstvError {
+        self.error
+    }
+}

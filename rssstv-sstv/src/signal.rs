@@ -16,22 +16,6 @@ impl Frequency {
     }
 }
 
-/// A constant-frequency SSTV tone.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Tone(Frequency);
-
-impl Tone {
-    /// Constructs a tone at `frequency`.
-    pub const fn new(frequency: Frequency) -> Self {
-        Self(frequency)
-    }
-
-    /// Returns this tone's frequency.
-    pub const fn frequency(self) -> Frequency {
-        self.0
-    }
-}
-
 /// The protocol role of a generated tone.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TxComponent {
@@ -63,16 +47,16 @@ pub enum TxComponent {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TimedTone {
     component: TxComponent,
-    tone: Tone,
+    frequency: Frequency,
     until: TxInstant,
 }
 
 impl TimedTone {
     /// Constructs a timed tone.
-    pub const fn new(component: TxComponent, tone: Tone, until: TxInstant) -> Self {
+    pub const fn new(component: TxComponent, frequency: Frequency, until: TxInstant) -> Self {
         Self {
             component,
-            tone,
+            frequency,
             until,
         }
     }
@@ -82,9 +66,9 @@ impl TimedTone {
         self.component
     }
 
-    /// Returns the tone.
-    pub const fn tone(self) -> Tone {
-        self.tone
+    /// Returns the tone frequency.
+    pub const fn frequency(self) -> Frequency {
+        self.frequency
     }
 
     /// Returns the absolute deadline measured from transmission start.

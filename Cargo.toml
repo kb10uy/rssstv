@@ -14,5 +14,6 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 
 [workspace.dependencies]
 libm = "0.2"
+proptest = "1.7"
 rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }

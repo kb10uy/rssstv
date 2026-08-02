@@ -3,14 +3,12 @@ use crate::SstvError;
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RasterClock {
     source_epoch: f64,
-    physical_sample_rate_hz: u32,
     effective_sample_rate_hz: f64,
 }
 
 impl RasterClock {
     pub(super) fn from_estimate(
         source_epoch: f64,
-        physical_sample_rate_hz: u32,
         effective_sample_rate_hz: f64,
     ) -> Result<Self, SstvError> {
         if !source_epoch.is_finite()
@@ -22,7 +20,6 @@ impl RasterClock {
         }
         Ok(Self {
             source_epoch,
-            physical_sample_rate_hz,
             effective_sample_rate_hz,
         })
     }
@@ -56,11 +53,7 @@ impl RasterClock {
     }
 
     pub(super) fn source_epoch(&self) -> u64 {
-        (self.source_epoch + 0.5) as u64
-    }
-
-    pub(super) const fn physical_sample_rate_hz(&self) -> u32 {
-        self.physical_sample_rate_hz
+        self.source_epoch as u64
     }
 
     pub(super) const fn effective_sample_rate_hz(&self) -> f64 {
@@ -81,4 +74,16 @@ impl RasterClock {
 pub(super) fn ceil_sample(position: f64) -> u64 {
     let whole = position as u64;
     whole + u64::from((whole as f64) < position)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reported_epoch_matches_the_sample_mapping_origin() {
+        let clock = RasterClock::from_estimate(100.75, 48_000.0).unwrap();
+        assert_eq!(clock.source_epoch(), 100);
+        assert_eq!(clock.sample_at(0).unwrap(), 100);
+    }
 }

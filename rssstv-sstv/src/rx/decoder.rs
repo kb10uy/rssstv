@@ -2,11 +2,11 @@ use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use crate::SstvError;
 use crate::color::{YCrCb8, y_cr_cb_to_rgb};
 use crate::image::{ImageSize, Rgb8, RgbImage};
 use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
 use crate::signal::Frequency;
+use crate::{RxProcessError, SstvError};
 
 use super::acquisition::{acquire, window_samples};
 use super::clock::{RasterClock, ceil_sample};
@@ -21,7 +21,7 @@ const BAD_SYNC_SCORE_LIMIT: u8 = 12;
 const BAD_SYNC_PENALTY: u8 = 2;
 const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
-const MIN_PHASE_DISPLACEMENT: i64 = 2;
+const MIN_PHASE_DISPLACEMENT: u64 = 2;
 const PIXEL_GUARD: f64 = 0.25;
 
 /// Result of rebuilding an image from staged immutable samples.
@@ -34,6 +34,10 @@ pub struct RefinementResult {
 }
 
 /// Concrete streaming decoder for the supported SSTV receive modes.
+///
+/// Input must extend at least one demodulated sample beyond the nominal raster
+/// end so the final guarded pixel window can become available.
+#[derive(Debug)]
 pub struct RxDecoder {
     mode: Mode,
     profile: RasterProfile,
@@ -52,6 +56,7 @@ pub struct RxDecoder {
     rebuilding: bool,
 }
 
+#[derive(Debug)]
 struct DecodeState {
     image: RgbImage,
     state: RxState,
@@ -173,10 +178,7 @@ impl RxDecoder {
 
     /// Returns the immutable physical sample rate supplied at construction.
     pub const fn physical_sample_rate_hz(&self) -> u32 {
-        match self.decode.clock {
-            Some(clock) => clock.physical_sample_rate_hz(),
-            None => self.sample_rate_hz,
-        }
+        self.sample_rate_hz
     }
 
     /// Returns the bounded sync observation history from oldest to newest.
@@ -198,11 +200,33 @@ impl RxDecoder {
     ///
     /// For a non-empty valid block this either consumes at least one sample or
     /// returns an event. Once [`RxState::Complete`] is reached, further non-empty
-    /// input is rejected.
-    pub fn process(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, SstvError> {
-        block.validate(self.next_sample)?;
-        if let Some(event) = self.decode.pending_events.pop_front() {
-            return Ok(RxProcess::new(0, Some(self.emit(event))));
+    /// input is rejected. If processing fails after consuming a prefix, the
+    /// returned [`RxProcessError`] reports that prefix so it is not resent.
+    pub fn process(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, RxProcessError> {
+        let expected = self.next_sample;
+        self.process_inner(block).map_err(|error| {
+            let consumed = if expected.is_none_or(|sample| sample == block.first_sample()) {
+                self.next_sample
+                    .and_then(|sample| sample.checked_sub(block.first_sample()))
+                    .and_then(|count| usize::try_from(count).ok())
+                    .unwrap_or(0)
+                    .min(block.frequency_hz().len())
+            } else {
+                0
+            };
+            if consumed == 0 && expected.is_none() {
+                self.input = None;
+                self.staged = None;
+                self.next_sample = None;
+            }
+            RxProcessError::new(consumed, error)
+        })
+    }
+
+    fn process_inner(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, SstvError> {
+        block.validate_header(self.next_sample)?;
+        if let Some(event) = self.poll_event() {
+            return Ok(RxProcess::new(0, Some(event)));
         }
         if matches!(
             self.decode.state,
@@ -267,16 +291,12 @@ impl RxDecoder {
 
             if self.can_decode_next()? {
                 if !self.synchronize()? {
-                    let event = self
-                        .decode
-                        .pending_events
-                        .pop_front()
-                        .expect("stop event queued");
-                    return Ok(RxProcess::new(consumed, Some(self.emit(event))));
+                    let event = self.poll_event().expect("stop event queued");
+                    return Ok(RxProcess::new(consumed, Some(event)));
                 }
                 if !self.can_decode_next()? {
-                    if let Some(event) = self.decode.pending_events.pop_front() {
-                        return Ok(RxProcess::new(consumed, Some(self.emit(event))));
+                    if let Some(event) = self.poll_event() {
+                        return Ok(RxProcess::new(consumed, Some(event)));
                     }
                     continue;
                 }
@@ -286,8 +306,8 @@ impl RxDecoder {
                 if let Some(row) = self.decode.pending_row.take() {
                     self.queue_event(RxEvent::RowDecoded { row });
                 }
-                if let Some(event) = self.decode.pending_events.pop_front() {
-                    return Ok(RxProcess::new(consumed, Some(self.emit(event))));
+                if let Some(event) = self.poll_event() {
+                    return Ok(RxProcess::new(consumed, Some(event)));
                 }
                 continue;
             }
@@ -326,19 +346,12 @@ impl RxDecoder {
         if self.staged.is_none() {
             return Err(SstvError::StagingDisabled);
         }
-        let estimator = SlantEstimator::new(
-            self.sample_rate_hz,
-            self.profile.period_ps,
-            self.profile.sync_center_ps,
-        );
+        let estimator = SlantEstimator::for_mode(self.sample_rate_hz, self.mode)
+            .expect("decoder mode has a raster profile");
         let slant = estimator
             .estimate(&self.staged_observations)
             .ok_or(SstvError::InsufficientStagedSync)?;
-        let clock = RasterClock::from_estimate(
-            slant.source_epoch,
-            self.sample_rate_hz,
-            slant.effective_sample_rate_hz,
-        )?;
+        let clock = RasterClock::from_estimate(slant.source_epoch, slant.effective_sample_rate_hz)?;
         let staged = self.staged.take().expect("staging checked above");
         if let Err(error) = self.validate_staged_coverage(&staged, clock) {
             self.staged = Some(staged);
@@ -368,9 +381,6 @@ impl RxDecoder {
         self.decode.delivered_rows = self.mode.spec().active_rows() as usize;
         self.decode.state = RxState::Complete;
         self.image_revision = self.image_revision.saturating_add(1);
-        self.queue_event(RxEvent::ImageRebuilt {
-            revision: self.image_revision,
-        });
         Ok(RefinementResult {
             revision: self.image_revision,
             slant,
@@ -383,6 +393,7 @@ impl RxDecoder {
         offset: usize,
         count: usize,
     ) -> Result<(), SstvError> {
+        block.validate_range(offset, count)?;
         let first = block
             .first_sample()
             .checked_add(offset as u64)
@@ -681,11 +692,9 @@ impl RxDecoder {
     }
 
     fn set_pixel(&mut self, x: usize, y: usize, pixel: Rgb8) {
-        let size = self.decode.image.size();
-        if x >= size.width() || y >= size.height() {
-            return;
+        if let Some(value) = self.decode.image.row_mut(y).and_then(|row| row.get_mut(x)) {
+            *value = pixel;
         }
-        self.decode.image.pixels_mut()[y * size.width() + x] = pixel;
     }
 
     fn deliver_row(&mut self, row: usize) -> RxEvent {
@@ -756,9 +765,7 @@ impl RxDecoder {
                 let maximum = *self.phase_displacements.iter().max().expect("non-empty");
                 let correction =
                     self.phase_displacements.iter().sum::<i64>() / PHASE_AGREEMENT as i64;
-                if maximum - minimum <= 2
-                    && correction.unsigned_abs() >= MIN_PHASE_DISPLACEMENT as u64
-                {
+                if maximum - minimum <= 2 && correction.unsigned_abs() >= MIN_PHASE_DISPLACEMENT {
                     self.decode
                         .clock
                         .as_mut()
@@ -804,6 +811,14 @@ impl RxDecoder {
         self.decode.pending_events.push_back(event);
     }
 
+    /// Returns the next queued event without requiring an empty input block.
+    pub fn poll_event(&mut self) -> Option<RxEvent> {
+        self.decode
+            .pending_events
+            .pop_front()
+            .map(|event| self.emit(event))
+    }
+
     fn emit(&mut self, event: RxEvent) -> RxEvent {
         match event {
             RxEvent::RowDecoded { row } => self.deliver_row(row),
@@ -817,6 +832,7 @@ mod tests {
     use alloc::vec;
     use alloc::vec::Vec;
 
+    use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
@@ -866,7 +882,7 @@ mod tests {
             let end_sample = (u128::from(relative_end) * u128::from(SAMPLE_RATE))
                 .div_ceil(1_000_000_000_000) as usize;
             let end = padding + end_sample;
-            frequency.resize(end, tone.tone().frequency().as_hz() as f32);
+            frequency.resize(end, tone.frequency().as_hz() as f32);
             sync.resize(
                 end,
                 if tone.component() == TxComponent::Sync {
@@ -878,6 +894,36 @@ mod tests {
         }
         frequency.resize(frequency.len() + TAIL, 1900.0);
         sync.resize(frequency.len(), 0.0);
+        (frequency, sync)
+    }
+
+    fn mmsstv_martin2_golden(padding: usize, sample_rate_hz: u32) -> (Vec<f32>, Vec<f32>) {
+        const PERIOD_PS: u64 = 226_798_000_000;
+        const SEGMENTS: [(u64, u64, f32, bool); 4] = [
+            (0, 4_862_000_000, 1200.0, true),
+            (5_434_000_000, 78_650_000_000, 1900.0, false),
+            (79_222_000_000, 152_438_000_000, 2100.0, false),
+            (153_010_000_000, 226_226_000_000, 1700.0, false),
+        ];
+        let raster_ps = PERIOD_PS * 256;
+        let samples = (u128::from(raster_ps) * u128::from(sample_rate_hz))
+            .div_ceil(1_000_000_000_000) as usize;
+        let mut frequency = vec![1500.0; padding + samples + TAIL];
+        let mut sync = vec![0.0; frequency.len()];
+        for unit in 0..256_u64 {
+            for (start_ps, end_ps, value, is_sync) in SEGMENTS {
+                let edge = |offset_ps| {
+                    padding
+                        + (u128::from(unit * PERIOD_PS + offset_ps) * u128::from(sample_rate_hz))
+                            .div_ceil(1_000_000_000_000) as usize
+                };
+                let range = edge(start_ps)..edge(end_ps);
+                frequency[range.clone()].fill(value);
+                if is_sync {
+                    sync[range].fill(1.0);
+                }
+            }
+        }
         (frequency, sync)
     }
 
@@ -998,7 +1044,7 @@ mod tests {
     #[case(Mode::Martin2, 1)]
     fn pixel_window_averages_only_what_a_pixel_can_hold(#[case] mode: Mode, #[case] expected: u64) {
         let decoder = RxDecoder::new(mode, SAMPLE_RATE).unwrap();
-        let clock = RasterClock::from_estimate(0.0, SAMPLE_RATE, f64::from(SAMPLE_RATE)).unwrap();
+        let clock = RasterClock::from_estimate(0.0, f64::from(SAMPLE_RATE)).unwrap();
         let segment = decoder.segment(ScanChannel::Green, 0).unwrap();
         let (first, end) = decoder.pixel_window(clock, 0, segment, 10).unwrap();
         assert_eq!(end - first, expected);
@@ -1010,6 +1056,83 @@ mod tests {
         let contiguous = decode(Mode::Martin2, &frequency, &sync, &[usize::MAX]);
         let fragmented = decode(Mode::Martin2, &frequency, &sync, &[1, 2, 31, 997, 7]);
         assert_eq!(contiguous, fragmented);
+    }
+
+    #[test]
+    fn mmsstv_source_golden_raster_decodes_without_the_tx_encoder() {
+        let sample_rate_hz = 48_000;
+        let (frequency, sync) = mmsstv_martin2_golden(503, sample_rate_hz);
+        let mut decoder = RxDecoder::new(Mode::Martin2, sample_rate_hz).unwrap();
+        let mut offset = 0;
+        let mut rows = Vec::new();
+        while decoder.state() != RxState::Complete {
+            let result = decoder
+                .process(DemodulatedBlock::new(
+                    offset as u64,
+                    &frequency[offset..],
+                    &sync[offset..],
+                ))
+                .unwrap();
+            offset += result.consumed();
+            if let Some(RxEvent::RowDecoded { row }) = result.event() {
+                rows.push(row);
+            }
+        }
+        let image = decoder.image();
+        assert_eq!(rows, (0..256).collect::<Vec<_>>());
+        let expected = Rgb8::new(64, 128, 192);
+        assert_eq!(
+            image
+                .pixels()
+                .iter()
+                .position(|pixel| *pixel != expected)
+                .map(|index| (index, image.pixels()[index])),
+            None
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn arbitrary_valid_blocks_never_panic_or_write_inactive_rows(
+            frequency in prop::collection::vec(0.0_f32..=3_000.0, 0..8_000),
+            sync in prop::collection::vec(0.0_f32..=1.0, 0..8_000),
+            chunks in prop::collection::vec(1_usize..512, 1..32),
+        ) {
+            let len = frequency.len().min(sync.len());
+            let frequency = &frequency[..len];
+            let sync = &sync[..len];
+            let mut decoder = RxDecoder::new(Mode::Robot36, 1_000).unwrap();
+            let mut offset = 0;
+            let mut chunk = 0;
+            let mut steps = 0;
+            while offset < len && steps < len.saturating_mul(2).saturating_add(64) {
+                let end = (offset + chunks[chunk % chunks.len()]).min(len);
+                let result = decoder.process(DemodulatedBlock::new(
+                    offset as u64,
+                    &frequency[offset..end],
+                    &sync[offset..end],
+                ));
+                match result {
+                    Ok(result) => {
+                        offset += result.consumed();
+                        if result.consumed() == 0 && result.event().is_none() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+                if matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. }) {
+                    break;
+                }
+                chunk += 1;
+                steps += 1;
+            }
+            for row in Mode::Robot36.spec().active_rows() as usize..decoder.image().size().height() {
+                prop_assert!(decoder.image().row(row).unwrap().iter().all(|pixel| *pixel == Rgb8::default()));
+            }
+        }
     }
 
     #[rstest]
@@ -1062,14 +1185,20 @@ mod tests {
     #[test]
     fn malformed_blocks_and_gaps_are_rejected() {
         let mut decoder = RxDecoder::new(Mode::Martin1, SAMPLE_RATE).unwrap();
-        assert!(matches!(
-            decoder.process(DemodulatedBlock::new(0, &[1500.0], &[])),
-            Err(SstvError::DemodulatedLengthMismatch)
-        ));
-        assert!(matches!(
-            decoder.process(DemodulatedBlock::new(0, &[f32::NAN], &[0.0])),
-            Err(SstvError::InvalidDemodulatedSample { offset: 0 })
-        ));
+        assert_eq!(
+            decoder
+                .process(DemodulatedBlock::new(0, &[1500.0], &[]))
+                .unwrap_err()
+                .error(),
+            SstvError::DemodulatedLengthMismatch
+        );
+        assert_eq!(
+            decoder
+                .process(DemodulatedBlock::new(0, &[f32::NAN], &[0.0]))
+                .unwrap_err()
+                .error(),
+            SstvError::InvalidDemodulatedSample { offset: 0 }
+        );
         assert_eq!(
             decoder
                 .process(DemodulatedBlock::new(100, &[1500.0], &[0.0]))
@@ -1077,13 +1206,16 @@ mod tests {
                 .consumed(),
             1
         );
-        assert!(matches!(
-            decoder.process(DemodulatedBlock::new(102, &[1500.0], &[0.0])),
-            Err(SstvError::DemodulatedGap {
+        assert_eq!(
+            decoder
+                .process(DemodulatedBlock::new(102, &[1500.0], &[0.0]))
+                .unwrap_err()
+                .error(),
+            SstvError::DemodulatedGap {
                 expected: 101,
                 actual: 102
-            })
-        ));
+            }
+        );
     }
 
     #[test]
@@ -1100,6 +1232,23 @@ mod tests {
         assert_eq!(result.event(), None);
         assert_eq!(decoder.state(), RxState::Acquiring);
         assert!(decoder.input.as_ref().unwrap().len() < count);
+    }
+
+    #[test]
+    fn process_errors_report_the_consumed_prefix() {
+        let mut decoder = RxDecoder::new(Mode::Martin2, SAMPLE_RATE).unwrap();
+        let count = window_samples(decoder.profile, SAMPLE_RATE) as usize;
+        let mut frequency = vec![1500.0; count + 1];
+        let sync = vec![0.0; count + 1];
+        frequency[count] = f32::NAN;
+        let error = decoder
+            .process(DemodulatedBlock::new(0, &frequency, &sync))
+            .unwrap_err();
+        assert_eq!(error.consumed(), count);
+        assert_eq!(
+            error.error(),
+            SstvError::InvalidDemodulatedSample { offset: count }
+        );
     }
 
     #[test]
@@ -1188,14 +1337,17 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(
-            decoder.process(DemodulatedBlock::new(
-                0,
-                &[1900.0, 1900.0, 1900.0],
-                &[0.0, 0.0, 0.0]
-            )),
-            Err(SstvError::StagingCapacityExceeded { max_samples: 2 })
-        ));
+        assert_eq!(
+            decoder
+                .process(DemodulatedBlock::new(
+                    0,
+                    &[1900.0, 1900.0, 1900.0],
+                    &[0.0, 0.0, 0.0]
+                ))
+                .unwrap_err()
+                .error(),
+            SstvError::StagingCapacityExceeded { max_samples: 2 }
+        );
         assert_eq!(decoder.staged_samples_len(), 0);
     }
 
@@ -1281,17 +1433,11 @@ mod tests {
                 ..RxConfig::default()
             },
         );
+        let staged_len = decoder.staged_samples_len();
         let first = decoder.refine_staged().unwrap();
         let first_image = decoder.image().clone();
-        let event = decoder
-            .process(DemodulatedBlock::new(
-                decoder.next_sample.unwrap(),
-                &[],
-                &[],
-            ))
-            .unwrap()
-            .event();
-        assert_eq!(event, Some(RxEvent::ImageRebuilt { revision: 1 }));
+        assert_eq!(decoder.poll_event(), None);
+        assert_eq!(decoder.staged_samples_len(), staged_len);
         let second = decoder.refine_staged().unwrap();
         assert_eq!(first.slant, second.slant);
         assert_eq!(first_image, *decoder.image());
@@ -1351,8 +1497,7 @@ mod tests {
         let mut input = SampleBuffer::new(0);
         input.append(block, frequency.len());
         decoder.input = Some(input);
-        decoder.decode.clock =
-            Some(RasterClock::from_estimate(0.0, SAMPLE_RATE, SAMPLE_RATE as f64).unwrap());
+        decoder.decode.clock = Some(RasterClock::from_estimate(0.0, SAMPLE_RATE as f64).unwrap());
         assert_eq!(
             decoder.robot_selector_at(0).unwrap(),
             Some(RobotSelector::Cb)

@@ -41,7 +41,7 @@ impl PixelSegments {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) struct RasterProfile {
     pub(super) organization: RasterOrganization,
     pub(super) period_ps: u64,

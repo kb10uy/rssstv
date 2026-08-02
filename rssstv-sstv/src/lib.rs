@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(missing_docs)]
+#![forbid(unsafe_code)]
 
 extern crate alloc;
 
@@ -26,6 +27,6 @@ pub mod time;
 /// Pull-based SSTV transmit encoding.
 pub mod tx;
 
-pub use error::SstvError;
+pub use error::{RxProcessError, SstvError};
 pub use rx::RxDecoder;
 pub use tx::TxEncoder;

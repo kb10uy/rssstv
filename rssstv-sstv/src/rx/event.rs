@@ -24,7 +24,8 @@ pub enum RxState {
 /// Terminal AutoStop cause.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StopReason {
-    /// Six consecutive raster units had weak, missing, or inconsistent sync.
+    /// Weak, missing, or inconsistent sync persisted until the leaky error
+    /// score reached its termination threshold.
     SynchronizationLost,
 }
 
@@ -56,11 +57,6 @@ pub enum RxEvent {
     Stopped {
         /// AutoStop cause.
         reason: StopReason,
-    },
-    /// The image was deterministically rebuilt from immutable staged samples.
-    ImageRebuilt {
-        /// Monotonically increasing image revision.
-        revision: u64,
     },
 }
 

@@ -1,4 +1,4 @@
-use alloc::vec::Vec;
+use alloc::collections::VecDeque;
 
 use crate::SstvError;
 
@@ -35,7 +35,7 @@ impl<'a> DemodulatedBlock<'a> {
         self.sync_strength
     }
 
-    pub(super) fn validate(self, expected: Option<u64>) -> Result<(), SstvError> {
+    pub(super) fn validate_header(self, expected: Option<u64>) -> Result<(), SstvError> {
         if self.frequency_hz.len() != self.sync_strength.len() {
             return Err(SstvError::DemodulatedLengthMismatch);
         }
@@ -50,34 +50,42 @@ impl<'a> DemodulatedBlock<'a> {
         self.first_sample
             .checked_add(self.frequency_hz.len() as u64)
             .ok_or(SstvError::SamplePositionOverflow)?;
-        for (offset, (&frequency, &sync)) in
-            self.frequency_hz.iter().zip(self.sync_strength).enumerate()
+        Ok(())
+    }
+
+    pub(super) fn validate_range(self, offset: usize, count: usize) -> Result<(), SstvError> {
+        for (relative, (&frequency, &sync)) in self.frequency_hz[offset..offset + count]
+            .iter()
+            .zip(&self.sync_strength[offset..offset + count])
+            .enumerate()
         {
             if !frequency.is_finite()
                 || frequency < 0.0
                 || !sync.is_finite()
                 || !(0.0..=1.0).contains(&sync)
             {
-                return Err(SstvError::InvalidDemodulatedSample { offset });
+                return Err(SstvError::InvalidDemodulatedSample {
+                    offset: offset + relative,
+                });
             }
         }
         Ok(())
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct SampleBuffer {
     first: u64,
-    frequency: Vec<f32>,
-    sync: Vec<f32>,
+    frequency: VecDeque<f32>,
+    sync: VecDeque<f32>,
 }
 
 impl SampleBuffer {
     pub(super) fn new(first: u64) -> Self {
         Self {
             first,
-            frequency: Vec::new(),
-            sync: Vec::new(),
+            frequency: VecDeque::new(),
+            sync: VecDeque::new(),
         }
     }
 
@@ -95,8 +103,9 @@ impl SampleBuffer {
 
     pub(super) fn append(&mut self, block: DemodulatedBlock<'_>, count: usize) {
         self.frequency
-            .extend_from_slice(&block.frequency_hz[..count]);
-        self.sync.extend_from_slice(&block.sync_strength[..count]);
+            .extend(block.frequency_hz[..count].iter().copied());
+        self.sync
+            .extend(block.sync_strength[..count].iter().copied());
     }
 
     pub(super) fn frequency(&self, sample: u64) -> Option<f32> {
@@ -104,7 +113,7 @@ impl SampleBuffer {
         self.frequency.get(index).copied()
     }
 
-    pub(super) fn sync_values(&self) -> &[f32] {
+    pub(super) fn sync_values(&self) -> &VecDeque<f32> {
         &self.sync
     }
 

@@ -1,5 +1,8 @@
 use alloc::vec::Vec;
 
+use crate::mode::Mode;
+
+use super::raster::RasterProfile;
 use super::sync::{MIN_CONFIDENCE, SyncObservation};
 
 const MIN_OBSERVATIONS: usize = 6;
@@ -28,8 +31,17 @@ pub struct SlantEstimator {
 }
 
 impl SlantEstimator {
-    /// Constructs an estimator for one raster profile.
-    pub fn new(configured_sample_rate_hz: u32, period_ps: u64, sync_center_ps: u64) -> Self {
+    /// Constructs an estimator for a mode with implemented raster metadata.
+    pub fn for_mode(configured_sample_rate_hz: u32, mode: Mode) -> Option<Self> {
+        let profile = RasterProfile::for_mode(mode)?;
+        Some(Self::new(
+            configured_sample_rate_hz,
+            profile.period_ps,
+            profile.sync_center_ps,
+        ))
+    }
+
+    pub(super) fn new(configured_sample_rate_hz: u32, period_ps: u64, sync_center_ps: u64) -> Self {
         Self {
             configured_sample_rate_hz: f64::from(configured_sample_rate_hz),
             period_ps,
@@ -124,7 +136,7 @@ impl SlantEstimator {
             })
             .sum::<f64>()
             / n;
-        let residual_samples = square_root(residual_variance);
+        let residual_samples = libm::sqrt(residual_variance);
         let source_epoch =
             intercept - effective_sample_rate_hz * self.sync_center_ps as f64 / 1.0e12;
         if !source_epoch.is_finite() || source_epoch < 0.0 {
@@ -138,17 +150,6 @@ impl SlantEstimator {
             observations: filtered.len(),
         })
     }
-}
-
-fn square_root(value: f64) -> f64 {
-    if value <= 0.0 {
-        return 0.0;
-    }
-    let mut estimate = value.max(1.0);
-    for _ in 0..16 {
-        estimate = (estimate + value / estimate) * 0.5;
-    }
-    estimate
 }
 
 #[cfg(test)]
@@ -208,5 +209,11 @@ mod tests {
             .collect();
         let estimate = estimator.estimate(&values).unwrap();
         assert!((estimate.source_epoch - 12_000.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn public_constructor_derives_timing_from_the_mode() {
+        assert!(SlantEstimator::for_mode(48_000, Mode::Martin2).is_some());
+        assert!(SlantEstimator::for_mode(48_000, Mode::Avt90).is_none());
     }
 }

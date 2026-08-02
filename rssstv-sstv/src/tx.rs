@@ -4,7 +4,7 @@ use crate::SstvError;
 use crate::color::rgb_to_y_cr_cb;
 use crate::image::{ImageSize, RgbImage};
 use crate::mode::{Mode, ScanChannel, ScanContent, Support};
-use crate::signal::{Frequency, TimedTone, Tone, TxComponent};
+use crate::signal::{Frequency, TimedTone, TxComponent};
 use crate::time::TxInstant;
 
 const PS_PER_MS: u64 = 1_000_000_000;
@@ -16,6 +16,7 @@ const VIS_END_PS: u64 = 910 * PS_PER_MS;
 /// applicable, and the image raster described by [`Mode::scan`]. It does not
 /// emit VOX framing, footers, or station identification. Image rows beyond the
 /// mode's active row count are not transmitted.
+#[derive(Debug)]
 pub struct TxEncoder {
     mode: Mode,
     image: RgbImage,
@@ -68,7 +69,7 @@ impl TxEncoder {
         self.deadline_ps += duration_ps;
         TimedTone::new(
             component,
-            Tone::new(frequency),
+            frequency,
             TxInstant::from_picos(self.deadline_ps),
         )
     }
@@ -163,7 +164,7 @@ impl Iterator for TxEncoder {
                     let level = self.pixel_level(channel, row_offset, x);
                     let tone = TimedTone::new(
                         segment.component(),
-                        Tone::new(self.mode.spec().signal_band().level_to_frequency(level)),
+                        self.mode.spec().signal_band().level_to_frequency(level),
                         TxInstant::from_picos(self.deadline_ps),
                     );
                     if self.pixel == width {
@@ -202,11 +203,11 @@ mod tests {
             .take(13)
             .collect();
         assert_eq!(tones.len(), 13);
-        assert_eq!(tones[0].tone().frequency().as_hz(), 1900);
+        assert_eq!(tones[0].frequency().as_hz(), 1900);
         assert_eq!(tones[1].until().as_picos(), 310_000_000_000);
         let bits: Vec<_> = tones[4..12]
             .iter()
-            .map(|tone| tone.tone().frequency().as_hz())
+            .map(|tone| tone.frequency().as_hz())
             .collect();
         assert_eq!(bits, [1300, 1300, 1100, 1100, 1300, 1100, 1300, 1100]);
         assert_eq!(tones[12].until().as_picos(), VIS_END_PS);
@@ -234,7 +235,7 @@ mod tests {
             .take(8)
             .enumerate()
             .fold(0, |raw, (bit, tone)| {
-                raw | u8::from(tone.tone().frequency().as_hz() == 1100) << bit
+                raw | u8::from(tone.frequency().as_hz() == 1100) << bit
             });
         assert_eq!(raw, expected);
     }
@@ -395,12 +396,9 @@ mod tests {
             .skip(13)
             .take(line_events * 2)
             .collect();
-        assert_eq!(tones[width + 2].tone().frequency().as_hz(), 1500);
+        assert_eq!(tones[width + 2].frequency().as_hz(), 1500);
         assert_eq!(tones[width + 4].component(), TxComponent::RedDifference);
-        assert_eq!(
-            tones[line_events + width + 2].tone().frequency().as_hz(),
-            2300
-        );
+        assert_eq!(tones[line_events + width + 2].frequency().as_hz(), 2300);
         assert_eq!(
             tones[line_events + width + 4].component(),
             TxComponent::BlueDifference
@@ -419,11 +417,11 @@ mod tests {
             .take(4 * 320)
             .collect();
         assert_eq!(tones[320].component(), TxComponent::RedDifference);
-        assert_eq!(tones[320].tone().frequency().as_hz(), 2246);
+        assert_eq!(tones[320].frequency().as_hz(), 2246);
         assert_eq!(tones[640].component(), TxComponent::BlueDifference);
-        assert_eq!(tones[640].tone().frequency().as_hz(), 1781);
+        assert_eq!(tones[640].frequency().as_hz(), 1781);
         assert_eq!(tones[960].component(), TxComponent::Luminance);
-        assert_eq!(tones[960].tone().frequency().as_hz(), 1625);
+        assert_eq!(tones[960].frequency().as_hz(), 1625);
     }
 
     #[test]

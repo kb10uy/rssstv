@@ -10,7 +10,9 @@ default = []
 std = ["thiserror/std"]
 
 [dependencies]
+libm.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 rstest.workspace = true

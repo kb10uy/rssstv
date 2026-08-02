@@ -1,7 +1,3 @@
-use core::ops::{Add, Sub};
-
-use crate::SstvError;
-
 /// A non-negative SSTV protocol duration with picosecond precision.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SstvDuration(u64);
@@ -53,22 +49,6 @@ impl SstvDuration {
     }
 }
 
-impl Add for SstvDuration {
-    type Output = Result<Self, SstvError>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        self.checked_add(rhs).ok_or(SstvError::TimeOverflow)
-    }
-}
-
-impl Sub for SstvDuration {
-    type Output = Option<Self>;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.checked_sub(rhs)
-    }
-}
-
 /// A monotonic transmit deadline measured from the start of an encoding.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct TxInstant(u64);
@@ -101,22 +81,6 @@ impl TxInstant {
             Some(value) => Some(SstvDuration::from_picos(value)),
             None => None,
         }
-    }
-}
-
-impl Add<SstvDuration> for TxInstant {
-    type Output = Result<Self, SstvError>;
-
-    fn add(self, rhs: SstvDuration) -> Self::Output {
-        self.checked_add(rhs).ok_or(SstvError::TimeOverflow)
-    }
-}
-
-impl Sub for TxInstant {
-    type Output = Option<SstvDuration>;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.checked_duration_since(rhs)
     }
 }
 

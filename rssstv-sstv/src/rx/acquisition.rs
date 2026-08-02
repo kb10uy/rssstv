@@ -136,7 +136,7 @@ pub(super) fn acquire(
         / count;
     let fitted_first = sequence[0] as f64 + mean_offset - samples_per_period * mean_step;
     let epoch = fitted_first - effective * profile.sync_center_ps as f64 / 1.0e12;
-    RasterClock::from_estimate(epoch, sample_rate_hz, effective)
+    RasterClock::from_estimate(epoch, effective)
 }
 
 #[cfg(test)]

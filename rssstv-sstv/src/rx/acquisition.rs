@@ -9,13 +9,19 @@ use super::input::SampleBuffer;
 use super::raster::RasterProfile;
 use super::sync::RUN_THRESHOLD;
 
-#[cfg(test)]
 pub(super) const ACQUISITION_PERIODS: u64 = 32;
 pub(super) const STARTUP_PERIODS: u64 = 5;
 const REQUIRED_SYNCS: usize = 4;
 const MAX_RATE_ERROR: f64 = 0.08;
 
-#[cfg(test)]
+#[derive(Clone, Copy)]
+struct AcquisitionOptions {
+    periods: u64,
+    fit_rate: bool,
+    startup: bool,
+    max_samples: Option<u64>,
+}
+
 pub(super) fn window_samples(profile: RasterProfile, sample_rate_hz: u32) -> u64 {
     period_samples(profile, sample_rate_hz, ACQUISITION_PERIODS)
 }
@@ -41,13 +47,15 @@ pub(super) fn acquire_startup(
         profile,
         sample_rate_hz,
         sync_detector_delay,
-        STARTUP_PERIODS,
-        fit_rate,
-        true,
+        AcquisitionOptions {
+            periods: STARTUP_PERIODS,
+            fit_rate,
+            startup: true,
+            max_samples: None,
+        },
     )
 }
 
-#[cfg(test)]
 pub(super) fn acquire(
     input: &SampleBuffer,
     profile: RasterProfile,
@@ -59,9 +67,12 @@ pub(super) fn acquire(
         profile,
         sample_rate_hz,
         sync_detector_delay,
-        ACQUISITION_PERIODS,
-        true,
-        false,
+        AcquisitionOptions {
+            periods: ACQUISITION_PERIODS,
+            fit_rate: true,
+            startup: false,
+            max_samples: Some(window_samples(profile, sample_rate_hz)),
+        },
     )
 }
 
@@ -70,14 +81,16 @@ fn acquire_inner(
     profile: RasterProfile,
     sample_rate_hz: u32,
     sync_detector_delay: SstvDuration,
-    periods: u64,
-    fit_rate: bool,
-    startup: bool,
+    options: AcquisitionOptions,
 ) -> Result<RasterClock, SstvError> {
     let mut centers = Vec::new();
     let sync = input.sync_values();
+    let sync_len = options
+        .max_samples
+        .and_then(|count| usize::try_from(count).ok())
+        .map_or(sync.len(), |count| count.min(sync.len()));
     let mut index = 0;
-    while index < sync.len() {
+    while index < sync_len {
         if sync[index] < RUN_THRESHOLD {
             index += 1;
             continue;
@@ -85,7 +98,7 @@ fn acquire_inner(
         let start = index;
         let mut weighted = 0.0_f64;
         let mut total = 0.0_f64;
-        while index < sync.len() && sync[index] >= RUN_THRESHOLD {
+        while index < sync_len && sync[index] >= RUN_THRESHOLD {
             weighted += index as f64 * f64::from(sync[index]);
             total += f64::from(sync[index]);
             index += 1;
@@ -102,10 +115,10 @@ fn acquire_inner(
     let tolerance = nominal * 0.08 + 2.0;
     let mut best: Option<(Vec<u64>, f64, f64)> = None;
     for &first in &centers {
-        let mut sequence = Vec::with_capacity(periods as usize + 1);
+        let mut sequence = Vec::with_capacity(options.periods as usize + 1);
         sequence.push(first);
         let mut previous = first;
-        for _ in 1..=periods as usize {
+        for _ in 1..=options.periods as usize {
             let previous_offset = (previous - first) as f64;
             let target_offset = previous_offset + nominal;
             let target = first as f64 + target_offset;
@@ -173,7 +186,7 @@ fn acquire_inner(
     }
     let (sequence, fitted_samples_per_period, residual_squared) =
         best.ok_or(SstvError::RasterNotAcquired)?;
-    let samples_per_period = if fit_rate {
+    let samples_per_period = if options.fit_rate {
         fitted_samples_per_period
     } else {
         nominal
@@ -183,7 +196,7 @@ fn acquire_inner(
     if rate_error > MAX_RATE_ERROR || residual_squared > tolerance * tolerance / 4.0 {
         return Err(SstvError::RasterNotAcquired);
     }
-    let fitted_first = if !startup {
+    let fitted_first = if !options.startup {
         let count = sequence.len() as f64;
         let mean_step = (sequence.len() - 1) as f64 / 2.0;
         let mean_offset = sequence

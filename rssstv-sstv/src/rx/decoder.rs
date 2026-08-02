@@ -8,7 +8,7 @@ use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
 use crate::signal::Frequency;
 use crate::{RxProcessError, SstvError};
 
-use super::acquisition::{acquire_startup, startup_window_samples};
+use super::acquisition::{acquire, acquire_startup, startup_window_samples};
 use super::clock::{RasterClock, ceil_sample};
 use super::config::{RxConfig, Staging, sync_detector_delay_samples};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
@@ -396,8 +396,27 @@ impl RxDecoder {
             self.config.sync_detector_delay,
         )
         .expect("decoder mode has a raster profile");
+        let staged = self.staged.as_ref().expect("staging checked above");
+        let acquisition_clock = acquire(
+            staged,
+            self.profile,
+            self.sample_rate_hz,
+            self.config.sync_detector_delay,
+        )?;
+        let observations: Vec<_> = (0..self.raster_units())
+            .filter_map(|unit| {
+                observe(
+                    staged,
+                    self.profile,
+                    acquisition_clock,
+                    unit,
+                    self.sample_rate_hz,
+                    self.config.sync_detector_delay,
+                )
+            })
+            .collect();
         let slant = estimator
-            .estimate(&self.staged_observations)
+            .estimate(&observations)
             .ok_or(SstvError::InsufficientStagedSync)?;
         let clock = RasterClock::from_estimate(slant.source_epoch, slant.effective_sample_rate_hz)?;
         let staged = self.staged.take().expect("staging checked above");
@@ -1600,6 +1619,27 @@ mod tests {
         assert_eq!(first_image, *decoder.image());
         assert_eq!(first.revision, decoded_revision + 1);
         assert_eq!(second.revision, decoded_revision + 2);
+    }
+
+    #[test]
+    fn staged_rebuild_reobserves_raw_sync_independently_of_live_tracking() {
+        let (frequency, sync) = sampled_body(Mode::Pd50, 311);
+        let config = RxConfig {
+            staging: Staging::Memory {
+                max_samples: frequency.len(),
+            },
+            ..RxConfig::default()
+        };
+        let (mut expected, _) = drive_configured(Mode::Pd50, &frequency, &sync, config);
+        let (mut biased, _) = drive_configured(Mode::Pd50, &frequency, &sync, config);
+        for observation in &mut biased.staged_observations {
+            observation.center_sample += observation.unit as u64 * 4;
+        }
+
+        let expected_refinement = expected.refine_staged().unwrap();
+        let biased_refinement = biased.refine_staged().unwrap();
+        assert_eq!(biased_refinement.slant, expected_refinement.slant);
+        assert_eq!(biased.image(), expected.image());
     }
 
     #[test]

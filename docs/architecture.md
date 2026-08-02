@@ -182,6 +182,12 @@ and reports typed events and errors. Its responsibilities include:
 Staged refinement currently estimates one global sample rate and raster epoch.
 Local raster warping is outside the implemented contract.
 
+Refinement does not reuse synchronization observations collected through the
+provisional live clock. It first acquires a stable clock from the first 32
+staged periods, re-observes synchronization centers across the immutable staged
+stream, and fits the final global clock from those observations. This keeps
+early progressive display from biasing the completed-image slant correction.
+
 ### Timed Transmit Data
 
 `TxEncoder` owns an image and yields `TimedTone` values. Each value carries a

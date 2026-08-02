@@ -355,6 +355,16 @@ name = "rssstv"
 version = "0.1.0"
 
 [[package]]
+name = "rssstv-demodulator"
+version = "0.1.0"
+dependencies = [
+ "rssstv-dsp",
+ "rssstv-sstv",
+ "rstest",
+ "thiserror",
+]
+
+[[package]]
 name = "rssstv-dsp"
 version = "0.1.0"
 dependencies = [

@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "rssstv",
   "rssstv-dsp",
+  "rssstv-sstv",
 ]
 
 [workspace.package]

@@ -254,10 +254,51 @@ sequence.
 Exact identifiers and per-mode timing are listed in
 [sstv-formats.md](sstv-formats.md).
 
+## Raster Synchronization and Live Correction
+
+Raster synchronization is not implemented by `CSSTVDEM`. The demodulator
+publishes both frequency values and a parallel sync-envelope stream, while the
+main form establishes and maintains raster phase.
+
+`TMmsstv::SyncSSTV()` folds the first three or four completed demodulator pages
+at the mode's nominal floating-point line period and sums their sync envelopes
+(`Main.cpp:3343`). The strongest accumulated position is adjusted by the
+mode-specific `m_OFP` offset to establish `m_rBase`. Scottie modes wrap a
+negative result by one line, and the Hilbert discriminator requires an
+additional FIR-delay correction. Accumulating several lines emphasizes a sync
+pulse that recurs at a stable phase instead of accepting the first isolated
+1200 Hz peak.
+
+During raster decoding, `DrawSSTV()` records each line's sync-envelope maximum,
+minimum, and peak position. `AutoStopJob()` keeps a 16-line position history and
+uses both positional agreement and peak-to-minimum strength (`Main.cpp:3476`).
+It serves two related purposes:
+
+- AutoSync changes the demodulator time base only after sync positions agree
+  across multiple lines and the envelope contrast is sufficiently large.
+- AutoStop counts persistently weak or inconsistent lines and can terminate a
+  reception instead of continuing to decode noise.
+
+Live phase correction is communicated through `CSSTVDEM::m_Skip`. A positive
+value discards incoming demodulated samples; a negative value repeats the
+current demodulated value while advancing the output ring (`sstv.cpp:2271`).
+After a correction, AutoSync suppresses further corrections for several lines.
+The same skip mechanism compensates group-delay changes when receive filters,
+the manual notch, or LMS processing are changed.
+
 ## Automatic Frequency Control
 
-AFC measures discriminator output during the interior of detected horizontal
-sync pulses (`sstv.cpp:2339`). It averages accepted values and computes:
+AFC measures frequency-discriminator output during a mode-specific interior
+portion of detected horizontal sync pulses (`sstv.cpp:2339`). With the
+zero-crossing and Hilbert discriminators, AFC measures the selected
+discriminator directly. With PLL image demodulation, AFC deliberately uses the
+parallel zero-crossing discriminator instead of the PLL control output
+(`sstv.cpp:2255`). AVT bypasses this AFC path.
+
+Only values inside the configured sync-frequency range advance the AFC sample
+counter. The accepted interval is averaged, further smoothed across sync
+pulses, and protected by an initial guard and an update-inhibit interval. AFC
+also requires a minimum measured signal level. It computes:
 
 ```text
 correction = expected_sync_value - measured_sync_value
@@ -266,6 +307,42 @@ correction = expected_sync_value - measured_sync_value
 The correction is added to subsequent demodulated image samples. The equivalent
 frequency offset also retunes the 1080, 1200, 1320, 1900, and 2100 Hz resonators.
 Thus AFC corrects both raster color values and later tone detection.
+
+## Clock and Slant Correction
+
+MMSSTV treats carrier-frequency error and sample-clock error separately. AFC
+corrects the former. The latter appears as a gradual drift of horizontal sync
+position and is represented by changing the receive mode's logical
+`SSTVSET.m_SampFreq`, not by reopening the audio device at a nonstandard rate.
+
+When real-time slant adjustment is enabled, `AutoStopJob()` first rejects
+unstable sync histories, estimates a reference position from the latest five
+lines by least squares, and measures its drift over subsequent lines
+(`Main.cpp:3459`, `Main.cpp:3560`). The drift is converted to an effective sample
+rate and smoothed over 16 estimates. Correction thresholds become progressively
+smaller as more lines are received, so early acquisition accepts only large
+errors while later updates can refine the rate. Changing the rate requests a
+redraw from staged demodulator data when that data is available.
+
+`CorrectSlant()` provides a more precise staged-data pass (`Main.cpp:4838`). It:
+
+1. Folds up to the first 32 lines of sync envelopes to find a reference phase.
+2. Finds each line's strongest sync position and unwraps positions crossing the
+   line boundary.
+3. Rejects lines with insufficient envelope contrast or positions too far from
+   the current reference.
+4. Fits sync position against line number by least squares, requiring at least
+   six accepted lines.
+5. Converts the fitted slope to a logical sample rate and repeats the analysis
+   up to five times with a narrower position window.
+
+If the fitted rate changes, `RedrawSampFreq()` recomputes mode timing,
+re-establishes raster phase, and redraws the stored frequency and sync streams
+(`Main.cpp:5155`). `RedrawAdjustSync()` is a separate staged-data operation that
+can shift individual lines whose sync peak differs by more than a
+mode-dependent pixel-width threshold (`Main.cpp:5215`). This handles local
+dropouts or abrupt timing discontinuities that a single whole-image slant fit
+cannot remove.
 
 ## VCO and Modulation
 

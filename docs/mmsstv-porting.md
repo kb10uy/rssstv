@@ -28,6 +28,9 @@ The core cannot be reproduced by porting only `fir.cpp` and `sstv.cpp`.
 Essential codec behavior currently located in `Main.cpp` includes:
 
 - Initial receive raster synchronization.
+- Live raster-phase correction and automatic stop decisions from sync history.
+- Receive sample-clock estimation, staged-data resynchronization, and slant
+  correction.
 - Conversion of demodulated values to pixels.
 - Mode-specific RGB and luminance/chroma ordering.
 - Transmission line scheduling and timing.

@@ -125,7 +125,12 @@ Audio device
 
 `CSSTVDEM` stops at demodulated frequency and synchronization data. The main
 form drains its 24-page ring and performs the mode-specific conversion to RGB
-pixels in `TMmsstv::DrawSSTV()` at `Main.cpp:4498`.
+pixels in `TMmsstv::DrawSSTV()` at `Main.cpp:4498`. It also owns initial
+multi-line raster synchronization, live phase correction and automatic stop
+decisions, sample-clock estimation from sync drift, and staged-data redraw for
+resynchronization and slant correction. These operations are part of the
+effective receive DSP even though they reside in `Main.cpp` rather than
+`sstv.cpp`.
 
 ### Transmit
 

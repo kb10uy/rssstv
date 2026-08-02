@@ -346,7 +346,8 @@ impl Afc {
         if sync_strength >= 0.58 {
             self.active = true;
             self.run_samples += 1;
-            if let Some(value) = measurement.filter(|value| (1_000.0..=1_400.0).contains(value)) {
+            let expected = 1_200.0 + self.offset_hz;
+            if let Some(value) = measurement.filter(|value| (value - expected).abs() <= 100.0) {
                 self.measurements.push(value);
             }
             false
@@ -372,17 +373,17 @@ impl Afc {
             return false;
         }
         self.measurements.sort_by(f64::total_cmp);
-        let measured = self.measurements[self.measurements.len() / 2];
+        let measured = self.measurements.iter().sum::<f64>() / self.measurements.len() as f64;
         self.measurements.clear();
         let offset = measured - 1_200.0;
-        if offset.abs() > 200.0 {
+        if offset.abs() > 150.0 {
             return false;
         }
         if self.offsets.len() == 15 {
             self.offsets.pop_front();
         }
         self.offsets.push_back(offset);
-        self.offset_hz = self.offsets.iter().sum::<f64>() / self.offsets.len() as f64;
+        self.offset_hz = self.offsets.iter().sum::<f64>() / 15.0;
         self.inhibit_samples = (self.sample_rate_hz * 0.1) as usize;
         true
     }

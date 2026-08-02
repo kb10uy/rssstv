@@ -5,8 +5,10 @@ use super::input::SampleBuffer;
 use super::raster::RasterProfile;
 
 pub(super) const HISTORY_LEN: usize = 16;
-const MIN_PEAK: f32 = 0.35;
-const MIN_CONTRAST: f32 = 0.20;
+pub(super) const MIN_CONFIDENCE: f32 = 0.20;
+pub(super) const MIN_CONTRAST: f32 = 0.20;
+pub(super) const MIN_PEAK: f32 = 0.35;
+pub(super) const RUN_THRESHOLD: f32 = 0.5;
 
 /// A synchronization pulse measured for one raster unit.
 #[derive(Clone, Copy, Debug, PartialEq)]

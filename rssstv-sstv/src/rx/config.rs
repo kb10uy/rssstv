@@ -14,6 +14,7 @@ pub enum Staging {
 /// Receive synchronization and retention options.
 ///
 /// Synchronization strengths are expected to be normalized to `0.0..=1.0`.
+/// Acquisition extracts pulse runs at `0.50` or above.
 /// Live synchronization accepts a pulse only when its peak is at least `0.35`
 /// and its local peak-to-background contrast is at least `0.20`; these are
 /// relative normalized criteria, not MMSSTV's integer-domain thresholds.

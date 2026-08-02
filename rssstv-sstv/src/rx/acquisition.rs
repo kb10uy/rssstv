@@ -5,8 +5,9 @@ use crate::SstvError;
 use super::clock::RasterClock;
 use super::input::SampleBuffer;
 use super::raster::RasterProfile;
+use super::sync::RUN_THRESHOLD;
 
-pub(super) const ACQUISITION_PERIODS: u64 = 6;
+pub(super) const ACQUISITION_PERIODS: u64 = 32;
 const REQUIRED_SYNCS: usize = 4;
 const MAX_RATE_ERROR: f64 = 0.08;
 
@@ -26,14 +27,14 @@ pub(super) fn acquire(
     let sync = input.sync_values();
     let mut index = 0;
     while index < sync.len() {
-        if sync[index] < 0.5 {
+        if sync[index] < RUN_THRESHOLD {
             index += 1;
             continue;
         }
         let start = index;
         let mut weighted = 0.0_f64;
         let mut total = 0.0_f64;
-        while index < sync.len() && sync[index] >= 0.5 {
+        while index < sync.len() && sync[index] >= RUN_THRESHOLD {
             weighted += index as f64 * f64::from(sync[index]);
             total += f64::from(sync[index]);
             index += 1;
@@ -56,15 +57,24 @@ pub(super) fn acquire(
         for _ in 1..=ACQUISITION_PERIODS as usize {
             let previous_offset = (previous - first) as f64;
             let target_offset = previous_offset + nominal;
-            let Some(&found) = centers.iter().min_by(|left, right| {
-                ((**left as i128 - first as i128) as f64 - target_offset)
-                    .abs()
-                    .total_cmp(&(((**right as i128 - first as i128) as f64 - target_offset).abs()))
-            }) else {
+            let target = first as f64 + target_offset;
+            let start = centers.partition_point(|&center| center <= previous);
+            let remaining = &centers[start..];
+            let insertion = remaining.partition_point(|&center| (center as f64) < target);
+            let found = [insertion.checked_sub(1), Some(insertion)]
+                .into_iter()
+                .flatten()
+                .filter_map(|index| remaining.get(index).copied())
+                .min_by(|left, right| {
+                    (*left as f64 - target)
+                        .abs()
+                        .total_cmp(&(*right as f64 - target).abs())
+                });
+            let Some(found) = found else {
                 break;
             };
             let difference = ((found as i128 - first as i128) as f64 - target_offset).abs();
-            if difference > tolerance || found <= previous {
+            if difference > tolerance {
                 break;
             }
             sequence.push(found);
@@ -150,7 +160,7 @@ mod tests {
             sync[center] = 1.0;
         }
         let epoch = 400.0;
-        for unit in 0..6 {
+        for unit in 0..15 {
             let center = epoch
                 + effective_rate * profile.sync_center_ps as f64 / 1.0e12
                 + period * unit as f64;
@@ -165,6 +175,34 @@ mod tests {
             clock.source_epoch().abs_diff(epoch as u64) <= 1,
             "epoch={}",
             clock.source_epoch()
+        );
+    }
+
+    #[test]
+    fn acquisition_rate_does_not_accumulate_pixel_scale_drift() {
+        let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
+        let sample_rate = 48_000;
+        let epoch = 400.0;
+        let count = window_samples(profile, sample_rate) as usize;
+        let frequency = vec![1900.0; count];
+        let mut sync = vec![0.0; count];
+        for unit in 0..ACQUISITION_PERIODS {
+            let center = epoch
+                + f64::from(sample_rate) * profile.sync_center_ps as f64 / 1.0e12
+                + f64::from(sample_rate) * profile.period_ps as f64 / 1.0e12 * unit as f64;
+            sync[center.round() as usize] = 1.0;
+        }
+        let block = DemodulatedBlock::new(0, &frequency, &sync);
+        let mut input = SampleBuffer::new(0);
+        input.append(block, frequency.len());
+        let clock = acquire(&input, profile, sample_rate).unwrap();
+        let last_protocol = profile.period_ps * 255 + profile.sync_center_ps;
+        let fitted = clock.position_at(last_protocol).unwrap();
+        let expected = epoch + f64::from(sample_rate) * last_protocol as f64 / 1.0e12;
+        assert!(
+            (fitted - expected).abs() < 1.0,
+            "drift={}",
+            fitted - expected
         );
     }
 }

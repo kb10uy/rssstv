@@ -1,9 +1,8 @@
 use alloc::vec::Vec;
 
-use super::sync::SyncObservation;
+use super::sync::{MIN_CONFIDENCE, SyncObservation};
 
 const MIN_OBSERVATIONS: usize = 6;
-const MIN_CONFIDENCE: f32 = 0.20;
 
 /// Least-squares estimate of raster timing from accepted sync observations.
 #[derive(Clone, Copy, Debug, PartialEq)]

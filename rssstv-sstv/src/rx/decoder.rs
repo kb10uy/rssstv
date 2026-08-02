@@ -15,14 +15,13 @@ use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
 use super::input::{DemodulatedBlock, SampleBuffer};
 use super::raster::{PixelSegment, RasterProfile};
 use super::slant::{SlantEstimate, SlantEstimator};
-use super::sync::{SyncObservation, observe, push_bounded};
+use super::sync::{MIN_CONFIDENCE, SyncObservation, observe, push_bounded};
 
 const BAD_SYNC_SCORE_LIMIT: u8 = 12;
 const BAD_SYNC_PENALTY: u8 = 2;
 const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
 const MIN_PHASE_DISPLACEMENT: i64 = 2;
-const MIN_SYNC_CONFIDENCE: f32 = 0.20;
 const PIXEL_GUARD: f64 = 0.25;
 
 /// Result of rebuilding an image from staged immutable samples.
@@ -713,7 +712,7 @@ impl RxDecoder {
         };
         push_bounded(&mut self.observations, observation);
         self.staged_observations.push(observation);
-        if observation.confidence < MIN_SYNC_CONFIDENCE {
+        if observation.confidence < MIN_CONFIDENCE {
             self.phase_displacements.clear();
             return self.note_bad_sync();
         }

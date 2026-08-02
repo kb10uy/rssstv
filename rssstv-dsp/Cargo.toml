@@ -10,8 +10,8 @@ default = []
 std = ["thiserror/std"]
 
 [dependencies]
-libm = "0.2"
-thiserror = { version = "2.0", default-features = false }
+libm.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
-rstest = "0.26"
+rstest.workspace = true

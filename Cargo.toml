@@ -10,3 +10,8 @@ version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0"
 authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
+
+[workspace.dependencies]
+libm = "0.2"
+rstest = "0.26"
+thiserror = { version = "2.0", default-features = false }

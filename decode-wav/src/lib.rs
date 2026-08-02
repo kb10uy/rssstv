@@ -33,7 +33,7 @@ pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
         mode,
         sample_rate_hz,
         RxConfig {
-            live_sync: true,
+            live_sync: false,
             auto_stop: false,
             staging: Staging::Memory { max_samples },
         },
@@ -63,7 +63,16 @@ pub fn decode_file(input: &Path, output: &Path) -> Result<DecodeReport> {
     }
 
     if decoder.state() == RxState::Complete {
-        let _ = decoder.refine_staged();
+        if offset < demodulated.frequency_hz().len() {
+            decoder.stage_for_refinement(DemodulatedBlock::new(
+                demodulated.first_sample() + offset as u64,
+                &demodulated.frequency_hz()[offset..],
+                &demodulated.sync_strength()[offset..],
+            ))?;
+        }
+        decoder
+            .refine_staged()
+            .context("failed to refine raster slant from staged synchronization")?;
     }
     let effective_sample_rate_hz = decoder.effective_sample_rate_hz();
     let (image, status) = match decoder.finish() {

@@ -335,6 +335,40 @@ impl RxDecoder {
         }
     }
 
+    /// Retains contiguous samples after normal completion for staged refinement.
+    ///
+    /// Offline sources can provide their remaining tail after the active image
+    /// has completed so a fitted raster clock still has enough guarded coverage.
+    pub fn stage_for_refinement(&mut self, block: DemodulatedBlock<'_>) -> Result<(), SstvError> {
+        if self.decode.state != RxState::Complete {
+            return Err(SstvError::RxNotComplete);
+        }
+        block.validate_header(self.next_sample)?;
+        block.validate_range(0, block.frequency_hz().len())?;
+        let Some(staged) = self.staged.as_mut() else {
+            return Err(SstvError::StagingDisabled);
+        };
+        let max_samples = match self.config.staging {
+            Staging::Memory { max_samples } => max_samples,
+            Staging::Disabled => return Err(SstvError::StagingDisabled),
+        };
+        if staged
+            .len()
+            .checked_add(block.frequency_hz().len())
+            .is_none_or(|length| length > max_samples)
+        {
+            return Err(SstvError::StagingCapacityExceeded { max_samples });
+        }
+        staged.append(block, block.frequency_hz().len());
+        self.next_sample = Some(
+            block
+                .first_sample()
+                .checked_add(block.frequency_hz().len() as u64)
+                .ok_or(SstvError::SamplePositionOverflow)?,
+        );
+        Ok(())
+    }
+
     /// Re-estimates global rate and epoch and rebuilds from immutable staged samples.
     ///
     /// This remains available after normal completion. It does not apply local
@@ -1349,6 +1383,34 @@ mod tests {
             SstvError::StagingCapacityExceeded { max_samples: 2 }
         );
         assert_eq!(decoder.staged_samples_len(), 0);
+    }
+
+    #[test]
+    fn completed_decoder_accepts_a_contiguous_refinement_tail() {
+        let (frequency, sync) = sampled_body(Mode::Martin2, 311);
+        let (mut decoder, _) = drive_configured(
+            Mode::Martin2,
+            &frequency,
+            &sync,
+            RxConfig {
+                staging: Staging::Memory {
+                    max_samples: frequency.len() + 2,
+                },
+                ..RxConfig::default()
+            },
+        );
+        let first = decoder.next_sample.unwrap();
+        let staged = decoder.staged_samples_len();
+        decoder
+            .stage_for_refinement(DemodulatedBlock::new(first, &[1900.0, 1900.0], &[0.0, 0.0]))
+            .unwrap();
+        assert_eq!(decoder.staged_samples_len(), staged + 2);
+
+        let mut acquiring = RxDecoder::new(Mode::Martin2, SAMPLE_RATE).unwrap();
+        assert_eq!(
+            acquiring.stage_for_refinement(DemodulatedBlock::new(0, &[], &[])),
+            Err(SstvError::RxNotComplete)
+        );
     }
 
     #[test]

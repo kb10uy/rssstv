@@ -71,6 +71,9 @@ pub enum SstvError {
     /// Samples were supplied after decoding completed.
     #[error("receive decoder is already complete")]
     RxAlreadyComplete,
+    /// Refinement-only samples were supplied before decoding completed.
+    #[error("receive decoder is not complete")]
+    RxNotComplete,
     /// The image dimensions do not match the mode's transport dimensions.
     #[error("transmit image size mismatch: expected {expected:?}, got {actual:?}")]
     TxImageSizeMismatch {

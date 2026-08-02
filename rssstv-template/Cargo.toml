@@ -1,0 +1,17 @@
+[package]
+name = "rssstv-template"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+image.workspace = true
+kdl.workspace = true
+resvg.workspace = true
+rssstv-sstv = { path = "../rssstv-sstv" }
+thiserror = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+proptest.workspace = true
+rstest.workspace = true

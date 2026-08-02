@@ -7,6 +7,7 @@ members = [
   "rssstv-dsp",
   "rssstv-fskid",
   "rssstv-sstv",
+  "rssstv-template",
 ]
 
 [workspace.package]
@@ -19,7 +20,9 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 anyhow = "1.0"
 hound = "3.5"
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
+kdl = "6.7"
 libm = "0.2"
 proptest = "1.7"
+resvg = "0.47"
 rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }

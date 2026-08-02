@@ -10,6 +10,8 @@ mapping from the original implementation to the proposed Rust boundaries,
 [mmsstv-dsp.md](mmsstv-dsp.md) for original DSP details, and
 [sstv-formats.md](sstv-formats.md) for mode and timing data. The portable
 transmit overlay format is described in [template-design.md](template-design.md).
+The desktop application layer, its audio boundary, and its user interface are
+described in [gui-design.md](gui-design.md).
 
 ## Design Goals
 
@@ -47,10 +49,10 @@ platform integration, and application behavior.
 | Receive decoder | Raster acquisition, clock estimation, synchronization, slant correction, and pixel reconstruction | `rssstv-sstv::rx` |
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
 | Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
-| Audio adapters | Platform-specific input and output streams | Not implemented |
+| Audio adapters | Platform-specific input and output streams | Not implemented; specified as `rssstv-audio` in [gui-design.md](gui-design.md) |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
-| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder |
+| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder, designed in [gui-design.md](gui-design.md) |
 
 These are responsibility boundaries, not a requirement that every row become a
 separate crate. Closely related protocol types currently live together in

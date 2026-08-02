@@ -46,9 +46,9 @@ platform integration, and application behavior.
 | Receive front end | PCM preprocessing, frequency demodulation, sync confidence, VIS/FSK detection, and AFC | `rssstv-demodulator`, `rssstv-fskid` |
 | Receive decoder | Raster acquisition, clock estimation, synchronization, slant correction, and pixel reconstruction | `rssstv-sstv::rx` |
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
-| Modulator | Timed frequencies to PCM samples | Not implemented |
+| Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
 | Audio adapters | Platform-specific input and output streams | Not implemented |
-| Integration | Composition of core stages for a particular environment | `decode-wav` for offline receive |
+| Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
 | Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | Not implemented; `rssstv` is a placeholder |
 
@@ -106,18 +106,24 @@ live audio source yet.
 
 ### Current Transmit Flow
 
-The portable transmit path currently stops at timed frequency events:
+The complete offline transmit integration is the `encode-wav` path:
 
 ```text
-rssstv-sstv::RgbImage
-  -> rssstv-sstv::TxEncoder
-  -> Iterator<Item = TimedTone>
-  -> not implemented: Modulator
-  -> not implemented: AudioSink
+background BMP/JPEG/PNG
+  -> cover resize and center crop to mode dimensions
+KDL template + ${mycall} + background as rximage
+  -> RGBA overlay and RGB composition
+  -> rssstv-sstv::TransmissionEncoder
+  -> VOX + VIS + raster + footer + FSKID + trailing silence
+  -> rssstv-modulator::Modulator
+  -> packetized normalized PCM
+  -> 48 kHz mono 16-bit WAV
 ```
 
-Tests use local tone synthesis where PCM is needed, but that code is not a
-production modulation component.
+`rssstv-modulator` fills caller-owned output blocks and never retains the
+complete PCM stream. It preserves oscillator phase across tone changes, treats
+zero frequency as exact silence, and converts absolute picosecond deadlines to
+sample endpoints without accumulating per-tone rounding error.
 
 ## Core Contracts
 
@@ -177,8 +183,10 @@ frequency, a protocol component, and an exact deadline relative to transmission
 start. Deadlines, rather than rounded sample counts, preserve protocol timing
 until a modulator chooses a physical sample rate.
 
-The encoder currently emits conventional VIS framing and mode raster data. It
-does not emit VOX framing, footers, station identification, or PCM samples.
+`TxEncoder` emits conventional VIS framing and mode raster data.
+`TransmissionEncoder` wraps it with MMSSTV's built-in conventional VOX framing,
+a 300 ms footer, a validated callsign FSKID, and 500 ms of trailing silence.
+PCM conversion remains a separate modulator responsibility.
 
 ### FSK Identification
 
@@ -225,34 +233,42 @@ types must not appear in reusable core APIs.
 
 ## Current Crate Structure
 
-The workspace currently contains seven packages:
+The workspace currently contains nine packages:
 
 | Package | Architectural role | Current status |
 | --- | --- | --- |
 | `rssstv-dsp` | Portable numerical layer | Implemented |
 | `rssstv-sstv` | Protocol model, images, transmit encoder, and receive decoder | 14 modes implemented |
-| `rssstv-fskid` | FSKID protocol decoder | Callsign receive implemented |
+| `rssstv-fskid` | FSKID protocol encoding and decoding | Callsign transmit and receive implemented |
+| `rssstv-modulator` | Timed-tone PCM modulation | Streaming phase-continuous modulation implemented |
 | `rssstv-demodulator` | Receive front end | Incremental conventional-VIS demodulation implemented |
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |
 | `decode-wav` | Offline receive integration | Implemented |
+| `encode-wav` | Template-to-WAV transmit integration | Implemented |
 | `rssstv` | Application composition root | Placeholder only |
 
 Their current dependency direction is:
 
 ```text
-rssstv-dsp -----------+
+rssstv-fskid ----------------> rssstv-sstv
+rssstv-dsp ------------------> rssstv-modulator
+rssstv-sstv -----------------> rssstv-modulator
 rssstv-fskid ---------+-> rssstv-demodulator --+
 rssstv-sstv ----------+                       +-> decode-wav
 rssstv-fskid ----------------------------------+
-rssstv-sstv -----------------------------------+
 rssstv-sstv -----------------> rssstv-template
+rssstv-fskid ----------+
+rssstv-modulator ------+
+rssstv-sstv -----------+-> encode-wav
+rssstv-template -------+
 
 rssstv  (currently has no dependencies on the other packages)
 ```
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
-remain in `decode-wav`, outside the portable core. `rssstv-template` is a
+remain in `decode-wav` and `encode-wav`, outside the portable core.
+`rssstv-template` is a
 standard-library application-support crate: it depends on `rssstv-sstv` only at
 the received-image and final RGB composition boundaries. It does not expose
 SSTV modes to the template format or make the protocol crate depend on template
@@ -282,6 +298,12 @@ first WAV channel, enables live raster synchronization and bounded in-memory
 staging, performs global slant refinement, and saves BMP, JPEG, or PNG according
 to the output extension.
 
+`encode-wav` prepares the background at the selected mode's transport size,
+renders the template with `${mycall}` and the background available as
+`rximage`, and streams a complete framed transmission through
+`rssstv-modulator` into `hound::WavWriter`. It uses bounded 1024-sample PCM
+blocks rather than generating the complete waveform in memory.
+
 `rssstv-template` strictly parses ordered KDL v2 layers, resolves frame-relative
 geometry and caller-provided variables, PNG assets, received images, and fonts,
 then generates static SVG for `resvg`. It returns a straight-alpha RGBA overlay
@@ -294,11 +316,10 @@ or the filesystem implicitly.
 The architecture is not complete until the following boundaries have production
 implementations:
 
-- A modulator that converts `TimedTone` deadlines to phase-continuous PCM.
 - Audio source and sink adapters with explicit buffering and backpressure.
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
-- FSKID, VOX framing, footer, and station-ID transmission.
+- Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - An application composition root and user interface.
 - PTT, CAT, logging, history, template editing, and persistent configuration.
 - Real-world received-audio regression fixtures.
@@ -312,9 +333,10 @@ Core behavior is tested with deterministic in-memory signals and images. The
 test suite covers numerical primitives, mode metadata and timing, all currently
 supported raster families, transmit/receive round trips, synchronization and
 slant behavior, malformed streaming input, FSKID at multiple sample rates, and
-a synthesized WAV-to-PNG integration path. Template tests cover strict KDL
-validation, all initial layer kinds, caller-resolved PNG and receive images,
-straight-alpha rendering, and RGB source-over composition.
+a synthesized WAV-to-PNG integration path. The transmit integration test
+encodes a complete Robot 36 WAV and decodes its image and FSKID. Template tests
+cover strict KDL validation, all initial layer kinds, caller-resolved PNG and
+receive images, straight-alpha rendering, and RGB source-over composition.
 
 Run the complete verification set from the workspace root:
 

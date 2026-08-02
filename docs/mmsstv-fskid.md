@@ -180,14 +180,17 @@ reception when the synchronization settings permit it.
 The implementation is divided by responsibility:
 
 - `rssstv-fskid` owns the sample-driven acquisition timing, six-bit assembly,
-  callsign framing, checksum validation, and bounded identifier value.
+  callsign framing, checksum validation, bounded identifier value, and the
+  allocation-free physical transmit event iterator.
 - `rssstv-demodulator` reuses its existing AFC-adjusted 1900 and 2100 Hz
   resonators and converts their normalized envelopes to mark, space, or
   ambiguous samples.
 - `decode-wav` carries validated identifiers in `DecodeReport` and writes each
   one to stdout as `fskid: CALLSIGN`.
+- `rssstv-sstv::TransmissionEncoder` places encoded FSKID events after the
+  conventional image footer, and `encode-wav` supplies its normalized callsign.
 
 The core accepts classified detector samples rather than audio amplitudes. It is
 therefore independent of audio backends and detector scaling, while preserving
-MMSSTV's protocol timing. The current port recognizes callsign records. Contest
-records, N-VIS events, and FSKID transmission remain future work.
+MMSSTV's protocol timing. The current port transmits and receives callsign
+records. Contest records and N-VIS events remain future work.

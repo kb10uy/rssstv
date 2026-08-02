@@ -52,7 +52,7 @@ platform integration, and application behavior.
 | Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture implemented, playback not implemented |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
-| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` interface shell only; designed in [gui-design.md](gui-design.md) |
+| Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` receive interface; designed in [gui-design.md](gui-design.md) |
 
 These are responsibility boundaries, not a requirement that every row become a
 separate crate. Closely related protocol types currently live together in
@@ -98,6 +98,9 @@ WAV file
   -> staged global slant refinement
   -> BMP/JPEG/PNG image
 ```
+
+A live receive path also exists in `rssstv`, where the same stages run on a
+worker thread fed by `rssstv-audio` instead of a WAV reader.
 
 `decode-wav` reads and processes PCM packets without retaining the complete WAV
 or a separate complete demodulated array. Its packet size defaults to 1024 mono
@@ -169,7 +172,8 @@ two streams are already aligned use a zero delay.
 completion, and stopped states, consumes an explicit prefix of each input block,
 and reports typed events and errors. Its responsibilities include:
 
-- Initial raster acquisition and effective sample-clock estimation.
+- Initial raster phase acquisition from four recurring synchronization pulses,
+  buffering at most five periods when the first post-VIS pulse is incomplete.
 - Family-specific RGB and luminance/chroma reconstruction.
 - Stable live raster-phase correction.
 - Optional automatic stop based on synchronization history.
@@ -248,7 +252,7 @@ The workspace currently contains ten packages:
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
 | `rssstv-audio` | Host audio adapters | Capture implemented; playback not implemented |
-| `rssstv` | Application composition root | iced interface shell; live capture metering, no decode pipeline |
+| `rssstv` | Application composition root | iced interface with live receive; no transmit |
 
 Their current dependency direction is:
 
@@ -256,11 +260,15 @@ Their current dependency direction is:
 rssstv-fskid ----------------> rssstv-sstv
 rssstv-dsp ------------------> rssstv-modulator
 rssstv-audio ----------+
+rssstv-demodulator ----+
+rssstv-fskid ----------+
 rssstv-sstv -----------+-> rssstv-modulator
 rssstv-fskid ---------+-> rssstv-demodulator --+
 rssstv-sstv ----------+                       +-> decode-wav
 rssstv-fskid ----------------------------------+
 rssstv-audio ----------+
+rssstv-demodulator ----+
+rssstv-fskid ----------+
 rssstv-sstv -----------+-> rssstv-template
 rssstv-fskid ----------+
 rssstv-modulator ------+
@@ -268,6 +276,8 @@ rssstv-sstv -----------+-> encode-wav
 rssstv-template -------+
 
 rssstv-audio ----------+
+rssstv-demodulator ----+
+rssstv-fskid ----------+
 rssstv-sstv -----------+-> rssstv
 ```
 
@@ -303,10 +313,28 @@ its calibrated delay relative to the frequency output carried as metadata rather
 than implemented by shifting the sample array. It requires at least a 6000 Hz
 sample rate.
 
+The live receive path does not resample or decimate PCM. Each captured mono
+sample produces one demodulated frequency and synchronization value after VIS
+detection. This matches MMSSTV's normal receive path; its rate-dependent Hilbert
+phase span still emits one result per input sample, while its explicit
+decimation is limited to displays and offline file conversion.
+
+Raster conversion intentionally differs from MMSSTV's first-sample selection.
+The Rust decoder averages the guarded central portion of every transmitted
+pixel interval. This is a deterministic anti-noise reconstruction policy rather
+than a downsampled intermediate stream. Live phase correction adjusts the
+raster clock without inserting or deleting demodulated samples.
+
 `decode-wav` composes the existing receive stages packet by packet. It uses the
 first WAV channel, enables live raster synchronization and bounded in-memory
 staging, performs global slant refinement, and saves BMP, JPEG, or PNG according
 to the output extension.
+
+The GUI receive worker enables the same bounded staging by default. Its Slant
+control applies to the next reception and performs a whole-image global
+rate/epoch refinement at completion. Disabling it during a reception suppresses
+that refinement; enabling it after reception has started cannot reconstruct the
+missing unstaged prefix and therefore takes effect on the next reception.
 
 `encode-wav` prepares the background at the selected mode's transport size,
 renders the template with `${mycall}` and the background available as
@@ -326,7 +354,7 @@ or the filesystem implicitly.
 The architecture is not complete until the following boundaries have production
 implementations:
 
-- Audio playback adapters, and a receive worker consuming captured samples.
+- Audio playback adapters and a transmit worker.
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.

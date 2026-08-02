@@ -3526,6 +3526,8 @@ dependencies = [
  "fluent-bundle",
  "iced",
  "rssstv-audio",
+ "rssstv-demodulator",
+ "rssstv-fskid",
  "rssstv-sstv",
  "rstest",
  "unic-langid",

@@ -55,6 +55,7 @@ section-templates = Templates
 section-stocks = Stock images
 section-composite = Composite preview
 
+badge-waiting = WAITING FOR SIGNAL
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
 badge-transmit-ready = TX READY · { $mode }
@@ -62,7 +63,6 @@ badge-history = HISTORY · { $mode }
 
 status-receiving = Receiving ({ $percent }%)
 status-idle = Idle
-status-simulated = RASTER SIMULATED
 status-no-audio = No input device
 status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono

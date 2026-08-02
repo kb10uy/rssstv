@@ -10,13 +10,14 @@ Rust SSTV protocol, DSP, template-rendering, and WAV integration components.
 cargo run -p rssstv
 ```
 
-It is currently an interface shell. Tabs, mode selection, DSP toggles, QSO
-fields, locale switching, and the template and stock lists are interactive.
-Audio capture works: the device list is enumerated from the host and the input
-level meter follows the selected device. Nothing decodes those samples yet, so
-the application does not receive or transmit, and raster progress is simulated
-over a generated test pattern. See [docs/gui-design.md](docs/gui-design.md) for
-the design and the remaining work.
+It receives. Selecting an input device opens a capture stream and starts a
+worker that demodulates the audio, detects the mode from VIS, and decodes the
+image progressively. Mode, decoded rows, input level, synchronization strength,
+and any decoded FSKID callsign come from that worker.
+
+Transmit is not implemented yet, and completed receptions are not stored. See
+[docs/gui-design.md](docs/gui-design.md) for the design and the remaining
+work.
 
 ## Encode WAV
 

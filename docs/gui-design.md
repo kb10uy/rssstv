@@ -40,8 +40,10 @@ not add SSTV or DSP behavior.
 
 | Package | Role | Status |
 | --- | --- | --- |
-| `rssstv` | Composition root: window, state, messages, views, worker supervision | Interface shell implemented; capture wired, no workers yet |
+| `rssstv` | Composition root: window, state, messages, views, worker supervision | Implemented for receive |
 | `rssstv-audio` | Capture and playback adapters over the host audio API | Capture implemented; playback not implemented |
+
+`rssstv-audio` splits an open device into a `Capture` handle and a `CaptureReader`. The handle keeps the stream alive on the thread that opened it, because host streams are not `Send` on every platform; the reader is `Send` and moves into the receive worker.
 
 `rssstv-audio` is a new crate. It owns device enumeration, stream formats, and
 callback scheduling, and exposes only normalized mono `f32` blocks with sample
@@ -97,12 +99,30 @@ The worker computes the input level itself from the raw capture block before
 demodulation. Level metering is a user-interface concern, not a protocol one,
 so `Demodulator` gains no accessor for it.
 
+Capture overrun breaks the contiguity the demodulator requires. `Reading`
+reports the gap, and the worker responds by discarding the demodulator and any
+decoder and starting again, rather than decoding across a discontinuity and
+producing a silently corrupt image.
+
 Progressive image display uses the existing decoder API. The worker tracks
-`RxDecoder::image_revision`, and when it changes, converts
-`RxDecoder::image` into RGBA bytes and publishes an owned handle. The
-conversion runs on the worker so the interface only receives display-ready
-data. Publication is throttled to at most 30 updates per second; the revision
-counter makes skipped intermediate revisions harmless.
+`RxDecoder::image_revision`, and when it changes, converts `RxDecoder::image`
+into RGBA bytes and publishes an owned frame. The conversion runs on the worker
+so the interface only wraps the buffer, without copying pixels. Publication is
+throttled to at most 30 frames per second; the revision counter makes skipped
+intermediate revisions harmless.
+
+Slant correction is enabled by default. For a reception that starts while it is
+enabled, the worker retains a bounded full-rate frequency/sync stream and
+rebuilds the completed image with a fitted global raster rate and epoch. The
+control does not replace live phase synchronization, which remains enabled
+independently. Turning Slant on after a reception has started applies to the
+next reception because the earlier samples were not staged.
+
+Raster phase acquisition collects four recurring synchronization pulses, as
+MMSSTV does, buffering at most five periods when the first post-VIS pulse is
+incomplete. It then decodes from the retained first period. The interface
+therefore starts publishing at the first row after the short acquisition
+interval instead of waiting for a fixed fraction of the image.
 
 `RxEvent` values are mapped to interface state as follows:
 
@@ -173,8 +193,9 @@ originates from the receive subscription, while `RxMessage::ModeSelected`
 originates from the mode dropdown.
 
 Worker snapshots are coalesced. If several snapshots are queued when the
-subscription is polled, only the newest is turned into a message, because each
-snapshot fully describes the current receive state.
+subscription is polled, the newest state is returned with the latest queued
+image frame and transient error attached. This prevents a newer meter-only
+snapshot from discarding a decoded frame before the interface observes it.
 
 ## View Composition
 
@@ -267,36 +288,32 @@ The `rssstv` shell implements the state model, message dispatch, and view
 composition described above. Tabs, mode selection, DSP toggles, QSO fields,
 locale switching, and the template and stock lists are interactive.
 
-Capture is real. The device dropdown lists the host's input devices, selecting
-one opens a capture stream, and the input level meter follows the captured
-signal. The status bar reports the negotiated sample rate and any samples lost
-to queue overrun.
+Receive is implemented end to end. Selecting a device opens a capture stream
+and spawns the receive worker, which demodulates, detects the mode from VIS,
+decodes the raster, and publishes snapshots. The interface adopts the newest
+snapshot on each frame and draws the partially decoded image progressively.
 
-Nothing in the shell performs SSTV processing yet. In place of the receive
-worker, a simulation advances the decoded fraction and the synchronization
-strength on a fixed cycle, and the main canvas draws a generated test pattern
-sized to the selected mode. Controls whose behavior belongs to the decode and
-transmit pipelines are rendered without an action, so the layout is reviewable
-without implying working transmit or receive.
+Nothing simulated remains in the receive path. Mode, decoded rows, input level,
+synchronization strength, decoded callsigns, and overrun counts all come from
+the worker. When no reception is in progress, the canvas shows a blank raster
+sized to the selected mode.
 
-The interface currently drains the capture queue on its own frame tick rather
-than from a worker. That is adequate for metering, which is all it does with
-the samples; the receive worker described above takes ownership of the queue
-when decoding is connected.
+Transmit is not implemented. The transmit tab still shows a generated test
+pattern, and controls belonging to the transmit pipeline are rendered without
+an action so the layout stays reviewable without implying working transmit.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.
 
 ## Prerequisites
 
-The interface cannot perform live reception or transmission until the audio
-boundary exists. The remaining implementation order is:
+The remaining implementation order is:
 
-1. Receive worker: `Demodulator` and `RxDecoder` over the capture queue,
-   replacing the simulation and enabling the pending receive controls.
-2. `rssstv-audio` playback: output streams and bounded queues for transmit.
-3. Transmit worker: template rendering, `TransmissionEncoder`, and `Modulator`
+1. `rssstv-audio` playback: output streams and bounded queues for transmit.
+2. Transmit worker: template rendering, `TransmissionEncoder`, and `Modulator`
    over the playback queue.
+3. History: retaining completed receptions, and the receive controls that act
+   on them.
 
 Configuration persistence, template editing, PTT, CAT, and logging remain out
 of scope for this document and are still listed as planned gaps in

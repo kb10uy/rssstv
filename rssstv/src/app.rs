@@ -1,5 +1,4 @@
 use std::fmt;
-use std::time::Instant;
 
 use iced::widget::canvas::Cache;
 use iced::{Element, Subscription};
@@ -13,7 +12,6 @@ use crate::view;
 
 const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
-const SIMULATED_CYCLE_SECONDS: f32 = 12.0;
 
 pub fn run() -> iced::Result {
     iced::application(App::new, App::update, App::view)
@@ -107,17 +105,6 @@ impl Entry {
     }
 }
 
-/// Simulated raster progress.
-///
-/// Capture is real, but nothing decodes it yet, so raster progress and
-/// synchronization strength stand in for the receive worker described in
-/// `docs/gui-design.md`. Neither is protocol behavior.
-#[derive(Clone, Copy, Debug)]
-pub struct Simulation {
-    pub decoded_fraction: f32,
-    pub sync_strength: f32,
-}
-
 #[derive(Clone, Debug)]
 pub enum Message {
     TabSelected(Tab),
@@ -127,7 +114,7 @@ pub enum Message {
     Tx(TxMessage),
     Library(LibraryMessage),
     Qso(QsoMessage),
-    Tick(Instant),
+    Tick,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -173,20 +160,28 @@ pub struct App {
     pub template: usize,
     pub stocks: Vec<Entry>,
     pub stock: usize,
-    pub simulation: Simulation,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
     pub main_cache: Cache,
     pub preview_cache: Cache,
-    started: Instant,
 }
 
 impl App {
     pub fn new() -> Self {
+        Self::with_audio(AudioState::new())
+    }
+
+    /// Builds an interface with no host audio, for tests.
+    #[cfg(test)]
+    fn headless() -> Self {
+        Self::with_audio(AudioState::disconnected())
+    }
+
+    fn with_audio(audio: AudioState) -> Self {
         Self {
             tab: Tab::default(),
             i18n: I18n::new(Locale::default()),
-            audio: AudioState::new(),
+            audio,
             auto_mode: true,
             rx_mode: ModeChoice(DEFAULT_RX_MODE),
             tx_mode: ModeChoice(DEFAULT_TX_MODE),
@@ -195,7 +190,7 @@ impl App {
             dsp: DspFlags {
                 afc: true,
                 lms: false,
-                slant: false,
+                slant: true,
             },
             auto_history: true,
             qso: Qso::default(),
@@ -217,15 +212,10 @@ impl App {
                 Entry::new("shack.png", "640×496"),
             ],
             stock: 0,
-            simulation: Simulation {
-                decoded_fraction: 0.0,
-                sync_strength: 0.94,
-            },
-            rx_raster: Raster::test_pattern(DEFAULT_RX_MODE),
+            rx_raster: Raster::blank(DEFAULT_RX_MODE),
             tx_raster: Raster::test_pattern(DEFAULT_TX_MODE),
             main_cache: Cache::new(),
             preview_cache: Cache::new(),
-            started: Instant::now(),
         }
     }
 
@@ -234,7 +224,7 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::window::frames().map(Message::Tick)
+        iced::window::frames().map(|_| Message::Tick)
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -257,7 +247,7 @@ impl App {
             Message::Tx(message) => self.update_tx(message),
             Message::Library(message) => self.update_library(message),
             Message::Qso(message) => self.update_qso(message),
-            Message::Tick(now) => self.tick(now),
+            Message::Tick => self.tick(),
         }
     }
 
@@ -266,10 +256,15 @@ impl App {
             RxMessage::AutoModeToggled(enabled) => self.auto_mode = enabled,
             RxMessage::ModeSelected(mode) => {
                 self.rx_mode = mode;
-                self.rx_raster = Raster::test_pattern(mode.0);
+                self.rx_raster = Raster::blank(mode.0);
                 self.main_cache.clear();
             }
-            RxMessage::DspToggled(dsp) => self.dsp.toggle(dsp),
+            RxMessage::DspToggled(dsp) => {
+                self.dsp.toggle(dsp);
+                if dsp == Dsp::Slant {
+                    self.audio.set_slant(self.dsp.slant);
+                }
+            }
             RxMessage::AutoHistoryToggled(enabled) => self.auto_history = enabled,
         }
     }
@@ -301,24 +296,23 @@ impl App {
         }
     }
 
-    fn tick(&mut self, now: Instant) {
-        self.audio.poll();
-        let elapsed = now.duration_since(self.started).as_secs_f32();
-        let fraction = (elapsed / SIMULATED_CYCLE_SECONDS).fract();
-        if (fraction - self.simulation.decoded_fraction).abs() < f32::EPSILON {
-            return;
+    /// Adopts anything the receive worker produced since the last frame.
+    fn tick(&mut self) {
+        if let Some(frame) = self.audio.poll()
+            && let Some(raster) = Raster::from_frame(frame)
+        {
+            self.rx_raster = raster;
         }
-        self.simulation = Simulation {
-            decoded_fraction: fraction,
-            sync_strength: (0.92 + 0.06 * (elapsed * 1.7).sin()).clamp(0.0, 1.0),
-        };
+        if let Some(mode) = self.audio.snapshot().mode {
+            self.rx_mode = ModeChoice(mode);
+        }
         self.main_cache.clear();
     }
 
     /// Fraction of the active tab's raster that is drawn as decoded.
     pub fn decoded_fraction(&self) -> f32 {
         match self.tab {
-            Tab::Receive => self.simulation.decoded_fraction,
+            Tab::Receive => self.audio.snapshot().progress.fraction(),
             Tab::Transmit | Tab::History => 1.0,
         }
     }
@@ -350,10 +344,11 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::receive::{Progress, Snapshot};
 
     #[test]
     fn only_supported_modes_are_selectable() {
-        let app = App::new();
+        let app = App::headless();
         assert!(!app.rx_modes.is_empty());
         assert!(!app.tx_modes.is_empty());
         assert!(
@@ -368,51 +363,75 @@ mod tests {
         );
     }
 
+    fn decoding(rows: usize, total: usize) -> Snapshot {
+        Snapshot {
+            progress: Progress::Decoding { rows, total },
+            ..Snapshot::default()
+        }
+    }
+
     #[test]
     fn switching_tabs_preserves_receive_progress() {
-        let mut app = App::new();
-        app.simulation.decoded_fraction = 0.4;
+        let mut app = App::headless();
+        app.audio.set_snapshot(decoding(40, 100));
         app.update(Message::TabSelected(Tab::Transmit));
         app.update(Message::TabSelected(Tab::Receive));
-        assert_eq!(app.simulation.decoded_fraction, 0.4);
         assert_eq!(app.decoded_fraction(), 0.4);
     }
 
     #[test]
     fn completed_tabs_draw_a_full_raster() {
-        let mut app = App::new();
-        app.simulation.decoded_fraction = 0.4;
+        let mut app = App::headless();
+        app.audio.set_snapshot(decoding(40, 100));
         app.update(Message::TabSelected(Tab::History));
         assert_eq!(app.decoded_fraction(), 1.0);
     }
 
     #[test]
+    fn an_idle_receiver_draws_nothing_as_decoded() {
+        assert_eq!(App::headless().decoded_fraction(), 0.0);
+    }
+
+    #[test]
     fn selecting_a_mode_replaces_the_raster() {
-        let mut app = App::new();
+        let mut app = App::headless();
         app.update(Message::Rx(RxMessage::ModeSelected(ModeChoice(
             Mode::Robot36,
         ))));
         assert_eq!(app.rx_mode.0, Mode::Robot36);
-        assert_eq!(app.rx_raster.mode(), Mode::Robot36);
         assert_eq!(
             app.rx_raster.size().width(),
             Mode::Robot36.spec().width() as usize
+        );
+        assert_eq!(
+            app.rx_raster.size().height(),
+            Mode::Robot36.spec().height() as usize
         );
     }
 
     #[rstest]
     #[case(Dsp::Afc, false)]
     #[case(Dsp::Lms, true)]
-    #[case(Dsp::Slant, true)]
+    #[case(Dsp::Slant, false)]
     fn dsp_toggles_flip_one_flag(#[case] dsp: Dsp, #[case] expected: bool) {
-        let mut app = App::new();
+        let mut app = App::headless();
         app.update(Message::Rx(RxMessage::DspToggled(dsp)));
         assert_eq!(app.dsp.get(dsp), expected);
+        if dsp == Dsp::Slant {
+            assert_eq!(app.audio.slant(), expected);
+        }
+    }
+
+    #[test]
+    fn slant_is_enabled_by_default_in_the_ui_and_worker_settings() {
+        let app = App::headless();
+        assert!(app.dsp.slant);
+        assert!(app.audio.slant());
     }
 
     #[test]
     fn callsign_input_is_normalized_and_clearable() {
-        let mut app = App::new();
+        let mut app = App::headless();
         app.update(Message::Qso(QsoMessage::CallChanged("ja1xyz".to_owned())));
         assert_eq!(app.qso.call, "JA1XYZ");
         app.update(Message::Qso(QsoMessage::Cleared));
@@ -421,7 +440,7 @@ mod tests {
 
     #[test]
     fn locale_switching_replaces_the_bundle() {
-        let mut app = App::new();
+        let mut app = App::headless();
         let english = app.i18n.text("tab-receive");
         app.update(Message::LocaleSelected(Locale::Ja));
         assert_eq!(app.i18n.locale(), Locale::Ja);

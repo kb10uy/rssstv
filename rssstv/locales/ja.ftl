@@ -55,6 +55,7 @@ section-templates = テンプレート
 section-stocks = ストック画像
 section-composite = 合成プレビュー
 
+badge-waiting = 信号待ち
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
 badge-transmit-ready = TX READY · { $mode }
@@ -62,7 +63,6 @@ badge-history = HISTORY · { $mode }
 
 status-receiving = 受信中 ({ $percent }%)
 status-idle = 待機中
-status-simulated = ラスタはシミュレーション
 status-no-audio = 入力デバイスなし
 status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル

@@ -3,12 +3,14 @@ use iced::widget::{
     stack, text, text_input, toggler,
 };
 use iced::{Alignment, Element, Length};
+use rssstv_sstv::mode::Mode;
 
 use crate::app::{
     App, Dsp, Entry, LibraryMessage, Message, ModeChoice, QsoMessage, RxMessage, Tab, TxMessage,
 };
 use crate::canvas::ImageCanvas;
 use crate::i18n::{Locale, number, text as arg};
+use crate::receive::Progress;
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
 const LIBRARY_HEIGHT: f32 = 246.0;
@@ -105,20 +107,35 @@ fn main_pane(app: &App) -> Element<'_, Message> {
 }
 
 fn badge(app: &App) -> String {
-    let raster = app.active_raster();
-    let mode = arg(raster.mode().spec().name());
+    let name = active_mode(app).spec().name();
+    let mode = arg(name);
     match app.tab {
-        Tab::Receive => {
-            let percent = (app.simulation.decoded_fraction * 100.0).round();
-            app.i18n.text_with(
-                "badge-receiving",
-                &[("mode", mode), ("percent", number(percent))],
-            )
-        }
         Tab::Transmit => app
             .i18n
             .text_with("badge-transmit-ready", &[("mode", mode)]),
         Tab::History => app.i18n.text_with("badge-history", &[("mode", mode)]),
+        Tab::Receive => {
+            let progress = app.audio.snapshot().progress;
+            if !progress.is_active() && progress != Progress::Complete {
+                return app.i18n.text("badge-waiting");
+            }
+            let percent = (progress.fraction() * 100.0).round();
+            if progress == Progress::Complete {
+                app.i18n.text_with("badge-complete", &[("mode", mode)])
+            } else {
+                app.i18n.text_with(
+                    "badge-receiving",
+                    &[("mode", mode), ("percent", number(percent))],
+                )
+            }
+        }
+    }
+}
+
+fn active_mode(app: &App) -> Mode {
+    match app.tab {
+        Tab::Transmit => app.tx_mode.0,
+        Tab::Receive | Tab::History => app.rx_mode.0,
     }
 }
 
@@ -127,7 +144,7 @@ fn geometry_label(app: &App) -> String {
     app.i18n.text_with(
         "geometry",
         &[
-            ("mode", arg(raster.mode().spec().name())),
+            ("mode", arg(active_mode(app).spec().name())),
             ("width", number(raster.size().width() as u32)),
             ("height", number(raster.size().height() as u32)),
         ],
@@ -203,20 +220,20 @@ fn section<'a>(app: &App, key: &str, content: Element<'a, Message>) -> Element<'
 }
 
 fn rx_status(app: &App) -> Element<'_, Message> {
-    let receiving = app.tab == Tab::Receive && app.audio.is_capturing();
-    let sync_key = if receiving {
+    let snapshot = app.audio.snapshot();
+    let sync_key = if snapshot.progress.is_active() {
         "label-signal-detected"
     } else {
         "label-no-signal"
     };
-    let percent = (app.simulation.sync_strength * 100.0).round();
+    let percent = (snapshot.sync_strength * 100.0).round();
     column![
         row![
             text(app.i18n.text("label-input-level")).size(12),
             filler(),
-            text(format!("{:.0} dBFS", level_dbfs(app.audio.level()))).size(11),
+            text(format!("{:.0} dBFS", level_dbfs(snapshot.level))).size(11),
         ],
-        progress_bar(0.0..=1.0, app.audio.level()),
+        progress_bar(0.0..=1.0, snapshot.level),
         row![
             text(app.i18n.text(sync_key)).size(12),
             filler(),
@@ -411,8 +428,9 @@ fn composite(app: &App) -> Element<'_, Message> {
 }
 
 fn status_bar(app: &App) -> Element<'_, Message> {
-    let percent = (app.simulation.decoded_fraction * 100.0).round();
-    let status = if app.tab == Tab::Receive {
+    let snapshot = app.audio.snapshot();
+    let status = if snapshot.progress.is_active() {
+        let percent = (snapshot.progress.fraction() * 100.0).round();
         app.i18n
             .text_with("status-receiving", &[("percent", number(percent))])
     } else {
@@ -424,12 +442,11 @@ fn status_bar(app: &App) -> Element<'_, Message> {
             .text_with("status-audio", &[("rate", number(rate))]),
         None => app.i18n.text("status-no-audio"),
     };
-    let mut bar = row![
-        text(status).size(11),
-        text(audio).size(11),
-        text(app.i18n.text("status-simulated")).size(11),
-    ];
-    let dropped = app.audio.dropped_samples();
+    let mut bar = row![text(status).size(11), text(audio).size(11)];
+    if !snapshot.callsigns.is_empty() {
+        bar = bar.push(text(snapshot.callsigns.join(" ")).size(11));
+    }
+    let dropped = snapshot.dropped_samples;
     if dropped > 0 {
         bar = bar.push(
             text(
@@ -439,7 +456,7 @@ fn status_bar(app: &App) -> Element<'_, Message> {
             .size(11),
         );
     }
-    if let Some(error) = &app.audio.error {
+    if let Some(error) = app.audio.error.as_ref().or(snapshot.error.as_ref()) {
         bar = bar.push(text(error.as_str()).size(11));
     }
     bar.push(filler()).spacing(16).padding([4, 12]).into()

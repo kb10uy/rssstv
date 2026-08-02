@@ -1,0 +1,13 @@
+[package]
+name = "decode-wav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+hound.workspace = true
+image.workspace = true
+rssstv-demodulator = { path = "../rssstv-demodulator" }
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }

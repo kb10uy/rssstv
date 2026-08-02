@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "decode-wav",
   "rssstv",
   "rssstv-demodulator",
   "rssstv-dsp",
@@ -14,6 +15,9 @@ license = "LGPL-3.0"
 authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 
 [workspace.dependencies]
+anyhow = "1.0"
+hound = "3.5"
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
 libm = "0.2"
 proptest = "1.7"
 rstest = "0.26"

@@ -1,6 +1,4 @@
-use std::env;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{env, path::PathBuf, process::ExitCode};
 
 use anyhow::{Result, bail};
 use decode_wav::{DecodeOptions, DecodeStatus, decode_file_with_options};

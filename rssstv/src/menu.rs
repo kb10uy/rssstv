@@ -6,8 +6,7 @@
 //! platform-independent [model](model) that the native and in-window renderers
 //! both consume, so the two paths cannot drift apart.
 
-use crate::app::App;
-use crate::i18n::Locale;
+use crate::{app::App, i18n::Locale};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub use native::Native;
@@ -708,8 +707,7 @@ mod tests {
 #[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
 mod native_tests {
     use super::*;
-    use crate::app::App;
-    use crate::i18n::Locale;
+    use crate::{app::App, i18n::Locale};
 
     /// The labels a menu should be showing, in the order [`Native::labels`]
     /// reports them.

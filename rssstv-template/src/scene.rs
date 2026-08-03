@@ -1,5 +1,4 @@
-use std::collections::BTreeMap;
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 /// A parsed template whose layers retain document order.
 #[derive(Clone, Debug, Default, PartialEq)]

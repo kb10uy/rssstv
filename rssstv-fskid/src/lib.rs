@@ -4,8 +4,7 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use core::fmt;
-use core::str;
+use core::{fmt, str};
 
 const GUARD_SECONDS: f64 = 0.100;
 const SYMBOL_SECONDS: f64 = 0.022;

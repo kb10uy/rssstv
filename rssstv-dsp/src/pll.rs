@@ -1,6 +1,8 @@
-use crate::DspError;
-use crate::iir::{IirFilter, IirLowPassDesign, IirResponse};
-use crate::oscillator::Vco;
+use crate::{
+    DspError,
+    iir::{IirFilter, IirLowPassDesign, IirResponse},
+    oscillator::Vco,
+};
 
 /// Peak-to-peak amplitude the input automatic gain control aims for.
 const AGC_TARGET_SPAN: f64 = 5.0;

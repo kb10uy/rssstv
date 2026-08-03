@@ -1,13 +1,14 @@
 use alloc::vec::Vec;
 
-use crate::SstvError;
-use crate::time::SstvDuration;
+use crate::{SstvError, time::SstvDuration};
 
-use super::clock::RasterClock;
-use super::config::sync_detector_delay_samples;
-use super::input::SampleBuffer;
-use super::raster::RasterProfile;
-use super::sync::{RUN_THRESHOLD, refine_center};
+use super::{
+    clock::RasterClock,
+    config::sync_detector_delay_samples,
+    input::SampleBuffer,
+    raster::RasterProfile,
+    sync::{RUN_THRESHOLD, refine_center},
+};
 
 pub(super) const ACQUISITION_PERIODS: u64 = 32;
 pub(super) const STARTUP_PERIODS: u64 = 5;
@@ -250,8 +251,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::mode::Mode;
-    use crate::rx::input::DemodulatedBlock;
+    use crate::{mode::Mode, rx::input::DemodulatedBlock};
 
     #[test]
     fn acquisition_selects_longest_sequence_and_fits_effective_rate() {

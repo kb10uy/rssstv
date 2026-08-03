@@ -4,10 +4,12 @@ use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
 use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
 use rssstv_fskid::FskId;
-use rssstv_sstv::RxDecoder;
-use rssstv_sstv::image::RgbImage;
-use rssstv_sstv::mode::Mode;
-use rssstv_sstv::rx::{DemodulatedBlock, RxConfig, RxOutcome, RxState, Staging};
+use rssstv_sstv::{
+    RxDecoder,
+    image::RgbImage,
+    mode::Mode,
+    rx::{DemodulatedBlock, RxConfig, RxOutcome, RxState, Staging},
+};
 
 const DEFAULT_PCM_PACKET_SIZE: usize = 1_024;
 
@@ -264,12 +266,13 @@ fn save_image(image: &RgbImage, path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::f64::consts::TAU;
-    use std::fs;
+    use std::{f64::consts::TAU, fs};
 
     use hound::{WavSpec, WavWriter};
-    use rssstv_sstv::TxEncoder;
-    use rssstv_sstv::image::{ImageSize, Rgb8};
+    use rssstv_sstv::{
+        TxEncoder,
+        image::{ImageSize, Rgb8},
+    };
 
     use super::*;
 

@@ -1,21 +1,23 @@
-use alloc::collections::VecDeque;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{collections::VecDeque, vec, vec::Vec};
 
-use crate::color::{YCrCb8, y_cr_cb_to_rgb};
-use crate::image::{ImageSize, Rgb8, RgbImage};
-use crate::mode::{Mode, RasterOrganization, ScanChannel, Support};
-use crate::signal::Frequency;
-use crate::{RxProcessError, SstvError};
+use crate::{
+    RxProcessError, SstvError,
+    color::{YCrCb8, y_cr_cb_to_rgb},
+    image::{ImageSize, Rgb8, RgbImage},
+    mode::{Mode, RasterOrganization, ScanChannel, Support},
+    signal::Frequency,
+};
 
-use super::acquisition::{acquire, acquire_startup, startup_window_samples};
-use super::clock::{RasterClock, ceil_sample};
-use super::config::{RxConfig, Staging};
-use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
-use super::input::{DemodulatedBlock, SampleBuffer};
-use super::raster::{PixelSegment, RasterProfile};
-use super::slant::{SlantEstimate, SlantEstimator};
-use super::sync::{MIN_CONFIDENCE, SyncObservation, observe, push_bounded};
+use super::{
+    acquisition::{acquire, acquire_startup, startup_window_samples},
+    clock::{RasterClock, ceil_sample},
+    config::{RxConfig, Staging},
+    event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason},
+    input::{DemodulatedBlock, SampleBuffer},
+    raster::{PixelSegment, RasterProfile},
+    slant::{SlantEstimate, SlantEstimator},
+    sync::{MIN_CONFIDENCE, SyncObservation, observe, push_bounded},
+};
 
 const BAD_SYNC_SCORE_LIMIT: u8 = 8;
 const BAD_SYNC_PENALTY: u8 = 1;
@@ -1113,15 +1115,13 @@ fn live_slant_threshold_ppm(units: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+    use alloc::{vec, vec::Vec};
 
     use proptest::prelude::*;
     use rstest::rstest;
 
     use super::*;
-    use crate::signal::TxComponent;
-    use crate::tx::TxEncoder;
+    use crate::{signal::TxComponent, tx::TxEncoder};
 
     const SAMPLE_RATE: u32 = 10_000;
     const VIS_END_PS: u64 = 910_000_000_000;

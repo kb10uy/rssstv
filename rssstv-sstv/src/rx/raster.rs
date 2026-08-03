@@ -1,5 +1,7 @@
-use crate::mode::{Mode, RasterOrganization, ScanChannel, ScanContent};
-use crate::signal::TxComponent;
+use crate::{
+    mode::{Mode, RasterOrganization, ScanChannel, ScanContent},
+    signal::TxComponent,
+};
 
 pub(super) const MAX_PIXEL_SEGMENTS: usize = 4;
 

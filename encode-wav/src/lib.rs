@@ -1,15 +1,18 @@
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use image::imageops::FilterType;
 use rssstv_fskid::FskId;
 use rssstv_modulator::Modulator;
-use rssstv_sstv::TransmissionEncoder;
-use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
-use rssstv_sstv::mode::{Mode, Support};
+use rssstv_sstv::{
+    TransmissionEncoder,
+    image::{ImageSize, Rgb8, RgbImage},
+    mode::{Mode, Support},
+};
 use rssstv_template::{
     AssetError, AssetProvider, EncodedAsset, RenderContext, RenderSize, Renderer, Template,
     VariableValue, Variables, composite,

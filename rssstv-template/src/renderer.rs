@@ -1,18 +1,19 @@
-use std::collections::HashMap;
-use std::fmt::Write;
-use std::io::Cursor;
-use std::sync::Arc;
+use std::{collections::HashMap, fmt::Write, io::Cursor, sync::Arc};
 
 use image::{GenericImageView, ImageEncoder};
-use resvg::tiny_skia::{Pixmap, Transform};
-use resvg::usvg::{self, ImageKind};
+use resvg::{
+    tiny_skia::{Pixmap, Transform},
+    usvg::{self, ImageKind},
+};
 use rssstv_sstv::image::RgbImage;
 
-use crate::scene::{
-    Anchor, Color, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length, Position,
-    ReceivedImageLayer, Stroke, Template, TextLayer, Variables,
+use crate::{
+    AssetError, RenderSize, Rgba8, RgbaImage, TemplateError,
+    scene::{
+        Anchor, Color, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length, Position,
+        ReceivedImageLayer, Stroke, Template, TextLayer, Variables,
+    },
 };
-use crate::{AssetError, RenderSize, Rgba8, RgbaImage, TemplateError};
 
 /// PNG bytes returned by an [`AssetProvider`].
 #[derive(Clone, Debug)]

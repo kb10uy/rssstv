@@ -8,14 +8,16 @@
 mod capture;
 mod error;
 
-use std::fmt;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::{
+    fmt,
+    sync::{Arc, atomic::AtomicU64},
+};
 
-use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{Host, SampleFormat, StreamConfig};
-use ringbuf::HeapRb;
-use ringbuf::traits::Split;
+use cpal::{
+    Host, SampleFormat, StreamConfig,
+    traits::{DeviceTrait, HostTrait},
+};
+use ringbuf::{HeapRb, traits::Split};
 
 pub use capture::{Capture, CaptureFeed, CaptureReader, Reading, synthetic_capture};
 pub use error::AudioError;

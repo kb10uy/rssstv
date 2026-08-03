@@ -2,11 +2,13 @@ use std::collections::HashSet;
 
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
-use crate::TemplateError;
-use crate::scene::{
-    Anchor, Color, EllipseLayer, Font, FontStyle, GroupLayer, ImageFit, ImageLayer, Layer,
-    LayerSize, Length, LineLayer, Position, ReceivedImageLayer, RectangleLayer, Stroke, Template,
-    TextLayer,
+use crate::{
+    TemplateError,
+    scene::{
+        Anchor, Color, EllipseLayer, Font, FontStyle, GroupLayer, ImageFit, ImageLayer, Layer,
+        LayerSize, Length, LineLayer, Position, ReceivedImageLayer, RectangleLayer, Stroke,
+        Template, TextLayer,
+    },
 };
 
 impl Template {

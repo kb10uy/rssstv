@@ -1,6 +1,8 @@
-use std::fs::{self, OpenOptions};
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{self, OpenOptions},
+    io,
+    path::{Path, PathBuf},
+};
 
 use directories::{BaseDirs, UserDirs};
 

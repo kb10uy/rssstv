@@ -13,14 +13,15 @@
 //!   --skew PPM       stretch the recording against the rate, which is slant
 //! ```
 
-use std::env;
-use std::path::PathBuf;
+use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
 use rssstv_demodulator::{Demodulator, sync_detector_delay};
-use rssstv_sstv::RxDecoder;
-use rssstv_sstv::rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging};
+use rssstv_sstv::{
+    RxDecoder,
+    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging},
+};
 
 /// Matches the application's receive worker.
 const STAGING_SECONDS: usize = 300;

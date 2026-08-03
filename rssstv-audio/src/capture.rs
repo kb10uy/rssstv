@@ -1,10 +1,13 @@
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
-use cpal::traits::StreamTrait;
-use cpal::{FromSample, Sample, Stream};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::{HeapCons, HeapProd};
+use cpal::{FromSample, Sample, Stream, traits::StreamTrait};
+use ringbuf::{
+    HeapCons, HeapProd,
+    traits::{Consumer, Observer, Producer, Split},
+};
 
 use crate::AudioError;
 
@@ -298,8 +301,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use ringbuf::HeapRb;
-    use ringbuf::traits::Split;
+    use ringbuf::{HeapRb, traits::Split};
     use rstest::rstest;
 
     use super::*;

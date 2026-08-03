@@ -1,8 +1,9 @@
-use std::env;
-use std::error::Error;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
 use rssstv_template::{

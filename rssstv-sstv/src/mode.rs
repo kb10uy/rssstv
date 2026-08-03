@@ -3,8 +3,7 @@
 
 mod scan;
 
-use crate::color::LevelFrequencyBand;
-use crate::time::SstvDuration;
+use crate::{color::LevelFrequencyBand, time::SstvDuration};
 
 pub use scan::{RasterScan, ScanChannel, ScanContent, ScanSegment};
 

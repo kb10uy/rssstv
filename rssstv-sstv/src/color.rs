@@ -1,5 +1,4 @@
-use crate::image::Rgb8;
-use crate::signal::Frequency;
+use crate::{image::Rgb8, signal::Frequency};
 
 /// MMSSTV's byte representation of Y, R-Y, and B-Y.
 ///

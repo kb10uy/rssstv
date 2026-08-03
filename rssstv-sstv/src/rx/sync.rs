@@ -1,10 +1,9 @@
-use alloc::collections::VecDeque;
-use alloc::vec::Vec;
+use alloc::{collections::VecDeque, vec::Vec};
 
-use super::clock::RasterClock;
-use super::config::sync_detector_delay_samples;
-use super::input::SampleBuffer;
-use super::raster::RasterProfile;
+use super::{
+    clock::RasterClock, config::sync_detector_delay_samples, input::SampleBuffer,
+    raster::RasterProfile,
+};
 use crate::time::SstvDuration;
 
 pub(super) const HISTORY_LEN: usize = 16;
@@ -199,8 +198,7 @@ mod tests {
     use alloc::vec;
 
     use super::*;
-    use crate::mode::Mode;
-    use crate::rx::input::DemodulatedBlock;
+    use crate::{mode::Mode, rx::input::DemodulatedBlock};
 
     #[test]
     fn refinement_finds_the_pulse_center_in_the_frequency_stream() {

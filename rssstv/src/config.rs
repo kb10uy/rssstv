@@ -4,15 +4,15 @@
 //! document, so comments and hand-written layout are not lost when the
 //! application saves a changed selection.
 
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 use rssstv_sstv::mode::Mode;
 use toml_edit::{DocumentMut, Item, Table, value};
 
-use crate::app::DspFlags;
-use crate::i18n::Locale;
+use crate::{app::DspFlags, i18n::Locale};
 
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;

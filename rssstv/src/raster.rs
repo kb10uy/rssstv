@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use egui::{ColorImage, Context, TextureHandle, TextureOptions};
-use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
-use rssstv_sstv::mode::Mode;
+use rssstv_sstv::{
+    image::{ImageSize, Rgb8, RgbImage},
+    mode::Mode,
+};
 
 use crate::receive::Frame;
 

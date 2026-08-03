@@ -1,7 +1,4 @@
-use std::env;
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{env, ffi::OsString, path::PathBuf, process::ExitCode};
 
 use anyhow::{Result, bail};
 use encode_wav::{encode_file, parse_mode};

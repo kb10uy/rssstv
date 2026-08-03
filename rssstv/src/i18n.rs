@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 use fluent_bundle::{FluentArgs, FluentBundle, FluentResource, FluentValue};
 use unic_langid::LanguageIdentifier;

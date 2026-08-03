@@ -69,6 +69,8 @@ in the original DSP classes.
 - Use Rust edition 2024.
 - Follow standard Rust naming and formatting conventions.
 - Use LF line endings for all text files.
+- Combine imports from the same crate into a single `use` statement within each
+  module scope, except when different `cfg` attributes require separate imports.
 - Avoid comments by default. Add comments only when explicitly requested by the
   user.
 - Prefer the smallest correct implementation and avoid speculative abstractions.

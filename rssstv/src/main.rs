@@ -1,7 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::error::Error;
-use std::sync::Arc;
+use std::{error::Error, sync::Arc};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 
@@ -113,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..Default::default()
     };
     eframe::run_native(
-        "rssstv",
+        concat!("RSSSTV ", env!("CARGO_PKG_VERSION")),
         options,
         Box::new(|cc| Ok(Box::new(Interface::new(cc, paths)))),
     )?;

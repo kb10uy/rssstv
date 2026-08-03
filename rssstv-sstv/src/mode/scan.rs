@@ -3,9 +3,11 @@
 //! Segment order and durations are derived from the transmit line generators in
 //! `Main.cpp` from MMSSTV 1.13A.
 
-use crate::mode::Mode;
-use crate::signal::{Frequency, TxComponent};
-use crate::time::SstvDuration;
+use crate::{
+    mode::Mode,
+    signal::{Frequency, TxComponent},
+    time::SstvDuration,
+};
 
 /// A picture channel swept across the raster width by one segment.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

@@ -1,14 +1,20 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
 
 use rssstv_audio::CaptureReader;
 use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
-use rssstv_sstv::image::RgbImage;
-use rssstv_sstv::mode::Mode;
-use rssstv_sstv::rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging};
-use rssstv_sstv::{RxDecoder, SstvError};
+use rssstv_sstv::{
+    RxDecoder, SstvError,
+    image::RgbImage,
+    mode::Mode,
+    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging},
+};
 
 /// Samples drained from the capture queue per pass.
 const READ_SAMPLES: usize = 4_096;
@@ -668,8 +674,10 @@ mod pipeline_tests {
     use std::f64::consts::TAU;
 
     use rssstv_audio::synthetic_capture;
-    use rssstv_sstv::TxEncoder;
-    use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
+    use rssstv_sstv::{
+        TxEncoder,
+        image::{ImageSize, Rgb8, RgbImage},
+    };
 
     use super::*;
 

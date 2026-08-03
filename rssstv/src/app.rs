@@ -1,16 +1,19 @@
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
 
 use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
-use crate::audio::AudioState;
-use crate::config::{Config, Settings, UI_SCALE_RANGE};
-use crate::i18n::{I18n, Locale};
-use crate::paths::AppPaths;
-use crate::raster::Raster;
+use crate::{
+    audio::AudioState,
+    config::{Config, Settings, UI_SCALE_RANGE},
+    i18n::{I18n, Locale},
+    paths::AppPaths,
+    raster::Raster,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {

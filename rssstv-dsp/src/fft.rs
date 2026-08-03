@@ -1,7 +1,8 @@
-use alloc::vec;
-use alloc::vec::Vec;
-use core::f64::consts::TAU;
-use core::ops::{Add, Mul, Sub};
+use alloc::{vec, vec::Vec};
+use core::{
+    f64::consts::TAU,
+    ops::{Add, Mul, Sub},
+};
 
 use crate::DspError;
 

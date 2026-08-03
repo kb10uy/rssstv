@@ -1,7 +1,6 @@
 use thiserror::Error;
 
-use crate::image::ImageSize;
-use crate::mode::Mode;
+use crate::{image::ImageSize, mode::Mode};
 
 /// An invalid SSTV value or arithmetic operation.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]

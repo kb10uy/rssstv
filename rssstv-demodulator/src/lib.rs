@@ -3,16 +3,19 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-use std::collections::VecDeque;
-use std::f64::consts::{PI, TAU};
+use std::{
+    collections::VecDeque,
+    f64::consts::{PI, TAU},
+};
 
-use rssstv_dsp::fir::{Fir, FirDesign, FirKind, HilbertTransformer};
-use rssstv_dsp::frequency::ZeroCrossingFrequency;
-use rssstv_dsp::iir::{IirFilter, IirLowPassDesign, IirResponse};
-use rssstv_dsp::resonator::Resonator;
+use rssstv_dsp::{
+    fir::{Fir, FirDesign, FirKind, HilbertTransformer},
+    frequency::ZeroCrossingFrequency,
+    iir::{IirFilter, IirLowPassDesign, IirResponse},
+    resonator::Resonator,
+};
 use rssstv_fskid::{FskDecoder, FskId, FskTone};
-use rssstv_sstv::mode::Mode;
-use rssstv_sstv::time::SstvDuration;
+use rssstv_sstv::{mode::Mode, time::SstvDuration};
 use thiserror::Error;
 
 const DETECTORS: [(f64, f64); 5] = [
@@ -700,9 +703,11 @@ impl VisDecoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
-    use rssstv_sstv::rx::{DemodulatedBlock, RxConfig};
-    use rssstv_sstv::{RxDecoder, TxEncoder};
+    use rssstv_sstv::{
+        RxDecoder, TxEncoder,
+        image::{ImageSize, Rgb8, RgbImage},
+        rx::{DemodulatedBlock, RxConfig},
+    };
     use rstest::rstest;
 
     /// Measured delay of the band-pass and discriminator chain, in milliseconds.

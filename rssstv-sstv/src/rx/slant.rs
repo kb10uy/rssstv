@@ -2,8 +2,10 @@ use alloc::vec::Vec;
 
 use crate::mode::Mode;
 
-use super::raster::RasterProfile;
-use super::sync::{MIN_CONFIDENCE, SyncObservation};
+use super::{
+    raster::RasterProfile,
+    sync::{MIN_CONFIDENCE, SyncObservation},
+};
 
 const MIN_OBSERVATIONS: usize = 6;
 

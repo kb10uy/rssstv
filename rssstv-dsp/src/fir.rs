@@ -1,5 +1,4 @@
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 use core::f64::consts::PI;
 
 use crate::DspError;

@@ -1,11 +1,13 @@
 //! Streaming encoders for the conventional-VIS SSTV modes supported by RSSSTV.
 
-use crate::SstvError;
-use crate::color::rgb_to_y_cr_cb;
-use crate::image::{ImageSize, RgbImage};
-use crate::mode::{Mode, ScanChannel, ScanContent, Support};
-use crate::signal::{Frequency, TimedTone, TxComponent};
-use crate::time::TxInstant;
+use crate::{
+    SstvError,
+    color::rgb_to_y_cr_cb,
+    image::{ImageSize, RgbImage},
+    mode::{Mode, ScanChannel, ScanContent, Support},
+    signal::{Frequency, TimedTone, TxComponent},
+    time::TxInstant,
+};
 use rssstv_fskid::{FskEncoder, FskId};
 
 const PS_PER_MS: u64 = 1_000_000_000;
@@ -299,8 +301,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::image::Rgb8;
-    use crate::mode::ModeFamily;
+    use crate::{image::Rgb8, mode::ModeFamily};
 
     fn image(mode: Mode, fill: Rgb8) -> RgbImage {
         let spec = mode.spec();

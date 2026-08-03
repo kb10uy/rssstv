@@ -1,11 +1,13 @@
 use egui::{Align, Color32, ComboBox, Id, Layout, Panel, ProgressBar, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
-use crate::app::{App, Dsp, Entry, Tab};
-use crate::canvas;
-use crate::i18n::{number, text as arg};
-use crate::menu;
-use crate::receive::Progress;
+use crate::{
+    app::{App, Dsp, Entry, Tab},
+    canvas,
+    i18n::{number, text as arg},
+    menu,
+    receive::Progress,
+};
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
 /// Default height of the library row; the operator can drag it.
@@ -480,13 +482,11 @@ fn status_bar(ui: &mut Ui, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable as _;
+    use egui_kittest::{Harness, kittest::Queryable as _};
     use rstest::rstest;
 
     use super::*;
-    use crate::app::App;
-    use crate::i18n::Locale;
+    use crate::{app::App, i18n::Locale};
 
     /// Runs the interface for a few frames and returns the harness.
     ///

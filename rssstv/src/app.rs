@@ -10,13 +10,12 @@ use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
 use crate::audio::AudioState;
+use crate::config::{Config, Settings};
 use crate::i18n::{I18n, Locale};
 use crate::paths::AppPaths;
 use crate::raster::Raster;
 use crate::view;
 
-const DEFAULT_RX_MODE: Mode = Mode::Pd120;
-const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
 #[cfg(target_os = "windows")]
 const UI_FONT: Font = Font::with_name("Yu Gothic UI");
 #[cfg(target_os = "macos")]
@@ -72,11 +71,21 @@ pub enum Dsp {
     Slant,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DspFlags {
     pub afc: bool,
     pub lms: bool,
     pub slant: bool,
+}
+
+impl Default for DspFlags {
+    fn default() -> Self {
+        Self {
+            afc: true,
+            lms: false,
+            slant: true,
+        }
+    }
 }
 
 impl DspFlags {
@@ -138,6 +147,23 @@ pub enum Message {
     Tick,
 }
 
+impl Message {
+    /// Whether handling this message can change a persisted setting.
+    ///
+    /// Deciding here rather than in each arm keeps the per-frame [`Self::Tick`]
+    /// away from the configuration file.
+    const fn persists(&self) -> bool {
+        match self {
+            Self::LocaleSelected(_) | Self::DeviceSelected(_) | Self::Rx(_) | Self::Tx(_) => true,
+            Self::Library(message) => !matches!(
+                message,
+                LibraryMessage::RevealTemplates | LibraryMessage::RevealStocks
+            ),
+            Self::TabSelected(_) | Self::Qso(_) | Self::Tick => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum RxMessage {
     AutoModeToggled(bool),
@@ -191,56 +217,89 @@ pub struct App {
     pub main_cache: Cache,
     pub preview_cache: Cache,
     paths: AppPaths,
+    config: Config,
 }
 
 impl App {
     pub fn new(paths: AppPaths) -> Self {
-        Self::with_audio(AudioState::new(), paths)
+        let config = Config::load(paths.config_file());
+        let settings = config.settings();
+        let audio = AudioState::new(settings.input_device.as_deref(), settings.dsp.slant);
+        let mut app = Self::from_parts(audio, paths, config, &settings);
+        app.refresh_library();
+        app.restore_selection(&settings);
+        app
     }
 
-    /// Builds an interface with no host audio, for tests.
+    /// Builds an interface with no host audio and no stored settings, for
+    /// tests.
     #[cfg(test)]
     fn headless() -> Self {
         Self::from_parts(
             AudioState::disconnected(),
             AppPaths::from_roots(PathBuf::new(), PathBuf::new(), PathBuf::new()),
+            Config::detached(),
+            &Settings::default(),
         )
     }
 
-    fn with_audio(audio: AudioState, paths: AppPaths) -> Self {
-        let mut app = Self::from_parts(audio, paths);
-        app.refresh_library();
-        app
-    }
-
-    fn from_parts(audio: AudioState, paths: AppPaths) -> Self {
+    fn from_parts(audio: AudioState, paths: AppPaths, config: Config, settings: &Settings) -> Self {
         Self {
             tab: Tab::default(),
-            i18n: I18n::new(Locale::default()),
+            i18n: I18n::new(settings.locale),
             audio,
-            auto_mode: true,
-            rx_mode: ModeChoice(DEFAULT_RX_MODE),
-            tx_mode: ModeChoice(DEFAULT_TX_MODE),
+            auto_mode: settings.auto_mode,
+            rx_mode: ModeChoice(settings.rx_mode),
+            tx_mode: ModeChoice(settings.tx_mode),
             rx_modes: modes(|mode| mode.spec().decode_support()),
             tx_modes: modes(|mode| mode.spec().encode_support()),
-            dsp: DspFlags {
-                afc: true,
-                lms: false,
-                slant: true,
-            },
-            auto_history: true,
+            dsp: settings.dsp,
+            auto_history: settings.auto_history,
             qso: Qso::default(),
             templates: Vec::new(),
             template: None,
             stocks: Vec::new(),
             stock: None,
             library_error: None,
-            rx_raster: Raster::blank(DEFAULT_RX_MODE),
-            tx_raster: Raster::test_pattern(DEFAULT_TX_MODE),
+            rx_raster: Raster::blank(settings.rx_mode),
+            tx_raster: Raster::test_pattern(settings.tx_mode),
             main_cache: Cache::new(),
             preview_cache: Cache::new(),
             paths,
+            config,
         }
+    }
+
+    /// Reselects the library entries named by `settings`.
+    ///
+    /// A name that no longer exists leaves the selection the library scan
+    /// already made, so a deleted file does not empty the panel.
+    fn restore_selection(&mut self, settings: &Settings) {
+        self.template = index_of(&self.templates, settings.template.as_deref()).or(self.template);
+        self.stock = index_of(&self.stocks, settings.stock.as_deref()).or(self.stock);
+    }
+
+    /// Returns the settings the interface is currently showing.
+    fn settings(&self) -> Settings {
+        Settings {
+            locale: self.i18n.locale(),
+            input_device: self
+                .audio
+                .device
+                .as_ref()
+                .map(|device| device.name().to_owned()),
+            template: selected_name(&self.templates, self.template),
+            stock: selected_name(&self.stocks, self.stock),
+            rx_mode: self.rx_mode.0,
+            tx_mode: self.tx_mode.0,
+            auto_mode: self.auto_mode,
+            dsp: self.dsp,
+            auto_history: self.auto_history,
+        }
+    }
+
+    pub fn config_error(&self) -> Option<&str> {
+        self.config.error()
     }
 
     fn title(&self) -> String {
@@ -256,6 +315,9 @@ impl App {
     }
 
     fn update(&mut self, message: Message) {
+        // Settings are written as they change rather than on exit, so an
+        // interrupted session still keeps what the operator selected.
+        let persists = message.persists();
         match message {
             Message::TabSelected(tab) => {
                 self.tab = tab;
@@ -272,6 +334,10 @@ impl App {
             Message::Library(message) => self.update_library(message),
             Message::Qso(message) => self.update_qso(message),
             Message::Tick => self.tick(),
+        }
+        if persists {
+            let settings = self.settings();
+            self.config.store(&settings);
         }
     }
 
@@ -458,6 +524,15 @@ fn directory_entries(
     Ok(entries)
 }
 
+fn index_of(entries: &[Entry], name: Option<&str>) -> Option<usize> {
+    let name = name?;
+    entries.iter().position(|entry| entry.name == name)
+}
+
+fn selected_name(entries: &[Entry], selected: Option<usize>) -> Option<String> {
+    entries.get(selected?).map(|entry| entry.name.clone())
+}
+
 fn replace_entries(entries: &mut Vec<Entry>, selected: &mut Option<usize>, next: Vec<Entry>) {
     let selected_path = selected.and_then(|index| entries.get(index).map(|entry| &entry.path));
     let next_selected = selected_path
@@ -622,6 +697,95 @@ mod tests {
         assert_ne!(app.i18n.text("tab-receive"), english);
     }
 
+    /// Builds an interface over real directories but no host audio.
+    fn disconnected(paths: AppPaths, settings: &Settings) -> App {
+        let config = Config::load(paths.config_file());
+        App::from_parts(AudioState::disconnected(), paths, config, settings)
+    }
+
+    fn library(root: &TestDirectory) -> AppPaths {
+        let paths = AppPaths::from_roots(
+            root.0.join("config"),
+            root.0.join("data"),
+            root.0.join("pictures"),
+        );
+        paths.initialize().unwrap();
+        fs::write(paths.templates_dir().join("alpha.kdl"), "").unwrap();
+        fs::write(paths.templates_dir().join("beta.kdl"), "").unwrap();
+        image::RgbImage::new(7, 5)
+            .save(paths.stocks_dir().join("first.png"))
+            .unwrap();
+        image::RgbImage::new(7, 5)
+            .save(paths.stocks_dir().join("second.png"))
+            .unwrap();
+        paths
+    }
+
+    #[test]
+    fn changed_settings_are_written_and_restored_on_the_next_start() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+
+        let mut app = disconnected(paths.clone(), &Settings::default());
+        app.refresh_library();
+        app.update(Message::LocaleSelected(Locale::Ja));
+        app.update(Message::Rx(RxMessage::ModeSelected(ModeChoice(
+            Mode::Robot36,
+        ))));
+        app.update(Message::Rx(RxMessage::DspToggled(Dsp::Lms)));
+        app.update(Message::Rx(RxMessage::AutoModeToggled(false)));
+        app.update(Message::Rx(RxMessage::AutoHistoryToggled(false)));
+        app.update(Message::Tx(TxMessage::ModeSelected(ModeChoice(
+            Mode::Martin1,
+        ))));
+        app.update(Message::Library(LibraryMessage::TemplateSelected(1)));
+        app.update(Message::Library(LibraryMessage::StockSelected(1)));
+        assert!(app.config_error().is_none());
+
+        let restored = Config::load(paths.config_file()).settings();
+        let mut next = disconnected(paths.clone(), &restored);
+        next.refresh_library();
+        next.restore_selection(&restored);
+
+        assert_eq!(next.i18n.locale(), Locale::Ja);
+        assert_eq!(next.rx_mode.0, Mode::Robot36);
+        assert_eq!(next.tx_mode.0, Mode::Martin1);
+        assert!(next.dsp.lms);
+        assert!(!next.auto_mode);
+        assert!(!next.auto_history);
+        assert_eq!(next.templates[next.template.unwrap()].name, "beta.kdl");
+        assert_eq!(next.stocks[next.stock.unwrap()].name, "second.png");
+    }
+
+    #[test]
+    fn a_stored_selection_that_disappeared_falls_back_to_the_first_entry() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+        let settings = Settings {
+            template: Some("gone.kdl".to_owned()),
+            ..Settings::default()
+        };
+
+        let mut app = disconnected(paths, &settings);
+        app.refresh_library();
+        app.restore_selection(&settings);
+
+        assert_eq!(app.templates[app.template.unwrap()].name, "alpha.kdl");
+    }
+
+    #[test]
+    fn transient_state_is_not_written_to_the_configuration_file() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+
+        let mut app = disconnected(paths.clone(), &Settings::default());
+        app.update(Message::TabSelected(Tab::Transmit));
+        app.update(Message::Qso(QsoMessage::CallChanged("ja1xyz".to_owned())));
+        app.update(Message::Tick);
+
+        assert_eq!(fs::read_to_string(paths.config_file()).unwrap(), "");
+    }
+
     #[test]
     fn library_refresh_lists_matching_files_and_preserves_selection() {
         let root = TestDirectory::new();
@@ -639,7 +803,7 @@ mod tests {
             .unwrap();
         fs::write(paths.stocks_dir().join("broken.png"), "not an image").unwrap();
 
-        let mut app = App::from_parts(AudioState::disconnected(), paths.clone());
+        let mut app = disconnected(paths.clone(), &Settings::default());
         app.refresh_library();
 
         assert_eq!(

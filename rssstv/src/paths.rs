@@ -77,6 +77,10 @@ impl AppPaths {
         create_default_config(&self.config_file)
     }
 
+    pub fn config_file(&self) -> &Path {
+        &self.config_file
+    }
+
     pub fn templates_dir(&self) -> &Path {
         &self.templates_dir
     }

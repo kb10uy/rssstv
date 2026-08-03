@@ -24,11 +24,19 @@ impl Locale {
         }
     }
 
-    const fn tag(self) -> &'static str {
+    pub const fn tag(self) -> &'static str {
         match self {
             Self::En => "en",
             Self::Ja => "ja",
         }
+    }
+
+    /// Resolves a stored language tag, tolerating a hand-edited difference in
+    /// case.
+    pub fn from_tag(tag: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|locale| locale.tag().eq_ignore_ascii_case(tag))
     }
 
     fn identifier(self) -> LanguageIdentifier {

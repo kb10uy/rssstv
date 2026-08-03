@@ -497,5 +497,8 @@ fn status_bar(app: &App) -> Element<'_, Message> {
     if let Some(error) = app.library_error.as_ref() {
         bar = bar.push(text(error.as_str()).size(11));
     }
+    if let Some(error) = app.config_error() {
+        bar = bar.push(text(error).size(11));
+    }
     bar.push(filler()).spacing(16).padding([4, 12]).into()
 }

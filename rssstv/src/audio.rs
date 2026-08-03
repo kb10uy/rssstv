@@ -21,15 +21,23 @@ pub struct AudioState {
 }
 
 impl AudioState {
-    pub fn new() -> Self {
+    /// Opens `preferred` when the host still offers a device by that name.
+    ///
+    /// The name is matched rather than an identifier because the host assigns
+    /// identifiers per run; a device that disappeared since the last session
+    /// falls back to the host default.
+    pub fn new(preferred: Option<&str>, slant: bool) -> Self {
         let host = AudioHost::new();
         let (devices, error) = match host.input_devices() {
             Ok(devices) => (devices, None),
             Err(error) => (Vec::new(), Some(error.to_string())),
         };
-        let device = host
-            .default_input_device()
-            .filter(|device| devices.contains(device))
+        let device = preferred
+            .and_then(|name| devices.iter().find(|device| device.name() == name).cloned())
+            .or_else(|| {
+                host.default_input_device()
+                    .filter(|device| devices.contains(device))
+            })
             .or_else(|| devices.first().cloned());
         let mut state = Self {
             host,
@@ -39,7 +47,7 @@ impl AudioState {
             capture: None,
             worker: None,
             snapshot: Snapshot::default(),
-            slant: true,
+            slant,
         };
         if let Some(device) = device {
             state.open(&device);
@@ -134,7 +142,7 @@ impl AudioState {
 
 impl Default for AudioState {
     fn default() -> Self {
-        Self::new()
+        Self::new(None, true)
     }
 }
 

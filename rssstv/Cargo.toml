@@ -14,6 +14,7 @@ rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
 rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+toml_edit.workspace = true
 unic-langid.workspace = true
 
 [dev-dependencies]

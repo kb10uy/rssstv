@@ -3,6 +3,7 @@ use std::error::Error;
 mod app;
 mod audio;
 mod canvas;
+mod config;
 mod i18n;
 mod paths;
 mod raster;

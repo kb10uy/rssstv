@@ -18,6 +18,7 @@ tab-transmit = Transmit
 tab-history = History
 
 input-device = Input device
+output-device = Output device
 
 section-rx-status = Receive status
 
@@ -32,6 +33,7 @@ dsp-slant = Slant
 
 section-qso = QSO
 qso-call = Call
+qso-station-call = My call
 qso-rsv-nr = RSV/NR
 qso-record = Record
 qso-clear = Clear
@@ -46,6 +48,7 @@ action-paste = Paste
 action-edit = Edit
 action-set-transmit = Set for transmit
 action-transmit = TX
+action-stop-transmit = Stop TX
 action-tone = 1750
 action-cw = CW
 action-fskid = FSKID
@@ -61,11 +64,18 @@ badge-waiting = WAITING FOR SIGNAL
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
 badge-transmit-ready = TX READY · { $mode }
+badge-transmit-preparing = TX PREPARING · { $mode }
+badge-transmitting = TRANSMITTING · { $mode } · { $percent }%
+badge-transmit-complete = TX COMPLETE · { $mode }
 badge-history = HISTORY · { $mode }
 
 status-receiving = Receiving ({ $percent }%)
 status-idle = Idle
+status-transmitting = Transmitting ({ $percent }%)
 status-no-audio = No input device
+status-no-output = No output device
+status-output-ready = Output ready
+status-output-audio = Output { $rate } Hz
 status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
 status-afc = AFC { $offset } Hz

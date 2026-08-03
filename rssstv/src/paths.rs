@@ -92,6 +92,10 @@ impl AppPaths {
         &self.templates_dir
     }
 
+    pub fn assets_dir(&self) -> &Path {
+        &self.assets_dir
+    }
+
     pub fn stocks_dir(&self) -> &Path {
         &self.stocks_dir
     }

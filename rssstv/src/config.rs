@@ -32,6 +32,8 @@ pub const UI_SCALE_RANGE: core::ops::RangeInclusive<f32> = 0.5..=3.0;
 pub struct Settings {
     pub locale: Locale,
     pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub station_callsign: String,
     pub template: Option<String>,
     pub stock: Option<String>,
     pub rx_mode: Mode,
@@ -47,6 +49,8 @@ impl Default for Settings {
         Self {
             locale: Locale::default(),
             input_device: None,
+            output_device: None,
+            station_callsign: String::new(),
             template: None,
             stock: None,
             rx_mode: DEFAULT_RX_MODE,
@@ -122,6 +126,8 @@ impl Config {
                 .and_then(Locale::from_tag)
                 .unwrap_or(defaults.locale),
             input_device: owned(&self.document, Some("audio"), "input-device"),
+            output_device: owned(&self.document, Some("audio"), "output-device"),
+            station_callsign: owned(&self.document, None, "callsign").unwrap_or_default(),
             template: owned(&self.document, Some("library"), "template"),
             stock: owned(&self.document, Some("library"), "stock"),
             rx_mode: string(&self.document, Some("receive"), "mode")
@@ -173,6 +179,18 @@ impl Config {
             Some("audio"),
             "input-device",
             settings.input_device.as_deref().map(value),
+        );
+        set(
+            document,
+            Some("audio"),
+            "output-device",
+            settings.output_device.as_deref().map(value),
+        );
+        set(
+            document,
+            None,
+            "callsign",
+            (!settings.station_callsign.is_empty()).then(|| value(&settings.station_callsign)),
         );
         set(
             document,
@@ -342,6 +360,8 @@ mod tests {
         Settings {
             locale: Locale::Ja,
             input_device: Some("Line In (Interface)".to_owned()),
+            output_device: Some("Speakers (Interface)".to_owned()),
+            station_callsign: "JA1ABC".to_owned(),
             template: Some("field-day.kdl".to_owned()),
             stock: Some("antenna.png".to_owned()),
             rx_mode: Mode::Robot36,
@@ -382,7 +402,7 @@ mod tests {
         let root = TestDirectory::new();
         fs::write(
             root.config(),
-            "# rig settings, edited by hand\ncallsign = \"JA1ABC\"\n",
+            "# rig settings, edited by hand\nrig-port = \"COM3\"\n",
         )
         .unwrap();
 
@@ -391,7 +411,7 @@ mod tests {
 
         let stored = fs::read_to_string(root.config()).unwrap();
         assert!(stored.contains("# rig settings, edited by hand"));
-        assert!(stored.contains("callsign = \"JA1ABC\""));
+        assert!(stored.contains("rig-port = \"COM3\""));
         assert!(stored.contains("[receive]"));
     }
 

@@ -13,6 +13,7 @@ mod menu;
 mod paths;
 mod raster;
 mod receive;
+mod transmit;
 mod view;
 
 use app::App;

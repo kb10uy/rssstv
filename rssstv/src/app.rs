@@ -2,10 +2,15 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::Arc,
 };
 
-use rssstv_audio::InputDevice;
-use rssstv_sstv::mode::{Mode, Support};
+use rssstv_audio::{InputDevice, OutputDevice, Playback};
+use rssstv_fskid::FskId;
+use rssstv_sstv::{
+    image::RgbImage,
+    mode::{Mode, Support},
+};
 
 use crate::{
     audio::AudioState,
@@ -13,7 +18,10 @@ use crate::{
     i18n::{I18n, Locale},
     paths::AppPaths,
     raster::Raster,
+    transmit::{ComposeRequest, Composer, TxPhase, TxSnapshot, TxWorker},
 };
+
+const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
@@ -140,6 +148,7 @@ pub struct App {
     pub dsp: DspFlags,
     pub auto_history: bool,
     pub qso: Qso,
+    pub station_callsign: String,
     pub templates: Vec<Entry>,
     pub template: Option<usize>,
     pub stocks: Vec<Entry>,
@@ -147,6 +156,9 @@ pub struct App {
     pub library_error: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
+    pub composite_raster: Raster,
+    pub tx_snapshot: TxSnapshot,
+    pub tx_error: Option<String>,
     /// How much the whole interface is scaled.
     ///
     /// Held here rather than read from egui because it has to be restored
@@ -161,16 +173,28 @@ pub struct App {
     /// frame catches every change without the interface having to remember to
     /// announce one.
     saved: Settings,
+    composer: Composer,
+    compose_generation: u64,
+    preview_frame: Option<Arc<RgbImage>>,
+    prepared_frame: Option<Arc<RgbImage>>,
+    playback: Option<Playback>,
+    tx_worker: Option<TxWorker>,
+    playback_started: bool,
 }
 
 impl App {
     pub fn new(paths: AppPaths) -> Self {
         let config = Config::load(paths.config_file());
         let settings = config.settings();
-        let audio = AudioState::new(settings.input_device.as_deref(), settings.dsp.slant);
+        let audio = AudioState::new(
+            settings.input_device.as_deref(),
+            settings.output_device.as_deref(),
+            settings.dsp.slant,
+        );
         let mut app = Self::from_parts(audio, paths, config, &settings);
         app.refresh_library();
         app.restore_selection(&settings);
+        app.request_preview();
         app.saved = app.settings();
         app
     }
@@ -200,6 +224,7 @@ impl App {
             dsp: settings.dsp,
             auto_history: settings.auto_history,
             qso: Qso::default(),
+            station_callsign: settings.station_callsign.trim().to_ascii_uppercase(),
             templates: Vec::new(),
             template: None,
             stocks: Vec::new(),
@@ -207,10 +232,20 @@ impl App {
             library_error: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
+            composite_raster: Raster::test_pattern(settings.tx_mode),
+            tx_snapshot: TxSnapshot::default(),
+            tx_error: None,
             ui_scale: settings.ui_scale,
             paths,
             config,
             saved: settings.clone(),
+            composer: Composer::spawn(),
+            compose_generation: 0,
+            preview_frame: None,
+            prepared_frame: None,
+            playback: None,
+            tx_worker: None,
+            playback_started: false,
         }
     }
 
@@ -236,6 +271,12 @@ impl App {
                 .device
                 .as_ref()
                 .map(|device| device.name().to_owned()),
+            output_device: self
+                .audio
+                .output_device
+                .as_ref()
+                .map(|device| device.name().to_owned()),
+            station_callsign: self.station_callsign.clone(),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
             rx_mode: self.rx_mode,
@@ -283,6 +324,10 @@ impl App {
         self.audio.select(device);
     }
 
+    pub fn select_output_device(&mut self, device: OutputDevice) {
+        self.audio.select_output(device);
+    }
+
     /// Switches to the input device with the given name, if the host has one.
     pub fn select_device_named(&mut self, name: &str) {
         if let Some(device) = self
@@ -293,6 +338,18 @@ impl App {
             .cloned()
         {
             self.select_device(device);
+        }
+    }
+
+    pub fn select_output_device_named(&mut self, name: &str) {
+        if let Some(device) = self
+            .audio
+            .output_devices
+            .iter()
+            .find(|device| device.name() == name)
+            .cloned()
+        {
+            self.select_output_device(device);
         }
     }
 
@@ -307,6 +364,10 @@ impl App {
         if mode != self.tx_mode {
             self.tx_mode = mode;
             self.tx_raster = Raster::test_pattern(mode);
+            self.composite_raster = Raster::test_pattern(mode);
+            self.preview_frame = None;
+            self.prepared_frame = None;
+            self.request_preview();
         }
     }
 
@@ -347,8 +408,21 @@ impl App {
         }
     }
 
+    pub fn normalize_station_callsign(&mut self) {
+        let normalized = self.station_callsign.trim().to_ascii_uppercase();
+        if normalized != self.station_callsign {
+            self.station_callsign = normalized;
+        }
+        self.request_preview();
+    }
+
+    pub fn qso_changed(&mut self) {
+        self.request_preview();
+    }
+
     pub fn clear_qso(&mut self) {
         self.qso = Qso::default();
+        self.request_preview();
     }
 
     fn refresh_library(&mut self) {
@@ -364,10 +438,12 @@ impl App {
 
     pub fn refresh_templates(&mut self) {
         self.library_error = self.load_templates().err().map(|error| error.to_string());
+        self.request_preview();
     }
 
     pub fn refresh_stocks(&mut self) {
         self.library_error = self.load_stocks().err().map(|error| error.to_string());
+        self.request_preview();
     }
 
     fn load_templates(&mut self) -> io::Result<()> {
@@ -396,13 +472,21 @@ impl App {
         {
             self.select_rx_mode(mode);
         }
+        self.poll_transmit();
     }
 
     /// Fraction of the active tab's raster that is drawn as decoded.
     pub fn decoded_fraction(&self) -> f32 {
         match self.tab {
             Tab::Receive => self.audio.snapshot().progress.fraction(),
-            Tab::Transmit | Tab::History => 1.0,
+            Tab::Transmit => {
+                if self.tx_snapshot.phase.is_active() {
+                    self.tx_progress()
+                } else {
+                    1.0
+                }
+            }
+            Tab::History => 1.0,
         }
     }
 
@@ -418,6 +502,184 @@ impl App {
             Tab::Transmit => &mut self.tx_raster,
             Tab::Receive | Tab::History => &mut self.rx_raster,
         }
+    }
+
+    pub fn preview_changed(&mut self) {
+        self.request_preview();
+    }
+
+    fn request_preview(&mut self) {
+        let (Some(template), Some(stock)) = (
+            self.template.and_then(|index| self.templates.get(index)),
+            self.stock.and_then(|index| self.stocks.get(index)),
+        ) else {
+            self.preview_frame = None;
+            return;
+        };
+        self.compose_generation = self.compose_generation.wrapping_add(1);
+        self.preview_frame = None;
+        self.tx_error = None;
+        self.composer.request(ComposeRequest {
+            generation: self.compose_generation,
+            template_path: template.path.clone(),
+            background_path: stock.path.clone(),
+            assets_dir: self.paths.assets_dir().to_path_buf(),
+            mode: self.tx_mode,
+            station_callsign: self.station_callsign.clone(),
+            contact_callsign: self.qso.call.clone(),
+            report: self.qso.rsv.clone(),
+            number: self.qso.number.clone(),
+        });
+    }
+
+    fn poll_transmit(&mut self) {
+        if let Some(result) = self.composer.latest()
+            && result.generation == self.compose_generation
+        {
+            match result.frame {
+                Ok(frame) => {
+                    self.composite_raster = Raster::from_image(&frame);
+                    self.preview_frame = Some(frame);
+                    self.tx_error = None;
+                }
+                Err(error) => {
+                    self.preview_frame = None;
+                    self.tx_error = Some(error);
+                }
+            }
+        }
+
+        let Some(worker) = self.tx_worker.as_ref() else {
+            return;
+        };
+        self.tx_snapshot = worker.latest();
+        if self.tx_snapshot.phase == TxPhase::Failed {
+            self.tx_error = self.tx_snapshot.error.clone();
+            self.stop_transmit_with(TxPhase::Failed);
+            return;
+        }
+        let should_start = !self.playback_started
+            && matches!(
+                self.tx_snapshot.phase,
+                TxPhase::Producing | TxPhase::Draining
+            );
+        if should_start {
+            let result = self
+                .playback
+                .as_ref()
+                .ok_or_else(|| "playback closed before transmission started".to_owned())
+                .and_then(|playback| playback.play().map_err(|error| error.to_string()));
+            match result {
+                Ok(()) => self.playback_started = true,
+                Err(error) => {
+                    self.tx_error = Some(error);
+                    self.stop_transmit_with(TxPhase::Failed);
+                    return;
+                }
+            }
+        }
+        if self.playback_started
+            && self
+                .playback
+                .as_ref()
+                .is_some_and(|playback| playback.underrun_samples() > 0)
+        {
+            self.tx_error = Some("audio playback underrun".to_owned());
+            self.stop_transmit_with(TxPhase::Failed);
+            return;
+        }
+        if self.tx_snapshot.phase == TxPhase::Draining
+            && self.playback.as_ref().is_some_and(Playback::is_complete)
+        {
+            self.stop_transmit_with(TxPhase::Complete);
+        }
+    }
+
+    pub fn set_for_transmit(&mut self) {
+        let Some(frame) = self.preview_frame.clone() else {
+            return;
+        };
+        self.tx_raster = Raster::from_image(&frame);
+        self.prepared_frame = Some(frame);
+        self.tx_error = None;
+    }
+
+    pub fn can_set_for_transmit(&self) -> bool {
+        self.preview_frame.is_some() && !self.tx_snapshot.phase.is_active()
+    }
+
+    pub fn can_transmit(&self) -> bool {
+        self.prepared_frame.is_some()
+            && self.audio.output_device.is_some()
+            && FskId::new(self.station_callsign.trim()).is_ok()
+            && !self.tx_snapshot.phase.is_active()
+    }
+
+    pub fn start_transmit(&mut self) {
+        if !self.can_transmit() {
+            return;
+        }
+        let station_id = match FskId::new(self.station_callsign.trim()) {
+            Ok(station_id) => station_id,
+            Err(error) => {
+                self.tx_error = Some(error.to_string());
+                return;
+            }
+        };
+        let (playback, writer) = match self.audio.open_playback(PLAYBACK_QUEUE_SAMPLES) {
+            Ok(playback) => playback,
+            Err(error) => {
+                self.tx_error = Some(error);
+                return;
+            }
+        };
+        let frame = self
+            .prepared_frame
+            .clone()
+            .expect("transmit availability requires a prepared frame");
+        self.tx_snapshot = TxSnapshot {
+            phase: TxPhase::Priming,
+            ..TxSnapshot::default()
+        };
+        self.tx_error = None;
+        self.playback = Some(playback);
+        self.tx_worker = Some(TxWorker::spawn(writer, self.tx_mode, frame, station_id));
+        self.playback_started = false;
+    }
+
+    pub fn stop_transmit(&mut self) {
+        if self.tx_snapshot.phase.is_active() {
+            self.stop_transmit_with(TxPhase::Cancelled);
+        }
+    }
+
+    fn stop_transmit_with(&mut self, phase: TxPhase) {
+        self.playback = None;
+        self.tx_worker = None;
+        self.playback_started = false;
+        self.tx_snapshot.phase = phase;
+    }
+
+    pub fn tx_progress(&self) -> f32 {
+        if self.tx_snapshot.total_samples == 0 {
+            return 0.0;
+        }
+        let played = self
+            .playback
+            .as_ref()
+            .map(Playback::played_samples)
+            .unwrap_or_else(|| {
+                if self.tx_snapshot.phase == TxPhase::Complete {
+                    self.tx_snapshot.total_samples
+                } else {
+                    0
+                }
+            });
+        (played as f64 / self.tx_snapshot.total_samples as f64).clamp(0.0, 1.0) as f32
+    }
+
+    pub fn output_sample_rate_hz(&self) -> Option<u32> {
+        self.playback.as_ref().map(Playback::sample_rate_hz)
     }
 }
 
@@ -512,7 +774,10 @@ fn reveal_directory(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
 
     use rstest::rstest;
 
@@ -678,6 +943,7 @@ mod tests {
         app.auto_mode = false;
         app.auto_history = false;
         app.select_tx_mode(Mode::Martin1);
+        app.station_callsign = "JA1ABC".to_owned();
         app.template = Some(1);
         app.stock = Some(1);
         app.persist();
@@ -694,6 +960,7 @@ mod tests {
         assert!(next.dsp.lms);
         assert!(!next.auto_mode);
         assert!(!next.auto_history);
+        assert_eq!(next.station_callsign, "JA1ABC");
         assert_eq!(next.templates[next.template.unwrap()].name, "beta.kdl");
         assert_eq!(next.stocks[next.stock.unwrap()].name, "second.png");
     }
@@ -797,5 +1064,50 @@ mod tests {
             app.template.map(|index| app.templates[index].name.as_str()),
             Some("beta.kdl")
         );
+    }
+
+    #[test]
+    fn composed_preview_can_be_frozen_for_transmit() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+        fs::write(
+            paths.templates_dir().join("alpha.kdl"),
+            r##"rximage {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)100 height=(fh)100 fit="stretch"
+}
+"##,
+        )
+        .unwrap();
+        let settings = Settings {
+            station_callsign: "JA1ABC".to_owned(),
+            ..Settings::default()
+        };
+        let mut app = disconnected(paths, &settings);
+        app.refresh_library();
+        app.request_preview();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !app.can_set_for_transmit() {
+            app.poll_audio();
+            assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+
+        app.set_for_transmit();
+
+        assert!(app.prepared_frame.is_some());
+        assert_eq!(
+            app.tx_raster.size().width(),
+            app.tx_mode.spec().width() as usize
+        );
+        assert_eq!(
+            app.tx_raster.size().height(),
+            app.tx_mode.spec().height() as usize
+        );
+        app.qso.call = "N0CALL".to_owned();
+        app.qso_changed();
+        assert!(!app.can_set_for_transmit());
+        assert!(app.prepared_frame.is_some());
     }
 }

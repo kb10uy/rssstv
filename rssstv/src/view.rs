@@ -7,6 +7,7 @@ use crate::{
     i18n::{number, text as arg},
     menu,
     receive::Progress,
+    transmit::TxPhase,
 };
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
@@ -81,9 +82,24 @@ fn badge(app: &App) -> String {
     let name = app.active_mode().spec().name();
     let mode = arg(name);
     match app.tab {
-        Tab::Transmit => app
-            .i18n
-            .text_with("badge-transmit-ready", &[("mode", mode)]),
+        Tab::Transmit => match app.tx_snapshot.phase {
+            TxPhase::Priming => app
+                .i18n
+                .text_with("badge-transmit-preparing", &[("mode", mode)]),
+            TxPhase::Producing | TxPhase::Draining => {
+                let percent = (app.tx_progress() * 100.0).round();
+                app.i18n.text_with(
+                    "badge-transmitting",
+                    &[("mode", mode), ("percent", number(percent))],
+                )
+            }
+            TxPhase::Complete => app
+                .i18n
+                .text_with("badge-transmit-complete", &[("mode", mode)]),
+            _ => app
+                .i18n
+                .text_with("badge-transmit-ready", &[("mode", mode)]),
+        },
         Tab::History => app.i18n.text_with("badge-history", &[("mode", mode)]),
         Tab::Receive => {
             let progress = app.audio.snapshot().progress;
@@ -128,12 +144,27 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                 ui.checkbox(&mut app.auto_history, label);
             }
             Tab::Transmit => {
-                let label = app.i18n.text("action-transmit");
-                ui.add_enabled(
-                    false,
-                    egui::Button::new(RichText::new(label).size(SMALL))
-                        .fill(Color32::from_rgb(140, 40, 40)),
-                );
+                let active = app.tx_snapshot.phase.is_active();
+                let label = app.i18n.text(if active {
+                    "action-stop-transmit"
+                } else {
+                    "action-transmit"
+                });
+                let enabled = active || app.can_transmit();
+                if ui
+                    .add_enabled(
+                        enabled,
+                        egui::Button::new(RichText::new(label).size(SMALL))
+                            .fill(Color32::from_rgb(140, 40, 40)),
+                    )
+                    .clicked()
+                {
+                    if active {
+                        app.stop_transmit();
+                    } else {
+                        app.start_transmit();
+                    }
+                }
                 pending(ui, app, "action-tone");
                 pending(ui, app, "action-cw");
                 pending(ui, app, "action-fskid");
@@ -258,13 +289,22 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     let full = ui.available_width();
     let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
+    let station_label = app.i18n.text("qso-station-call");
     let report_label = app.i18n.text("qso-rsv-nr");
 
+    ui.horizontal(|ui| {
+        field_label(ui, &station_label);
+        let edit = egui::TextEdit::singleline(&mut app.station_callsign).desired_width(fields);
+        if ui.add(edit).changed() {
+            app.normalize_station_callsign();
+        }
+    });
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
         let edit = egui::TextEdit::singleline(&mut app.qso.call).desired_width(fields);
         if ui.add(edit).changed() {
             app.normalize_call();
+            app.qso_changed();
         }
     });
     ui.horizontal(|ui| {
@@ -272,8 +312,12 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         // sit next to each other rather than being introduced separately.
         field_label(ui, &report_label);
         let field_width = (fields - gap) / 2.0;
-        ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
-        ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
+        let rsv = ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
+        let number =
+            ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
+        if rsv.changed() || number.changed() {
+            app.qso_changed();
+        }
     });
     ui.horizontal(|ui| {
         pending(ui, app, "qso-record");
@@ -308,17 +352,25 @@ fn library(ui: &mut Ui, app: &mut App) {
         let height = ui.available_height();
 
         let labels = ListLabels::new(app, "section-templates");
+        let previous_template = app.template;
         match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
             Some(ListAction::Reveal) => app.reveal_templates(),
             Some(ListAction::Refresh) => app.refresh_templates(),
             None => {}
         }
+        if app.template != previous_template {
+            app.preview_changed();
+        }
 
         let labels = ListLabels::new(app, "section-stocks");
+        let previous_stock = app.stock;
         match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
             Some(ListAction::Reveal) => app.reveal_stocks(),
             Some(ListAction::Refresh) => app.refresh_stocks(),
             None => {}
+        }
+        if app.stock != previous_stock {
+            app.preview_changed();
         }
 
         composite(ui, app);
@@ -425,17 +477,30 @@ fn composite(ui: &mut Ui, app: &mut App) {
         ui.horizontal(|ui| {
             heading(ui, &app.i18n.text("section-composite"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                pending(ui, app, "action-set-transmit");
+                let label = app.i18n.text("action-set-transmit");
+                if ui
+                    .add_enabled(
+                        app.can_set_for_transmit(),
+                        egui::Button::new(RichText::new(label).size(SMALL)),
+                    )
+                    .clicked()
+                {
+                    app.set_for_transmit();
+                }
                 pending(ui, app, "action-edit");
             });
         });
-        canvas::image_view(ui, &mut app.tx_raster, 1.0);
+        canvas::image_view(ui, &mut app.composite_raster, 1.0);
     });
 }
 
 fn status_bar(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
-    let status = if snapshot.progress.is_active() {
+    let status = if app.tx_snapshot.phase.is_active() {
+        let percent = (app.tx_progress() * 100.0).round();
+        app.i18n
+            .text_with("status-transmitting", &[("percent", number(percent))])
+    } else if snapshot.progress.is_active() {
         let percent = (snapshot.progress.fraction() * 100.0).round();
         app.i18n
             .text_with("status-receiving", &[("percent", number(percent))])
@@ -448,10 +513,18 @@ fn status_bar(ui: &mut Ui, app: &App) {
             .text_with("status-audio", &[("rate", number(rate))]),
         None => app.i18n.text("status-no-audio"),
     };
+    let output = match app.output_sample_rate_hz() {
+        Some(rate) => app
+            .i18n
+            .text_with("status-output-audio", &[("rate", number(rate))]),
+        None if app.audio.output_device.is_some() => app.i18n.text("status-output-ready"),
+        None => app.i18n.text("status-no-output"),
+    };
 
     ui.horizontal(|ui| {
         ui.label(RichText::new(status).size(LABEL));
         ui.label(RichText::new(audio).size(LABEL));
+        ui.label(RichText::new(output).size(LABEL));
         if !snapshot.callsigns.is_empty() {
             ui.label(RichText::new(snapshot.callsigns.join(" ")).size(LABEL));
         }
@@ -465,6 +538,7 @@ fn status_bar(ui: &mut Ui, app: &App) {
         for error in [
             app.audio.error.as_deref(),
             snapshot.error.as_deref(),
+            app.tx_error.as_deref(),
             app.library_error.as_deref(),
             app.config_error(),
         ]

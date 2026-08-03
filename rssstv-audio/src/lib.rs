@@ -213,7 +213,8 @@ impl AudioHost {
             .map_err(|_| AudioError::UnsupportedConfiguration(device.name.clone()))?;
         let sample_format = supported.sample_format();
         let channels = supported.channels();
-        let sample_rate = preferred_output_rate(&target, supported.sample_rate());
+        let sample_rate =
+            preferred_output_rate(&target, supported.sample_rate(), channels, sample_format);
         if sample_rate < MINIMUM_SAMPLE_RATE_HZ || channels == 0 {
             return Err(AudioError::UnsupportedConfiguration(device.name.clone()));
         }
@@ -300,12 +301,19 @@ fn preferred_rate(device: &cpal::Device, fallback: u32) -> u32 {
     }
 }
 
-fn preferred_output_rate(device: &cpal::Device, fallback: u32) -> u32 {
+fn preferred_output_rate(
+    device: &cpal::Device,
+    fallback: u32,
+    channels: u16,
+    sample_format: SampleFormat,
+) -> u32 {
     let Ok(configs) = device.supported_output_configs() else {
         return fallback;
     };
     let supported = configs.into_iter().any(|range| {
-        range.min_sample_rate() <= PREFERRED_SAMPLE_RATE_HZ
+        range.channels() == channels
+            && range.sample_format() == sample_format
+            && range.min_sample_rate() <= PREFERRED_SAMPLE_RATE_HZ
             && PREFERRED_SAMPLE_RATE_HZ <= range.max_sample_rate()
     });
     if supported {

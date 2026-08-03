@@ -21,6 +21,7 @@ pub use in_window::Native;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     SelectDevice(String),
+    SelectOutputDevice(String),
     SelectLocale(Locale),
     ZoomIn,
     ZoomOut,
@@ -111,6 +112,10 @@ pub fn model(app: &App) -> Vec<Menu> {
                     items: device_items(app),
                 },
                 Item::Submenu {
+                    label: text("output-device"),
+                    items: output_device_items(app),
+                },
+                Item::Submenu {
                     label: text("menu-language"),
                     items: locale_items(app),
                 },
@@ -163,12 +168,29 @@ fn locale_items(app: &App) -> Vec<Item> {
         .collect()
 }
 
+fn output_device_items(app: &App) -> Vec<Item> {
+    if app.audio.output_devices.is_empty() {
+        return vec![Item::Pending(app.i18n.text("status-no-output"))];
+    }
+    let selected = app.audio.output_device.as_ref().map(|device| device.name());
+    app.audio
+        .output_devices
+        .iter()
+        .map(|device| Item::Check {
+            label: device.name().to_owned(),
+            checked: selected == Some(device.name()),
+            action: Action::SelectOutputDevice(device.name().to_owned()),
+        })
+        .collect()
+}
+
 /// Applies `action` to the application.
 ///
 /// Returns whether the application was asked to close.
 pub fn apply(app: &mut App, action: Action) -> bool {
     match action {
         Action::SelectDevice(name) => app.select_device_named(&name),
+        Action::SelectOutputDevice(name) => app.select_output_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),

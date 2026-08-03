@@ -16,7 +16,9 @@ image.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
 rssstv-fskid = { path = "../rssstv-fskid" }
+rssstv-modulator = { path = "../rssstv-modulator" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+rssstv-template = { path = "../rssstv-template" }
 toml_edit.workspace = true
 unic-langid.workspace = true
 

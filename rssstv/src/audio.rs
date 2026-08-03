@@ -1,4 +1,4 @@
-use rssstv_audio::{AudioHost, Capture, InputDevice};
+use rssstv_audio::{AudioHost, Capture, InputDevice, OutputDevice, Playback, PlaybackWriter};
 
 use crate::receive::{Snapshot, Worker};
 
@@ -13,6 +13,8 @@ pub struct AudioState {
     host: AudioHost,
     pub devices: Vec<InputDevice>,
     pub device: Option<InputDevice>,
+    pub output_devices: Vec<OutputDevice>,
+    pub output_device: Option<OutputDevice>,
     pub error: Option<String>,
     capture: Option<Capture>,
     worker: Option<Worker>,
@@ -26,9 +28,13 @@ impl AudioState {
     /// The name is matched rather than an identifier because the host assigns
     /// identifiers per run; a device that disappeared since the last session
     /// falls back to the host default.
-    pub fn new(preferred: Option<&str>, slant: bool) -> Self {
+    pub fn new(preferred: Option<&str>, preferred_output: Option<&str>, slant: bool) -> Self {
         let host = AudioHost::new();
-        let (devices, error) = match host.input_devices() {
+        let (devices, input_error) = match host.input_devices() {
+            Ok(devices) => (devices, None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
+        let (output_devices, output_error) = match host.output_devices() {
             Ok(devices) => (devices, None),
             Err(error) => (Vec::new(), Some(error.to_string())),
         };
@@ -39,11 +45,29 @@ impl AudioState {
                     .filter(|device| devices.contains(device))
             })
             .or_else(|| devices.first().cloned());
+        let output_device = preferred_output
+            .and_then(|name| {
+                output_devices
+                    .iter()
+                    .find(|device| device.name() == name)
+                    .cloned()
+            })
+            .or_else(|| {
+                host.default_output_device()
+                    .filter(|device| output_devices.contains(device))
+            })
+            .or_else(|| output_devices.first().cloned());
+        let error = [input_error, output_error]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
         let mut state = Self {
             host,
             devices,
             device: device.clone(),
-            error,
+            output_devices,
+            output_device,
+            error: (!error.is_empty()).then(|| error.join("; ")),
             capture: None,
             worker: None,
             snapshot: Snapshot::default(),
@@ -65,6 +89,8 @@ impl AudioState {
             host: AudioHost::new(),
             devices: Vec::new(),
             device: None,
+            output_devices: Vec::new(),
+            output_device: None,
             error: None,
             capture: None,
             worker: None,
@@ -83,6 +109,23 @@ impl AudioState {
     pub fn select(&mut self, device: InputDevice) {
         self.device = Some(device.clone());
         self.open(&device);
+    }
+
+    pub fn select_output(&mut self, device: OutputDevice) {
+        self.output_device = Some(device);
+    }
+
+    pub fn open_playback(
+        &self,
+        capacity_samples: usize,
+    ) -> Result<(Playback, PlaybackWriter), String> {
+        let device = self
+            .output_device
+            .as_ref()
+            .ok_or_else(|| "no output device is selected".to_owned())?;
+        self.host
+            .open_playback(device, capacity_samples)
+            .map_err(|error| error.to_string())
     }
 
     fn open(&mut self, device: &InputDevice) {
@@ -142,7 +185,7 @@ impl AudioState {
 
 impl Default for AudioState {
     fn default() -> Self {
-        Self::new(None, true)
+        Self::new(None, None, true)
     }
 }
 
@@ -152,6 +195,7 @@ impl core::fmt::Debug for AudioState {
             .debug_struct("AudioState")
             .field("device", &self.device)
             .field("capturing", &self.is_capturing())
+            .field("output_device", &self.output_device)
             .finish_non_exhaustive()
     }
 }

@@ -9,6 +9,7 @@ authors.workspace = true
 directories.workspace = true
 eframe.workspace = true
 egui.workspace = true
+egui_extras.workspace = true
 fluent-bundle.workspace = true
 fontdb.workspace = true
 image.workspace = true

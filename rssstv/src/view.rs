@@ -1,4 +1,5 @@
-use egui::{Align, Color32, ComboBox, Id, Layout, Panel, ProgressBar, RichText, ScrollArea, Ui};
+use egui::{Align, Color32, ComboBox, Id, Layout, Panel, ProgressBar, RichText, Ui};
+use egui_extras::{Column, TableBuilder};
 
 use crate::app::{App, Dsp, Entry, Tab};
 use crate::canvas;
@@ -362,38 +363,50 @@ fn entry_list(
             });
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
-                ScrollArea::vertical()
-                    .id_salt(&labels.title)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        if entries.is_empty() {
-                            ui.label(RichText::new(&labels.empty).size(LABEL).weak());
-                        }
-                        for (index, entry) in entries.iter().enumerate() {
-                            if entry_row(ui, entry, *selected == Some(index)).clicked() {
-                                *selected = Some(index);
-                            }
-                        }
-                    });
+                if entries.is_empty() {
+                    ui.label(RichText::new(&labels.empty).size(LABEL).weak());
+                    return;
+                }
+                entry_table(ui, labels, entries, selected);
             });
         });
     });
     action
 }
 
-/// One file in a library list.
+/// The files in one library list.
 ///
-/// A button spanning the list is used rather than a label so the highlight
-/// covers the whole row, and so the geometry can sit at the far end of the
-/// same row instead of in a tooltip.
-fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool) -> egui::Response {
-    ui.add(
-        egui::Button::new(RichText::new(&entry.name).size(SMALL))
-            .right_text(RichText::new(&entry.geometry).size(LABEL).weak())
-            .selected(selected)
-            .frame_when_inactive(false)
-            .min_size(egui::vec2(ui.available_width(), 0.0)),
-    )
+/// A table rather than a column of buttons: the name and the geometry are
+/// real columns, so the geometry lines up down the list instead of merely
+/// sitting at the end of each row, and only the visible rows are built.
+fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &mut Option<usize>) {
+    let row_height = ui.spacing().interact_size.y;
+    TableBuilder::new(ui)
+        .id_salt(&labels.title)
+        .striped(true)
+        .sense(egui::Sense::click())
+        .cell_layout(Layout::left_to_right(Align::Center))
+        .auto_shrink([false, false])
+        .column(Column::remainder().clip(true))
+        .column(Column::auto())
+        .body(|body| {
+            body.rows(row_height, entries.len(), |mut row| {
+                let index = row.index();
+                let entry = &entries[index];
+                row.set_selected(*selected == Some(index));
+                row.col(|ui| {
+                    ui.label(RichText::new(&entry.name).size(SMALL));
+                });
+                row.col(|ui| {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(&entry.geometry).size(LABEL).weak());
+                    });
+                });
+                if row.response().clicked() {
+                    *selected = Some(index);
+                }
+            });
+        });
 }
 
 fn composite(ui: &mut Ui, app: &mut App) {

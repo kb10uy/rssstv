@@ -64,6 +64,7 @@ badge-waiting = WAITING FOR SIGNAL
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
 badge-transmit-ready = TX READY · { $mode }
+badge-transmit-not-ready = TX NOT READY · { $mode }
 badge-transmit-preparing = TX PREPARING · { $mode }
 badge-transmitting = TRANSMITTING · { $mode } · { $percent }%
 badge-transmit-complete = TX COMPLETE · { $mode }
@@ -79,5 +80,9 @@ status-output-audio = Output { $rate } Hz
 status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
 status-afc = AFC { $offset } Hz
+
+error-no-transmit-frame = Set a composite image for transmit first
+error-no-output-device = Select an output device first
+error-invalid-station-call = Invalid station callsign: { $error }
 
 geometry = { $mode } · { $width }×{ $height }

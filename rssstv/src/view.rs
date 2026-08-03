@@ -96,9 +96,12 @@ fn badge(app: &App) -> String {
             TxPhase::Complete => app
                 .i18n
                 .text_with("badge-transmit-complete", &[("mode", mode)]),
-            _ => app
+            _ if app.can_transmit() => app
                 .i18n
                 .text_with("badge-transmit-ready", &[("mode", mode)]),
+            _ => app
+                .i18n
+                .text_with("badge-transmit-not-ready", &[("mode", mode)]),
         },
         Tab::History => app.i18n.text_with("badge-history", &[("mode", mode)]),
         Tab::Receive => {
@@ -150,15 +153,14 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                 } else {
                     "action-transmit"
                 });
-                let enabled = active || app.can_transmit();
-                if ui
-                    .add_enabled(
-                        enabled,
-                        egui::Button::new(RichText::new(label).size(SMALL))
-                            .fill(Color32::from_rgb(140, 40, 40)),
-                    )
-                    .clicked()
-                {
+                let mut response = ui.add(
+                    egui::Button::new(RichText::new(label).size(SMALL))
+                        .fill(Color32::from_rgb(140, 40, 40)),
+                );
+                if !active && let Some(problem) = app.transmit_problem() {
+                    response = response.on_hover_text(problem);
+                }
+                if response.clicked() {
                     if active {
                         app.stop_transmit();
                     } else {
@@ -670,5 +672,24 @@ mod tests {
             app.tab = tab;
             render(&mut app);
         }
+    }
+
+    #[test]
+    fn tx_button_reports_why_transmission_cannot_start() {
+        let mut app = App::headless();
+        app.tab = Tab::Transmit;
+        {
+            let mut harness = Harness::new_ui(|ui| {
+                let model = menu::model(&app);
+                view(ui, &mut app, &model);
+            });
+            harness.run();
+            harness.get_by_label("TX").click();
+            harness.run();
+        }
+        assert_eq!(
+            app.tx_error.as_deref(),
+            Some(app.i18n.text("error-no-transmit-frame").as_str())
+        );
     }
 }

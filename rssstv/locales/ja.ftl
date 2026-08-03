@@ -64,6 +64,7 @@ badge-waiting = 信号待ち
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
 badge-transmit-ready = TX READY · { $mode }
+badge-transmit-not-ready = TX NOT READY · { $mode }
 badge-transmit-preparing = TX PREPARING · { $mode }
 badge-transmitting = TRANSMITTING · { $mode } · { $percent }%
 badge-transmit-complete = TX COMPLETE · { $mode }
@@ -79,5 +80,9 @@ status-output-audio = 出力 { $rate } Hz
 status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル
 status-afc = AFC { $offset } Hz
+
+error-no-transmit-frame = 先に合成画像を送信にセットしてください
+error-no-output-device = 出力デバイスを選択してください
+error-invalid-station-call = 自局コールが不正です: { $error }
 
 geometry = { $mode } · { $width }×{ $height }

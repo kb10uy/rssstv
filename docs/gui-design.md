@@ -348,7 +348,9 @@ latest-wins composite request. Set for transmit freezes the completed preview,
 and TX opens the selected output device, primes a bounded queue, and starts
 playback. Progress follows samples consumed by the device callback. Playback
 underrun is reported as a transmission error, and Stop TX closes playback and
-cancels the worker.
+cancels the worker. TX remains actionable while prerequisites are missing; its
+hover text and the status bar report the missing frame, output device, or valid
+station callsign instead of silently disabling the button.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.

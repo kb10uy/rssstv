@@ -609,14 +609,28 @@ impl App {
     }
 
     pub fn can_transmit(&self) -> bool {
-        self.prepared_frame.is_some()
-            && self.audio.output_device.is_some()
-            && FskId::new(self.station_callsign.trim()).is_ok()
-            && !self.tx_snapshot.phase.is_active()
+        self.transmit_problem().is_none() && !self.tx_snapshot.phase.is_active()
+    }
+
+    pub fn transmit_problem(&self) -> Option<String> {
+        if self.prepared_frame.is_none() {
+            return Some(self.i18n.text("error-no-transmit-frame"));
+        }
+        if self.audio.output_device.is_none() {
+            return Some(self.i18n.text("error-no-output-device"));
+        }
+        if let Err(error) = FskId::new(self.station_callsign.trim()) {
+            return Some(self.i18n.text_with(
+                "error-invalid-station-call",
+                &[("error", error.to_string().into())],
+            ));
+        }
+        None
     }
 
     pub fn start_transmit(&mut self) {
-        if !self.can_transmit() {
+        if let Some(error) = self.transmit_problem() {
+            self.tx_error = Some(error);
             return;
         }
         let station_id = match FskId::new(self.station_callsign.trim()) {

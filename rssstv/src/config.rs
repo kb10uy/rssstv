@@ -16,13 +16,19 @@ use crate::i18n::Locale;
 
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
+pub const DEFAULT_UI_SCALE: f32 = 1.0;
+/// How far the interface may be scaled.
+///
+/// A stored value is clamped to this, so a hand-edited file cannot shrink the
+/// interface past the point where the setting could be changed back.
+pub const UI_SCALE_RANGE: core::ops::RangeInclusive<f32> = 0.5..=3.0;
 
 /// Everything the application restores on the next start.
 ///
 /// Selections that name something outside the configuration file, such as a
 /// capture device or a library file, are stored by name: the identifiers
 /// behind them are assigned per run and mean nothing to a later one.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub locale: Locale,
     pub input_device: Option<String>,
@@ -33,6 +39,7 @@ pub struct Settings {
     pub auto_mode: bool,
     pub dsp: DspFlags,
     pub auto_history: bool,
+    pub ui_scale: f32,
 }
 
 impl Default for Settings {
@@ -47,6 +54,7 @@ impl Default for Settings {
             auto_mode: true,
             dsp: DspFlags::default(),
             auto_history: true,
+            ui_scale: DEFAULT_UI_SCALE,
         }
     }
 }
@@ -132,6 +140,9 @@ impl Config {
             },
             auto_history: boolean(&self.document, Some("receive"), "auto-history")
                 .unwrap_or(defaults.auto_history),
+            ui_scale: float(&self.document, None, "ui-scale")
+                .map(|scale| scale.clamp(*UI_SCALE_RANGE.start(), *UI_SCALE_RANGE.end()))
+                .unwrap_or(defaults.ui_scale),
         }
     }
 
@@ -146,6 +157,12 @@ impl Config {
             None,
             "language",
             Some(value(settings.locale.tag())),
+        );
+        set(
+            document,
+            None,
+            "ui-scale",
+            Some(value(f64::from(settings.ui_scale))),
         );
         set(
             document,
@@ -247,6 +264,14 @@ fn boolean(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<boo
     get(document, table, key)?.as_bool()
 }
 
+/// Reads a number, accepting the integer a hand-edited file may hold.
+fn float(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<f32> {
+    let item = get(document, table, key)?;
+    item.as_float()
+        .or_else(|| item.as_integer().map(|value| value as f64))
+        .map(|value| value as f32)
+}
+
 /// Assigns `item` under `key`, or removes the key when there is no value.
 fn set(document: &mut DocumentMut, table: Option<&str>, key: &str, item: Option<Item>) {
     let Some(item) = item else {
@@ -280,6 +305,8 @@ fn table_mut<'a>(document: &'a mut DocumentMut, name: &str) -> &'a mut Table {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use rstest::rstest;
 
     use super::*;
 
@@ -322,6 +349,7 @@ mod tests {
                 slant: false,
             },
             auto_history: false,
+            ui_scale: 1.5,
         }
     }
 
@@ -408,6 +436,21 @@ mod tests {
         let config = Config::load(&root.config());
         assert!(config.error().is_none());
         assert_eq!(config.settings(), Settings::default());
+    }
+
+    #[rstest]
+    #[case("ui-scale = 1.5\n", 1.5)]
+    // An integer is what a hand-edited file is likely to hold.
+    #[case("ui-scale = 2\n", 2.0)]
+    // Out of range values are clamped rather than ignored, so the interface
+    // cannot be left too small to reach the setting that fixes it.
+    #[case("ui-scale = 0.01\n", 0.5)]
+    #[case("ui-scale = 99\n", 3.0)]
+    #[case("ui-scale = \"big\"\n", DEFAULT_UI_SCALE)]
+    fn the_ui_scale_is_read_within_range(#[case] stored: &str, #[case] expected: f32) {
+        let root = TestDirectory::new();
+        fs::write(root.config(), stored).unwrap();
+        assert_eq!(Config::load(&root.config()).settings().ui_scale, expected);
     }
 
     #[test]

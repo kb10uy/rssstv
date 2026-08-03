@@ -5,6 +5,9 @@ menu-edit = Edit
 menu-view = View
 menu-settings = Settings
 menu-rig = Rig Control
+menu-zoom-in = Zoom In
+menu-zoom-out = Zoom Out
+menu-zoom-reset = Reset Zoom ({ $percent }%)
 menu-quit = Quit
 menu-language = Language
 menu-help = Help
@@ -28,8 +31,7 @@ dsp-slant = Slant
 
 section-qso = QSO
 qso-call = Call
-qso-rsv = RSV
-qso-nr = NR
+qso-rsv-nr = RSV/NR
 qso-record = Record
 qso-clear = Clear
 

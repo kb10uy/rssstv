@@ -7,7 +7,7 @@ use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
 use crate::audio::AudioState;
-use crate::config::{Config, Settings};
+use crate::config::{Config, Settings, UI_SCALE_RANGE};
 use crate::i18n::{I18n, Locale};
 use crate::paths::AppPaths;
 use crate::raster::Raster;
@@ -144,6 +144,11 @@ pub struct App {
     pub library_error: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
+    /// How much the whole interface is scaled.
+    ///
+    /// Held here rather than read from egui because it has to be restored
+    /// before the first frame is laid out.
+    pub ui_scale: f32,
     paths: AppPaths,
     config: Config,
     /// The settings as last written to disk.
@@ -199,6 +204,7 @@ impl App {
             library_error: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
+            ui_scale: settings.ui_scale,
             paths,
             config,
             saved: settings.clone(),
@@ -234,6 +240,7 @@ impl App {
             auto_mode: self.auto_mode,
             dsp: self.dsp,
             auto_history: self.auto_history,
+            ui_scale: self.ui_scale,
         }
     }
 
@@ -251,6 +258,16 @@ impl App {
 
     pub fn config_error(&self) -> Option<&str> {
         self.config.error()
+    }
+
+    /// Scales the whole interface, within the range the setting allows.
+    pub fn set_ui_scale(&mut self, scale: f32) {
+        self.ui_scale = scale.clamp(*UI_SCALE_RANGE.start(), *UI_SCALE_RANGE.end());
+    }
+
+    /// Steps the scale, rounded so repeated steps stay on tidy values.
+    pub fn zoom_by(&mut self, step: f32) {
+        self.set_ui_scale(((self.ui_scale + step) * 10.0).round() / 10.0);
     }
 
     pub fn select_locale(&mut self, locale: Locale) {

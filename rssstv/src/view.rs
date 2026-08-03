@@ -7,11 +7,11 @@ use crate::menu;
 use crate::receive::Progress;
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
-/// Tall enough for the template and stock lists stacked in one column.
-const LIBRARY_HEIGHT: f32 = 340.0;
+/// Default height of the library row; the operator can drag it.
+const LIBRARY_HEIGHT: f32 = 260.0;
 const LIST_WIDTH: f32 = 260.0;
-const FIELD_LABEL_WIDTH: f32 = 46.0;
-const NR_LABEL_WIDTH: f32 = 26.0;
+const FIELD_LABEL_WIDTH: f32 = 54.0;
+
 const NR_WIDTH: f32 = 64.0;
 const SMALL: f32 = 12.0;
 const LABEL: f32 = 11.0;
@@ -27,10 +27,14 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     Panel::top(Id::new("toolbar")).show(ui, |ui| toolbar(ui, app));
     Panel::bottom(Id::new("status-bar")).show(ui, |ui| status_bar(ui, app));
     Panel::bottom(Id::new("library"))
-        .exact_size(LIBRARY_HEIGHT)
+        .resizable(true)
+        .default_size(LIBRARY_HEIGHT)
+        .size_range(160.0..=640.0)
         .show(ui, |ui| library(ui, app));
     Panel::right(Id::new("side-panel"))
-        .exact_size(SIDE_PANEL_WIDTH)
+        .resizable(true)
+        .default_size(SIDE_PANEL_WIDTH)
+        .size_range(260.0..=560.0)
         .show(ui, |ui| side_panel(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
     action
@@ -244,26 +248,23 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     // of them is sized from the space actually available.
     let gap = ui.spacing().item_spacing.x;
     let full = ui.available_width();
+    let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
-    let rsv_label = app.i18n.text("qso-rsv");
-    let nr_label = app.i18n.text("qso-nr");
+    let report_label = app.i18n.text("qso-rsv-nr");
 
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
-        let edit = egui::TextEdit::singleline(&mut app.qso.call)
-            .desired_width(full - FIELD_LABEL_WIDTH - gap);
+        let edit = egui::TextEdit::singleline(&mut app.qso.call).desired_width(fields);
         if ui.add(edit).changed() {
             app.normalize_call();
         }
     });
     ui.horizontal(|ui| {
-        field_label(ui, &rsv_label);
-        let rsv_width = full - FIELD_LABEL_WIDTH - NR_LABEL_WIDTH - NR_WIDTH - gap * 3.0;
+        // RSV and the serial number are one report, so they share a label and
+        // sit next to each other rather than being introduced separately.
+        field_label(ui, &report_label);
+        let rsv_width = fields - NR_WIDTH - gap;
         ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(rsv_width));
-        ui.add_sized(
-            [NR_LABEL_WIDTH, 0.0],
-            egui::Label::new(RichText::new(&nr_label).size(SMALL)),
-        );
         ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(NR_WIDTH));
     });
     ui.horizontal(|ui| {
@@ -277,36 +278,36 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     });
 }
 
+/// A field label, aligned with the middle of the field beside it.
+///
+/// Sizing it to the row height rather than to nothing keeps it from settling
+/// against the bottom of the row.
 fn field_label(ui: &mut Ui, label: &str) {
-    ui.add_sized(
-        [FIELD_LABEL_WIDTH, 0.0],
-        egui::Label::new(RichText::new(label).size(SMALL)),
+    let height = ui.spacing().interact_size.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(FIELD_LABEL_WIDTH, height),
+        Layout::left_to_right(Align::Center),
+        |ui| ui.label(RichText::new(label).size(SMALL)),
     );
 }
 
 fn library(ui: &mut Ui, app: &mut App) {
     ui.horizontal_top(|ui| {
-        ui.allocate_ui(egui::vec2(LIST_WIDTH, ui.available_height()), |ui| {
-            ui.vertical(|ui| {
-                // The two lists split the column evenly, so neither grows into
-                // the other as its contents change.
-                let height = (ui.available_height() - ui.spacing().item_spacing.y) / 2.0;
+        let height = ui.available_height();
 
-                let labels = ListLabels::new(app, "section-templates");
-                match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
-                    Some(ListAction::Reveal) => app.reveal_templates(),
-                    Some(ListAction::Refresh) => app.refresh_templates(),
-                    None => {}
-                }
+        let labels = ListLabels::new(app, "section-templates");
+        match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
+            Some(ListAction::Reveal) => app.reveal_templates(),
+            Some(ListAction::Refresh) => app.refresh_templates(),
+            None => {}
+        }
 
-                let labels = ListLabels::new(app, "section-stocks");
-                match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
-                    Some(ListAction::Reveal) => app.reveal_stocks(),
-                    Some(ListAction::Refresh) => app.refresh_stocks(),
-                    None => {}
-                }
-            });
-        });
+        let labels = ListLabels::new(app, "section-stocks");
+        match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
+            Some(ListAction::Reveal) => app.reveal_stocks(),
+            Some(ListAction::Refresh) => app.refresh_stocks(),
+            None => {}
+        }
 
         composite(ui, app);
     });
@@ -344,7 +345,9 @@ fn entry_list(
     selected: &mut Option<usize>,
 ) -> Option<ListAction> {
     let mut action = None;
-    ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+    // The enclosing layout runs left to right, so the header and the list are
+    // wrapped in a vertical Ui; without it they end up side by side.
+    ui.allocate_ui(egui::vec2(LIST_WIDTH, height), |ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 heading(ui, &labels.title);

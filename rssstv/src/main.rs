@@ -54,6 +54,7 @@ impl Interface {
         egui_system_fonts::add_with_region(&cc.egui_ctx, FontRegion::Japanese, FontStyle::Sans);
 
         let app = App::new(paths);
+        cc.egui_ctx.set_zoom_factor(app.ui_scale);
         let model = menu::model(&app);
         let menu = match menu::Native::install(cc, &model) {
             Ok(menu) => Some(menu),
@@ -78,6 +79,11 @@ impl eframe::App for Interface {
         ui.ctx().request_repaint();
         self.app.poll_audio();
 
+        // egui handles Ctrl+Plus/Minus itself, so the factor it holds is
+        // adopted before the menu can change it. Whichever route the operator
+        // took, the result is one value that gets persisted.
+        self.app.set_ui_scale(ui.ctx().zoom_factor());
+
         let model = menu::model(&self.app);
         if let Some(native) = self.menu.as_mut() {
             native.sync(&model);
@@ -87,6 +93,10 @@ impl eframe::App for Interface {
         }
         if let Some(action) = view::view(ui, &mut self.app, &model) {
             self.quitting |= menu::apply(&mut self.app, action);
+        }
+
+        if ui.ctx().zoom_factor() != self.app.ui_scale {
+            ui.ctx().set_zoom_factor(self.app.ui_scale);
         }
 
         let title = self.app.title();

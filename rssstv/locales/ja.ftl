@@ -5,6 +5,9 @@ menu-edit = 編集
 menu-view = 表示
 menu-settings = 設定
 menu-rig = リグコントロール
+menu-zoom-in = 拡大
+menu-zoom-out = 縮小
+menu-zoom-reset = 等倍に戻す ({ $percent }%)
 menu-quit = 終了
 menu-language = 言語
 menu-help = ヘルプ
@@ -28,8 +31,7 @@ dsp-slant = 傾き補正
 
 section-qso = QSO
 qso-call = コール
-qso-rsv = RSV
-qso-nr = NR
+qso-rsv-nr = RSV/NR
 qso-record = 記録
 qso-clear = クリア
 

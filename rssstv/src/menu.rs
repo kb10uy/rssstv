@@ -20,6 +20,9 @@ pub use in_window::Native;
 pub enum Action {
     SelectDevice(String),
     SelectLocale(Locale),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
     Quit,
 }
 
@@ -79,7 +82,23 @@ pub fn model(app: &App) -> Vec<Menu> {
         },
         Menu {
             label: text("menu-view"),
-            items: vec![Item::Pending(text("action-zoom"))],
+            items: vec![
+                Item::Command {
+                    label: text("menu-zoom-in"),
+                    action: Action::ZoomIn,
+                },
+                Item::Command {
+                    label: text("menu-zoom-out"),
+                    action: Action::ZoomOut,
+                },
+                Item::Command {
+                    label: app.i18n.text_with(
+                        "menu-zoom-reset",
+                        &[("percent", crate::i18n::number(ui_scale_percent(app)))],
+                    ),
+                    action: Action::ZoomReset,
+                },
+            ],
         },
         Menu {
             label: text("menu-settings"),
@@ -103,6 +122,10 @@ pub fn model(app: &App) -> Vec<Menu> {
             items: vec![Item::Pending(text("menu-help"))],
         },
     ]
+}
+
+fn ui_scale_percent(app: &App) -> f32 {
+    (app.ui_scale * 100.0).round()
 }
 
 fn device_items(app: &App) -> Vec<Item> {
@@ -139,10 +162,16 @@ pub fn apply(app: &mut App, action: Action) -> bool {
     match action {
         Action::SelectDevice(name) => app.select_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
+        Action::ZoomIn => app.zoom_by(ZOOM_STEP),
+        Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
+        Action::ZoomReset => app.set_ui_scale(crate::config::DEFAULT_UI_SCALE),
         Action::Quit => return true,
     }
     false
 }
+
+/// Matches the step egui's own zoom shortcuts take.
+const ZOOM_STEP: f32 = 0.1;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod native {

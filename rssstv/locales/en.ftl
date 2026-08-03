@@ -5,6 +5,8 @@ menu-edit = Edit
 menu-view = View
 menu-settings = Settings
 menu-rig = Rig Control
+menu-quit = Quit
+menu-language = Language
 menu-help = Help
 
 tab-receive = Receive

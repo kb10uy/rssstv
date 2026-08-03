@@ -1,11 +1,8 @@
-use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use iced::widget::canvas::Cache;
-use iced::{Element, Font, Subscription};
 use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
@@ -14,25 +11,6 @@ use crate::config::{Config, Settings};
 use crate::i18n::{I18n, Locale};
 use crate::paths::AppPaths;
 use crate::raster::Raster;
-use crate::view;
-
-#[cfg(target_os = "windows")]
-const UI_FONT: Font = Font::with_name("Yu Gothic UI");
-#[cfg(target_os = "macos")]
-const UI_FONT: Font = Font::with_name("Hiragino Sans");
-#[cfg(target_os = "linux")]
-const UI_FONT: Font = Font::with_name("Noto Sans CJK JP");
-#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-const UI_FONT: Font = Font::DEFAULT;
-
-pub fn run(paths: AppPaths) -> iced::Result {
-    iced::application(move || App::new(paths.clone()), App::update, App::view)
-        .title(App::title)
-        .subscription(App::subscription)
-        .default_font(UI_FONT)
-        .window_size((1280.0, 940.0))
-        .run()
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
@@ -54,21 +32,23 @@ impl Tab {
     }
 }
 
-/// Display wrapper so modes can populate a dropdown.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ModeChoice(pub Mode);
-
-impl fmt::Display for ModeChoice {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.0.spec().name())
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Dsp {
     Afc,
     Lms,
     Slant,
+}
+
+impl Dsp {
+    pub const ALL: [Self; 3] = [Self::Afc, Self::Lms, Self::Slant];
+
+    pub const fn label_key(self) -> &'static str {
+        match self {
+            Self::Afc => "dsp-afc",
+            Self::Lms => "dsp-lms",
+            Self::Slant => "dsp-slant",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,75 +115,15 @@ impl Entry {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Message {
-    TabSelected(Tab),
-    LocaleSelected(Locale),
-    DeviceSelected(InputDevice),
-    Rx(RxMessage),
-    Tx(TxMessage),
-    Library(LibraryMessage),
-    Qso(QsoMessage),
-    Tick,
-}
-
-impl Message {
-    /// Whether handling this message can change a persisted setting.
-    ///
-    /// Deciding here rather than in each arm keeps the per-frame [`Self::Tick`]
-    /// away from the configuration file.
-    const fn persists(&self) -> bool {
-        match self {
-            Self::LocaleSelected(_) | Self::DeviceSelected(_) | Self::Rx(_) | Self::Tx(_) => true,
-            Self::Library(message) => !matches!(
-                message,
-                LibraryMessage::RevealTemplates | LibraryMessage::RevealStocks
-            ),
-            Self::TabSelected(_) | Self::Qso(_) | Self::Tick => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum RxMessage {
-    AutoModeToggled(bool),
-    ModeSelected(ModeChoice),
-    DspToggled(Dsp),
-    AutoHistoryToggled(bool),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum TxMessage {
-    ModeSelected(ModeChoice),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum LibraryMessage {
-    TemplateSelected(usize),
-    StockSelected(usize),
-    RevealTemplates,
-    RevealStocks,
-    RefreshTemplates,
-    RefreshStocks,
-}
-
-#[derive(Clone, Debug)]
-pub enum QsoMessage {
-    CallChanged(String),
-    RsvChanged(String),
-    NumberChanged(String),
-    Cleared,
-}
-
 pub struct App {
     pub tab: Tab,
     pub i18n: I18n,
     pub audio: AudioState,
     pub auto_mode: bool,
-    pub rx_mode: ModeChoice,
-    pub tx_mode: ModeChoice,
-    pub rx_modes: Vec<ModeChoice>,
-    pub tx_modes: Vec<ModeChoice>,
+    pub rx_mode: Mode,
+    pub tx_mode: Mode,
+    pub rx_modes: Vec<Mode>,
+    pub tx_modes: Vec<Mode>,
     pub dsp: DspFlags,
     pub auto_history: bool,
     pub qso: Qso,
@@ -214,10 +134,15 @@ pub struct App {
     pub library_error: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
-    pub main_cache: Cache,
-    pub preview_cache: Cache,
     paths: AppPaths,
     config: Config,
+    /// The settings as last written to disk.
+    ///
+    /// An immediate mode interface mutates state in place, so there is no
+    /// message to hang a save off. Comparing against this at the end of the
+    /// frame catches every change without the interface having to remember to
+    /// announce one.
+    saved: Settings,
 }
 
 impl App {
@@ -228,6 +153,7 @@ impl App {
         let mut app = Self::from_parts(audio, paths, config, &settings);
         app.refresh_library();
         app.restore_selection(&settings);
+        app.saved = app.settings();
         app
     }
 
@@ -249,8 +175,8 @@ impl App {
             i18n: I18n::new(settings.locale),
             audio,
             auto_mode: settings.auto_mode,
-            rx_mode: ModeChoice(settings.rx_mode),
-            tx_mode: ModeChoice(settings.tx_mode),
+            rx_mode: settings.rx_mode,
+            tx_mode: settings.tx_mode,
             rx_modes: modes(|mode| mode.spec().decode_support()),
             tx_modes: modes(|mode| mode.spec().encode_support()),
             dsp: settings.dsp,
@@ -263,11 +189,14 @@ impl App {
             library_error: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
-            main_cache: Cache::new(),
-            preview_cache: Cache::new(),
             paths,
             config,
+            saved: settings.clone(),
         }
+    }
+
+    pub fn title(&self) -> String {
+        self.i18n.text("app-title")
     }
 
     /// Reselects the library entries named by `settings`.
@@ -290,11 +219,23 @@ impl App {
                 .map(|device| device.name().to_owned()),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
-            rx_mode: self.rx_mode.0,
-            tx_mode: self.tx_mode.0,
+            rx_mode: self.rx_mode,
+            tx_mode: self.tx_mode,
             auto_mode: self.auto_mode,
             dsp: self.dsp,
             auto_history: self.auto_history,
+        }
+    }
+
+    /// Writes the settings back when anything the interface owns has changed.
+    ///
+    /// Called once at the end of every frame; a frame that changed nothing
+    /// does not touch the disk.
+    pub fn persist(&mut self) {
+        let settings = self.settings();
+        if settings != self.saved {
+            self.config.store(&settings);
+            self.saved = settings;
         }
     }
 
@@ -302,96 +243,71 @@ impl App {
         self.config.error()
     }
 
-    fn title(&self) -> String {
-        self.i18n.text("app-title")
-    }
-
-    fn subscription(&self) -> Subscription<Message> {
-        iced::window::frames().map(|_| Message::Tick)
-    }
-
-    fn view(&self) -> Element<'_, Message> {
-        view::view(self)
-    }
-
-    fn update(&mut self, message: Message) {
-        // Settings are written as they change rather than on exit, so an
-        // interrupted session still keeps what the operator selected.
-        let persists = message.persists();
-        match message {
-            Message::TabSelected(tab) => {
-                self.tab = tab;
-                self.main_cache.clear();
-            }
-            Message::LocaleSelected(locale) => {
-                if locale != self.i18n.locale() {
-                    self.i18n = I18n::new(locale);
-                }
-            }
-            Message::DeviceSelected(device) => self.audio.select(device),
-            Message::Rx(message) => self.update_rx(message),
-            Message::Tx(message) => self.update_tx(message),
-            Message::Library(message) => self.update_library(message),
-            Message::Qso(message) => self.update_qso(message),
-            Message::Tick => self.tick(),
-        }
-        if persists {
-            let settings = self.settings();
-            self.config.store(&settings);
+    pub fn select_locale(&mut self, locale: Locale) {
+        if locale != self.i18n.locale() {
+            self.i18n = I18n::new(locale);
         }
     }
 
-    fn update_rx(&mut self, message: RxMessage) {
-        match message {
-            RxMessage::AutoModeToggled(enabled) => self.auto_mode = enabled,
-            RxMessage::ModeSelected(mode) => {
-                self.rx_mode = mode;
-                self.rx_raster = Raster::blank(mode.0);
-                self.main_cache.clear();
-            }
-            RxMessage::DspToggled(dsp) => {
-                self.dsp.toggle(dsp);
-                if dsp == Dsp::Slant {
-                    self.audio.set_slant(self.dsp.slant);
-                }
-            }
-            RxMessage::AutoHistoryToggled(enabled) => self.auto_history = enabled,
+    pub fn select_device(&mut self, device: InputDevice) {
+        self.audio.select(device);
+    }
+
+    /// Switches to the input device with the given name, if the host has one.
+    pub fn select_device_named(&mut self, name: &str) {
+        if let Some(device) = self
+            .audio
+            .devices
+            .iter()
+            .find(|device| device.name() == name)
+            .cloned()
+        {
+            self.select_device(device);
         }
     }
 
-    fn update_tx(&mut self, message: TxMessage) {
-        match message {
-            TxMessage::ModeSelected(mode) => {
-                self.tx_mode = mode;
-                self.tx_raster = Raster::test_pattern(mode.0);
-                self.main_cache.clear();
-                self.preview_cache.clear();
-            }
+    pub fn select_rx_mode(&mut self, mode: Mode) {
+        if mode != self.rx_mode {
+            self.rx_mode = mode;
+            self.rx_raster = Raster::blank(mode);
         }
     }
 
-    fn update_library(&mut self, message: LibraryMessage) {
-        match message {
-            LibraryMessage::TemplateSelected(index) if index < self.templates.len() => {
-                self.template = Some(index);
-            }
-            LibraryMessage::StockSelected(index) if index < self.stocks.len() => {
-                self.stock = Some(index);
-            }
-            LibraryMessage::RevealTemplates => {
-                self.library_error = reveal_directory(self.paths.templates_dir())
-                    .err()
-                    .map(|error| error.to_string());
-            }
-            LibraryMessage::RevealStocks => {
-                self.library_error = reveal_directory(self.paths.stocks_dir())
-                    .err()
-                    .map(|error| error.to_string());
-            }
-            LibraryMessage::RefreshTemplates => self.refresh_templates(),
-            LibraryMessage::RefreshStocks => self.refresh_stocks(),
-            LibraryMessage::TemplateSelected(_) | LibraryMessage::StockSelected(_) => {}
+    pub fn select_tx_mode(&mut self, mode: Mode) {
+        if mode != self.tx_mode {
+            self.tx_mode = mode;
+            self.tx_raster = Raster::test_pattern(mode);
         }
+    }
+
+    pub fn toggle_dsp(&mut self, dsp: Dsp) {
+        self.dsp.toggle(dsp);
+        if dsp == Dsp::Slant {
+            self.audio.set_slant(self.dsp.slant);
+        }
+    }
+
+    pub fn reveal_templates(&mut self) {
+        self.library_error = reveal_directory(self.paths.templates_dir())
+            .err()
+            .map(|error| error.to_string());
+    }
+
+    pub fn reveal_stocks(&mut self) {
+        self.library_error = reveal_directory(self.paths.stocks_dir())
+            .err()
+            .map(|error| error.to_string());
+    }
+
+    /// Uppercases the callsign field after an edit.
+    pub fn normalize_call(&mut self) {
+        if self.qso.call.chars().any(char::is_lowercase) {
+            self.qso.call = self.qso.call.to_uppercase();
+        }
+    }
+
+    pub fn clear_qso(&mut self) {
+        self.qso = Qso::default();
     }
 
     fn refresh_library(&mut self) {
@@ -405,11 +321,11 @@ impl App {
         self.library_error = (!errors.is_empty()).then(|| errors.join("; "));
     }
 
-    fn refresh_templates(&mut self) {
+    pub fn refresh_templates(&mut self) {
         self.library_error = self.load_templates().err().map(|error| error.to_string());
     }
 
-    fn refresh_stocks(&mut self) {
+    pub fn refresh_stocks(&mut self) {
         self.library_error = self.load_stocks().err().map(|error| error.to_string());
     }
 
@@ -425,39 +341,19 @@ impl App {
         Ok(())
     }
 
-    fn update_qso(&mut self, message: QsoMessage) {
-        match message {
-            QsoMessage::CallChanged(value) => self.qso.call = value.to_uppercase(),
-            QsoMessage::RsvChanged(value) => self.qso.rsv = value,
-            QsoMessage::NumberChanged(value) => self.qso.number = value,
-            QsoMessage::Cleared => self.qso = Qso::default(),
-        }
-    }
-
     /// Adopts anything the receive worker produced since the last frame.
-    ///
-    /// The canvas is invalidated only when what it draws actually changed, so
-    /// an idle receiver does not retessellate the raster every frame.
-    fn tick(&mut self) {
-        let previous_fraction = self.decoded_fraction();
-        let mut changed = false;
-        if let Some(frame) = self.audio.poll() {
-            if let Some(raster) = Raster::from_frame(frame) {
-                self.rx_raster = raster;
-            }
-            changed = true;
+    pub fn poll_audio(&mut self) {
+        if let Some(frame) = self.audio.poll()
+            && let Some(raster) = Raster::from_frame(frame)
+        {
+            self.rx_raster = raster;
         }
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.
         if self.auto_mode
             && let Some(mode) = self.audio.snapshot().mode
-            && self.rx_mode.0 != mode
         {
-            self.rx_mode = ModeChoice(mode);
-            changed = true;
-        }
-        if changed || self.decoded_fraction() != previous_fraction {
-            self.main_cache.clear();
+            self.select_rx_mode(mode);
         }
     }
 
@@ -469,19 +365,25 @@ impl App {
         }
     }
 
-    pub const fn active_raster(&self) -> &Raster {
+    pub const fn active_mode(&self) -> Mode {
         match self.tab {
-            Tab::Transmit => &self.tx_raster,
-            Tab::Receive | Tab::History => &self.rx_raster,
+            Tab::Transmit => self.tx_mode,
+            Tab::Receive | Tab::History => self.rx_mode,
+        }
+    }
+
+    pub const fn active_raster_mut(&mut self) -> &mut Raster {
+        match self.tab {
+            Tab::Transmit => &mut self.tx_raster,
+            Tab::Receive | Tab::History => &mut self.rx_raster,
         }
     }
 }
 
-fn modes(support: fn(Mode) -> Support) -> Vec<ModeChoice> {
+fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {
     Mode::ALL
         .into_iter()
         .filter(|mode| support(*mode) == Support::Supported)
-        .map(ModeChoice)
         .collect()
 }
 
@@ -596,111 +498,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn only_supported_modes_are_selectable() {
-        let app = App::headless();
-        assert!(!app.rx_modes.is_empty());
-        assert!(!app.tx_modes.is_empty());
-        assert!(
-            app.rx_modes
-                .iter()
-                .all(|mode| mode.0.spec().decode_support() == Support::Supported)
-        );
-        assert!(
-            app.tx_modes
-                .iter()
-                .all(|mode| mode.0.spec().encode_support() == Support::Supported)
-        );
-    }
-
-    fn decoding(rows: usize, total: usize) -> Snapshot {
-        Snapshot {
-            progress: Progress::Decoding { rows, total },
-            ..Snapshot::default()
-        }
-    }
-
-    #[test]
-    fn switching_tabs_preserves_receive_progress() {
-        let mut app = App::headless();
-        app.audio.set_snapshot(decoding(40, 100));
-        app.update(Message::TabSelected(Tab::Transmit));
-        app.update(Message::TabSelected(Tab::Receive));
-        assert_eq!(app.decoded_fraction(), 0.4);
-    }
-
-    #[test]
-    fn completed_tabs_draw_a_full_raster() {
-        let mut app = App::headless();
-        app.audio.set_snapshot(decoding(40, 100));
-        app.update(Message::TabSelected(Tab::History));
-        assert_eq!(app.decoded_fraction(), 1.0);
-    }
-
-    #[test]
-    fn an_idle_receiver_draws_nothing_as_decoded() {
-        assert_eq!(App::headless().decoded_fraction(), 0.0);
-    }
-
-    #[test]
-    fn selecting_a_mode_replaces_the_raster() {
-        let mut app = App::headless();
-        app.update(Message::Rx(RxMessage::ModeSelected(ModeChoice(
-            Mode::Robot36,
-        ))));
-        assert_eq!(app.rx_mode.0, Mode::Robot36);
-        assert_eq!(
-            app.rx_raster.size().width(),
-            Mode::Robot36.spec().width() as usize
-        );
-        assert_eq!(
-            app.rx_raster.size().height(),
-            Mode::Robot36.spec().height() as usize
-        );
-    }
-
-    #[rstest]
-    #[case(Dsp::Afc, false)]
-    #[case(Dsp::Lms, true)]
-    #[case(Dsp::Slant, false)]
-    fn dsp_toggles_flip_one_flag(#[case] dsp: Dsp, #[case] expected: bool) {
-        let mut app = App::headless();
-        app.update(Message::Rx(RxMessage::DspToggled(dsp)));
-        assert_eq!(app.dsp.get(dsp), expected);
-        if dsp == Dsp::Slant {
-            assert_eq!(app.audio.slant(), expected);
-        }
-    }
-
-    #[test]
-    fn slant_is_enabled_by_default_in_the_ui_and_worker_settings() {
-        let app = App::headless();
-        assert!(app.dsp.slant);
-        assert!(app.audio.slant());
-    }
-
-    #[test]
-    fn callsign_input_is_normalized_and_clearable() {
-        let mut app = App::headless();
-        app.update(Message::Qso(QsoMessage::CallChanged("ja1xyz".to_owned())));
-        assert_eq!(app.qso.call, "JA1XYZ");
-        app.update(Message::Qso(QsoMessage::Cleared));
-        assert!(app.qso.call.is_empty());
-    }
-
-    #[test]
-    fn locale_switching_replaces_the_bundle() {
-        let mut app = App::headless();
-        let english = app.i18n.text("tab-receive");
-        app.update(Message::LocaleSelected(Locale::Ja));
-        assert_eq!(app.i18n.locale(), Locale::Ja);
-        assert_ne!(app.i18n.text("tab-receive"), english);
-    }
-
     /// Builds an interface over real directories but no host audio.
     fn disconnected(paths: AppPaths, settings: &Settings) -> App {
         let config = Config::load(paths.config_file());
-        App::from_parts(AudioState::disconnected(), paths, config, settings)
+        let mut app = App::from_parts(AudioState::disconnected(), paths, config, settings);
+        app.saved = app.settings();
+        app
     }
 
     fn library(root: &TestDirectory) -> AppPaths {
@@ -722,24 +525,121 @@ mod tests {
     }
 
     #[test]
+    fn only_supported_modes_are_selectable() {
+        let app = App::headless();
+        assert!(!app.rx_modes.is_empty());
+        assert!(!app.tx_modes.is_empty());
+        assert!(
+            app.rx_modes
+                .iter()
+                .all(|mode| mode.spec().decode_support() == Support::Supported)
+        );
+        assert!(
+            app.tx_modes
+                .iter()
+                .all(|mode| mode.spec().encode_support() == Support::Supported)
+        );
+    }
+
+    fn decoding(rows: usize, total: usize) -> Snapshot {
+        Snapshot {
+            progress: Progress::Decoding { rows, total },
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn switching_tabs_preserves_receive_progress() {
+        let mut app = App::headless();
+        app.audio.set_snapshot(decoding(40, 100));
+        app.tab = Tab::Transmit;
+        app.tab = Tab::Receive;
+        assert_eq!(app.decoded_fraction(), 0.4);
+    }
+
+    #[test]
+    fn completed_tabs_draw_a_full_raster() {
+        let mut app = App::headless();
+        app.audio.set_snapshot(decoding(40, 100));
+        app.tab = Tab::History;
+        assert_eq!(app.decoded_fraction(), 1.0);
+    }
+
+    #[test]
+    fn an_idle_receiver_draws_nothing_as_decoded() {
+        assert_eq!(App::headless().decoded_fraction(), 0.0);
+    }
+
+    #[test]
+    fn selecting_a_mode_replaces_the_raster() {
+        let mut app = App::headless();
+        app.select_rx_mode(Mode::Robot36);
+        assert_eq!(app.rx_mode, Mode::Robot36);
+        assert_eq!(
+            app.rx_raster.size().width(),
+            Mode::Robot36.spec().width() as usize
+        );
+        assert_eq!(
+            app.rx_raster.size().height(),
+            Mode::Robot36.spec().height() as usize
+        );
+    }
+
+    #[rstest]
+    #[case(Dsp::Afc, false)]
+    #[case(Dsp::Lms, true)]
+    #[case(Dsp::Slant, false)]
+    fn dsp_toggles_flip_one_flag(#[case] dsp: Dsp, #[case] expected: bool) {
+        let mut app = App::headless();
+        app.toggle_dsp(dsp);
+        assert_eq!(app.dsp.get(dsp), expected);
+        if dsp == Dsp::Slant {
+            assert_eq!(app.audio.slant(), expected);
+        }
+    }
+
+    #[test]
+    fn slant_is_enabled_by_default_in_the_ui_and_worker_settings() {
+        let app = App::headless();
+        assert!(app.dsp.slant);
+        assert!(app.audio.slant());
+    }
+
+    #[test]
+    fn callsign_input_is_normalized_and_clearable() {
+        let mut app = App::headless();
+        app.qso.call = "ja1xyz".to_owned();
+        app.normalize_call();
+        assert_eq!(app.qso.call, "JA1XYZ");
+        app.clear_qso();
+        assert!(app.qso.call.is_empty());
+    }
+
+    #[test]
+    fn locale_switching_replaces_the_bundle() {
+        let mut app = App::headless();
+        let english = app.i18n.text("tab-receive");
+        app.select_locale(Locale::Ja);
+        assert_eq!(app.i18n.locale(), Locale::Ja);
+        assert_ne!(app.i18n.text("tab-receive"), english);
+    }
+
+    #[test]
     fn changed_settings_are_written_and_restored_on_the_next_start() {
         let root = TestDirectory::new();
         let paths = library(&root);
 
         let mut app = disconnected(paths.clone(), &Settings::default());
         app.refresh_library();
-        app.update(Message::LocaleSelected(Locale::Ja));
-        app.update(Message::Rx(RxMessage::ModeSelected(ModeChoice(
-            Mode::Robot36,
-        ))));
-        app.update(Message::Rx(RxMessage::DspToggled(Dsp::Lms)));
-        app.update(Message::Rx(RxMessage::AutoModeToggled(false)));
-        app.update(Message::Rx(RxMessage::AutoHistoryToggled(false)));
-        app.update(Message::Tx(TxMessage::ModeSelected(ModeChoice(
-            Mode::Martin1,
-        ))));
-        app.update(Message::Library(LibraryMessage::TemplateSelected(1)));
-        app.update(Message::Library(LibraryMessage::StockSelected(1)));
+        app.select_locale(Locale::Ja);
+        app.select_rx_mode(Mode::Robot36);
+        app.toggle_dsp(Dsp::Lms);
+        app.auto_mode = false;
+        app.auto_history = false;
+        app.select_tx_mode(Mode::Martin1);
+        app.template = Some(1);
+        app.stock = Some(1);
+        app.persist();
         assert!(app.config_error().is_none());
 
         let restored = Config::load(paths.config_file()).settings();
@@ -748,8 +648,8 @@ mod tests {
         next.restore_selection(&restored);
 
         assert_eq!(next.i18n.locale(), Locale::Ja);
-        assert_eq!(next.rx_mode.0, Mode::Robot36);
-        assert_eq!(next.tx_mode.0, Mode::Martin1);
+        assert_eq!(next.rx_mode, Mode::Robot36);
+        assert_eq!(next.tx_mode, Mode::Martin1);
         assert!(next.dsp.lms);
         assert!(!next.auto_mode);
         assert!(!next.auto_history);
@@ -779,11 +679,41 @@ mod tests {
         let paths = library(&root);
 
         let mut app = disconnected(paths.clone(), &Settings::default());
-        app.update(Message::TabSelected(Tab::Transmit));
-        app.update(Message::Qso(QsoMessage::CallChanged("ja1xyz".to_owned())));
-        app.update(Message::Tick);
+        app.refresh_library();
+        app.saved = app.settings();
+        app.tab = Tab::Transmit;
+        app.qso.call = "JA1XYZ".to_owned();
+        app.poll_audio();
+        app.persist();
 
         assert_eq!(fs::read_to_string(paths.config_file()).unwrap(), "");
+    }
+
+    #[test]
+    fn an_unchanged_frame_does_not_rewrite_the_configuration_file() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+
+        let mut app = disconnected(paths.clone(), &Settings::default());
+        app.refresh_library();
+        app.saved = app.settings();
+        app.select_locale(Locale::Ja);
+        app.persist();
+        let written = fs::metadata(paths.config_file())
+            .unwrap()
+            .modified()
+            .unwrap();
+
+        app.persist();
+        app.persist();
+
+        assert_eq!(
+            fs::metadata(paths.config_file())
+                .unwrap()
+                .modified()
+                .unwrap(),
+            written
+        );
     }
 
     #[test]
@@ -818,7 +748,7 @@ mod tests {
         assert_eq!(app.stocks[0].name, "valid.png");
         assert_eq!(app.stocks[0].geometry, "7×5");
 
-        app.update_library(LibraryMessage::TemplateSelected(1));
+        app.template = Some(1);
         fs::write(paths.templates_dir().join("aardvark.kdl"), "").unwrap();
         app.refresh_templates();
 

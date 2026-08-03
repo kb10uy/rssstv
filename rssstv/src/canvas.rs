@@ -1,120 +1,73 @@
-use iced::mouse::Cursor;
-use iced::widget::canvas::{self, Cache, Geometry, Path, Stroke};
-use iced::widget::image::FilterMethod;
-use iced::{Color, Point, Rectangle, Renderer, Size, Theme};
+use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
 use crate::raster::Raster;
 
-const VIEWPORT: Color = Color::from_rgb(0.04, 0.04, 0.05);
-const PENDING: Color = Color::from_rgb(0.09, 0.09, 0.10);
-const SCAN_LINE: Color = Color::from_rgb(0.58, 0.77, 0.99);
+const VIEWPORT: Color32 = Color32::from_rgb(10, 10, 13);
+const PENDING: Color32 = Color32::from_rgb(23, 23, 26);
+const SCAN_LINE: Color32 = Color32::from_rgb(148, 196, 252);
 
-/// Main image view.
+/// Draws the main image view into the space `ui` has left.
 ///
-/// The raster is only one of several things drawn here, so this is a canvas
-/// rather than an image widget: the undecoded region, the scan boundary, and
-/// later overlays share the raster's coordinate space.
-#[derive(Debug)]
-pub struct ImageCanvas<'a> {
-    cache: &'a Cache,
-    raster: &'a Raster,
-    decoded_fraction: f32,
-}
+/// The raster is only one of several things drawn here, so this paints
+/// directly rather than using an image widget: the undecoded region, the scan
+/// boundary, and later overlays share the raster's coordinate space.
+/// Returns the area it claimed, so callers can overlay it.
+pub fn image_view(ui: &mut Ui, raster: &mut Raster, decoded_fraction: f32) -> Rect {
+    let decoded_fraction = decoded_fraction.clamp(0.0, 1.0);
+    let (area, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(area, 0.0, VIEWPORT);
 
-impl<'a> ImageCanvas<'a> {
-    /// Every canvas needs its own `cache`.
-    ///
-    /// A [`Cache`] holds the geometry of one canvas at one size, and rescales
-    /// that geometry when it is asked for a different size. Sharing a cache
-    /// between two canvases therefore draws one of them at the other's scale.
-    ///
-    /// The cache holds the whole view, including the scan boundary, so callers
-    /// invalidate it whenever `decoded_fraction` advances.
-    pub fn new(cache: &'a Cache, raster: &'a Raster, decoded_fraction: f32) -> Self {
-        Self {
-            cache,
-            raster,
-            decoded_fraction: decoded_fraction.clamp(0.0, 1.0),
-        }
+    let rect = letterbox(area, raster.aspect_ratio());
+    if rect.is_negative() || rect.width() <= 0.0 {
+        return area;
     }
-}
+    let decoded_height = rect.height() * decoded_fraction;
+    let boundary = rect.top() + decoded_height;
 
-impl<Message> canvas::Program<Message> for ImageCanvas<'_> {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: Cursor,
-    ) -> Vec<Geometry> {
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            let area = frame.size();
-            frame.fill_rectangle(Point::ORIGIN, area, VIEWPORT);
-
-            let rect = letterbox(area, self.raster.aspect_ratio());
-            let decoded_height = rect.height * self.decoded_fraction;
-            let boundary = rect.y + decoded_height;
-
-            if self.decoded_fraction < 1.0 {
-                frame.fill_rectangle(
-                    Point::new(rect.x, boundary),
-                    Size::new(rect.width, rect.height - decoded_height),
-                    PENDING,
-                );
-            }
-
-            // A frame draws its images above its fills and strokes regardless
-            // of call order, so the undecoded region is excluded by clipping
-            // the raster rather than by covering it.
-            frame.with_clip(
-                Rectangle::new(
-                    Point::new(rect.x, rect.y),
-                    Size::new(rect.width, decoded_height),
-                ),
-                |frame| {
-                    frame.draw_image(
-                        rect,
-                        canvas::Image::new(self.raster.handle().clone())
-                            .filter_method(FilterMethod::Nearest)
-                            .snap(true),
-                    );
-                },
-            );
-
-            if self.decoded_fraction < 1.0 {
-                frame.stroke(
-                    &Path::line(
-                        Point::new(rect.x, boundary),
-                        Point::new(rect.x + rect.width, boundary),
-                    ),
-                    Stroke::default().with_color(SCAN_LINE).with_width(2.0),
-                );
-            }
-        });
-        vec![geometry]
+    if decoded_fraction < 1.0 {
+        painter.rect_filled(
+            Rect::from_min_max(Pos2::new(rect.left(), boundary), rect.max),
+            0.0,
+            PENDING,
+        );
     }
+
+    // The undecoded region is excluded by clipping the raster rather than by
+    // covering it, so the boundary stays exact at any viewport scale.
+    let texture = raster.texture(ui.ctx()).id();
+    ui.painter_at(Rect::from_min_max(
+        rect.min,
+        Pos2::new(rect.right(), boundary),
+    ))
+    .image(
+        texture,
+        rect,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::WHITE,
+    );
+
+    if decoded_fraction < 1.0 {
+        ui.painter().hline(
+            rect.left()..=rect.right(),
+            boundary,
+            Stroke::new(2.0, SCAN_LINE),
+        );
+    }
+    area
 }
 
 /// Centers `aspect_ratio` inside `area` without distorting it.
-fn letterbox(area: Size, aspect_ratio: f32) -> Rectangle {
-    if area.width <= 0.0 || area.height <= 0.0 || aspect_ratio <= 0.0 {
-        return Rectangle::new(Point::ORIGIN, Size::ZERO);
+fn letterbox(area: Rect, aspect_ratio: f32) -> Rect {
+    if area.width() <= 0.0 || area.height() <= 0.0 || aspect_ratio <= 0.0 {
+        return Rect::from_min_size(area.min, Vec2::ZERO);
     }
-    let size = if area.width / area.height > aspect_ratio {
-        Size::new(area.height * aspect_ratio, area.height)
+    let size = if area.width() / area.height() > aspect_ratio {
+        Vec2::new(area.height() * aspect_ratio, area.height())
     } else {
-        Size::new(area.width, area.width / aspect_ratio)
+        Vec2::new(area.width(), area.width() / aspect_ratio)
     };
-    Rectangle::new(
-        Point::new(
-            (area.width - size.width) / 2.0,
-            (area.height - size.height) / 2.0,
-        ),
-        size,
-    )
+    Rect::from_min_size(area.min + (area.size() - size) / 2.0, size)
 }
 
 #[cfg(test)]
@@ -123,35 +76,48 @@ mod tests {
 
     use super::*;
 
+    fn area(width: f32, height: f32) -> Rect {
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(width, height))
+    }
+
     #[rstest]
     #[case(
-        Size::new(400.0, 400.0),
+        area(400.0, 400.0),
         2.0,
-        Rectangle::new(Point::new(0.0, 100.0), Size::new(400.0, 200.0))
+        Rect::from_min_size(Pos2::new(0.0, 100.0), Vec2::new(400.0, 200.0))
     )]
     #[case(
-        Size::new(400.0, 100.0),
+        area(400.0, 100.0),
         2.0,
-        Rectangle::new(Point::new(100.0, 0.0), Size::new(200.0, 100.0))
+        Rect::from_min_size(Pos2::new(100.0, 0.0), Vec2::new(200.0, 100.0))
     )]
     #[case(
-        Size::new(400.0, 200.0),
+        area(400.0, 200.0),
         2.0,
-        Rectangle::new(Point::ORIGIN, Size::new(400.0, 200.0))
+        Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))
     )]
     fn letterbox_centers_without_distortion(
-        #[case] area: Size,
+        #[case] area: Rect,
         #[case] aspect_ratio: f32,
-        #[case] expected: Rectangle,
+        #[case] expected: Rect,
     ) {
         let result = letterbox(area, aspect_ratio);
         assert_eq!(result, expected);
-        assert!((result.width / result.height - aspect_ratio).abs() < f32::EPSILON);
+        assert!((result.width() / result.height() - aspect_ratio).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn letterbox_is_offset_by_the_area_origin() {
+        let offset = Rect::from_min_size(Pos2::new(30.0, 70.0), Vec2::new(400.0, 400.0));
+        assert_eq!(
+            letterbox(offset, 2.0),
+            Rect::from_min_size(Pos2::new(30.0, 170.0), Vec2::new(400.0, 200.0))
+        );
     }
 
     #[test]
     fn degenerate_areas_produce_an_empty_frame() {
-        assert_eq!(letterbox(Size::ZERO, 2.0).size(), Size::ZERO);
-        assert_eq!(letterbox(Size::new(100.0, 100.0), 0.0).size(), Size::ZERO);
+        assert_eq!(letterbox(area(0.0, 0.0), 2.0).size(), Vec2::ZERO);
+        assert_eq!(letterbox(area(100.0, 100.0), 0.0).size(), Vec2::ZERO);
     }
 }

@@ -7,8 +7,10 @@ authors.workspace = true
 
 [dependencies]
 directories.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui-system-fonts.workspace = true
 fluent-bundle.workspace = true
-iced.workspace = true
 image.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
@@ -16,6 +18,15 @@ rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 toml_edit.workspace = true
 unic-langid.workspace = true
+
+# muda drives the platform menu bar, which needs a native window handle it can
+# own. Linux is left out on purpose: muda only attaches to gtk windows there,
+# and winit does not create one, so Linux uses the in-window menu bar instead.
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+muda.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle.workspace = true
 
 [dev-dependencies]
 hound.workspace = true

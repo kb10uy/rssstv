@@ -5,6 +5,8 @@ menu-edit = 編集
 menu-view = 表示
 menu-settings = 設定
 menu-rig = リグコントロール
+menu-quit = 終了
+menu-language = 言語
 menu-help = ヘルプ
 
 tab-receive = 受信

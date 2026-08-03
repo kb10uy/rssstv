@@ -1,14 +1,31 @@
-use iced::widget::image::Handle;
+use std::sync::Arc;
+
+use egui::{ColorImage, Context, TextureHandle, TextureOptions};
 use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
 use rssstv_sstv::mode::Mode;
 
 use crate::receive::Frame;
 
 /// Display-ready raster.
-#[derive(Clone, Debug)]
+///
+/// The pixels live in an [`Arc`] so handing them to the texture manager costs a
+/// reference count rather than a copy, and the uploaded texture is cached here
+/// so a raster that has not changed is not re-uploaded every frame.
+#[derive(Clone)]
 pub struct Raster {
     size: ImageSize,
-    handle: Handle,
+    image: Arc<ColorImage>,
+    texture: Option<TextureHandle>,
+}
+
+impl core::fmt::Debug for Raster {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("Raster")
+            .field("size", &self.size)
+            .field("uploaded", &self.texture.is_some())
+            .finish()
+    }
 }
 
 impl Raster {
@@ -18,18 +35,33 @@ impl Raster {
         for pixel in image.pixels() {
             rgba.extend_from_slice(&[pixel.r, pixel.g, pixel.b, u8::MAX]);
         }
+        Self::new(size, &rgba)
+    }
+
+    /// Wraps a decoded frame.
+    pub fn from_frame(frame: Frame) -> Option<Self> {
+        let size = ImageSize::new(frame.width as usize, frame.height as usize).ok()?;
+        Some(Self::new(size, &frame.rgba))
+    }
+
+    fn new(size: ImageSize, rgba: &[u8]) -> Self {
         Self {
             size,
-            handle: Handle::from_rgba(size.width() as u32, size.height() as u32, rgba),
+            image: Arc::new(ColorImage::from_rgba_unmultiplied(
+                [size.width(), size.height()],
+                rgba,
+            )),
+            texture: None,
         }
     }
 
-    /// Wraps a decoded frame without copying its pixels.
-    pub fn from_frame(frame: Frame) -> Option<Self> {
-        let size = ImageSize::new(frame.width as usize, frame.height as usize).ok()?;
-        Some(Self {
-            size,
-            handle: Handle::from_rgba(frame.width, frame.height, frame.rgba),
+    /// Uploads the raster on first use and returns the cached texture.
+    ///
+    /// Nearest-neighbour sampling is deliberate: an SSTV raster is inspected
+    /// for per-pixel artifacts, so magnifying it must not interpolate.
+    pub fn texture(&mut self, ctx: &Context) -> &TextureHandle {
+        self.texture.get_or_insert_with(|| {
+            ctx.load_texture("raster", Arc::clone(&self.image), TextureOptions::NEAREST)
         })
     }
 
@@ -46,10 +78,6 @@ impl Raster {
 
     pub const fn size(&self) -> ImageSize {
         self.size
-    }
-
-    pub fn handle(&self) -> &Handle {
-        &self.handle
     }
 
     pub fn aspect_ratio(&self) -> f32 {

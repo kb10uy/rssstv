@@ -22,9 +22,13 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 [workspace.dependencies]
 anyhow = "1.0"
 directories = "6.0"
+eframe = "0.35"
+egui = "0.35"
+egui-system-fonts = "0.35"
 fluent-bundle = "0.16"
 hound = "3.5"
-iced = { version = "0.14", features = ["canvas", "image"] }
+muda = { version = "0.19", default-features = false }
+raw-window-handle = "0.6"
 image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
 kdl = "6.7"
 libm = "0.2"

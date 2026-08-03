@@ -17,7 +17,6 @@ const MAX_RATE_ERROR: f64 = 0.08;
 #[derive(Clone, Copy)]
 struct AcquisitionOptions {
     periods: u64,
-    fit_rate: bool,
     startup: bool,
     max_samples: Option<u64>,
 }
@@ -35,12 +34,20 @@ fn period_samples(profile: RasterProfile, sample_rate_hz: u32, periods: u64) -> 
     product.div_ceil(1_000_000_000_000) as u64
 }
 
+/// Acquires the raster phase of a starting reception on the configured rate.
+///
+/// The startup window spans too few periods to estimate a sample rate that is
+/// better than the configured one, so it only fixes the phase. MMSSTV likewise
+/// begins a reception on its calibrated `SSTVSET.m_SampFreq` and leaves the rate
+/// to real-time slant tracking and to the staged pass.
+///
+/// The phase is averaged over the window's pulses, leaving out the first one
+/// because the buffer can begin part way through it.
 pub(super) fn acquire_startup(
     input: &SampleBuffer,
     profile: RasterProfile,
     sample_rate_hz: u32,
     sync_detector_delay: SstvDuration,
-    fit_rate: bool,
 ) -> Result<RasterClock, SstvError> {
     acquire_inner(
         input,
@@ -49,7 +56,6 @@ pub(super) fn acquire_startup(
         sync_detector_delay,
         AcquisitionOptions {
             periods: STARTUP_PERIODS,
-            fit_rate,
             startup: true,
             max_samples: None,
         },
@@ -69,7 +75,6 @@ pub(super) fn acquire(
         sync_detector_delay,
         AcquisitionOptions {
             periods: ACQUISITION_PERIODS,
-            fit_rate: true,
             startup: false,
             max_samples: Some(window_samples(profile, sample_rate_hz)),
         },
@@ -186,10 +191,10 @@ fn acquire_inner(
     }
     let (sequence, fitted_samples_per_period, residual_squared) =
         best.ok_or(SstvError::RasterNotAcquired)?;
-    let samples_per_period = if options.fit_rate {
-        fitted_samples_per_period
-    } else {
+    let samples_per_period = if options.startup {
         nominal
+    } else {
+        fitted_samples_per_period
     };
     let effective = samples_per_period * 1.0e12 / profile.period_ps as f64;
     let rate_error = (effective / f64::from(sample_rate_hz) - 1.0).abs();
@@ -206,7 +211,16 @@ fn acquire_inner(
             / count;
         sequence[0] as f64 + mean_offset - samples_per_period * mean_step
     } else {
-        sequence[1] as f64 - nominal
+        let steps = (sequence.len() - 1) as f64;
+        let mean_offset = sequence[1..]
+            .iter()
+            .enumerate()
+            .map(|(step, sample)| {
+                (*sample - sequence[0]) as f64 - samples_per_period * (step + 1) as f64
+            })
+            .sum::<f64>()
+            / steps;
+        sequence[0] as f64 + mean_offset
     };
     let epoch = fitted_first
         - effective * profile.sync_center_ps as f64 / 1.0e12
@@ -282,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_can_keep_the_nominal_rate_when_slant_is_disabled() {
+    fn startup_keeps_the_configured_rate_and_averages_the_phase() {
         let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
         let physical_rate = 10_000;
         let effective_rate = 10_050.0;
@@ -298,8 +312,38 @@ mod tests {
         let mut input = SampleBuffer::new(10_000);
         input.append(block, frequency.len());
 
-        let clock =
-            acquire_startup(&input, profile, physical_rate, SstvDuration::ZERO, false).unwrap();
+        let clock = acquire_startup(&input, profile, physical_rate, SstvDuration::ZERO).unwrap();
         assert_eq!(clock.effective_sample_rate_hz(), f64::from(physical_rate));
+    }
+
+    #[test]
+    fn startup_phase_survives_a_jittered_first_pulse() {
+        let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
+        let physical_rate = 10_000;
+        let count = startup_window_samples(profile, physical_rate) as usize;
+        let frequency = vec![1900.0; count];
+        let period = profile.period_ps as f64 * f64::from(physical_rate) / 1.0e12;
+        let epoch = 400.0;
+        let center = |unit: u64| {
+            epoch
+                + f64::from(physical_rate) * profile.sync_center_ps as f64 / 1.0e12
+                + period * unit as f64
+        };
+        let mut sync = vec![0.0; count];
+        for unit in 0..STARTUP_PERIODS {
+            sync[center(unit).round() as usize] = 1.0;
+        }
+        sync[center(0).round() as usize] = 0.0;
+        sync[center(0).round() as usize + 60] = 1.0;
+        let block = DemodulatedBlock::new(0, &frequency, &sync);
+        let mut input = SampleBuffer::new(0);
+        input.append(block, frequency.len());
+
+        let clock = acquire_startup(&input, profile, physical_rate, SstvDuration::ZERO).unwrap();
+        assert!(
+            clock.source_epoch().abs_diff(epoch as u64) <= 1,
+            "epoch={}",
+            clock.source_epoch()
+        );
     }
 }

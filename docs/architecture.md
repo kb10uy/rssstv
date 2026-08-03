@@ -174,10 +174,16 @@ and reports typed events and errors. Its responsibilities include:
 
 - Initial raster phase acquisition from four recurring synchronization pulses,
   buffering at most five periods when the first post-VIS pulse is incomplete.
+  The phase is averaged over those pulses, leaving out the first one because the
+  buffer can begin part way through it.
 - Family-specific RGB and luminance/chroma reconstruction.
 - Stable live raster-phase correction.
 - Optional automatic stop based on synchronization history.
 - Optional bounded staging and deterministic whole-image reconstruction.
+
+Acquisition fixes the raster phase only. A reception starts on the configured
+physical sample rate, as MMSSTV starts on its calibrated `SSTVSET.m_SampFreq`,
+because the startup window is too short to estimate a rate that beats it.
 
 Raster rate correction has two stages, as in MMSSTV. `RxConfig::live_slant`
 refits the rate during decoding and redraws the rows already decoded from

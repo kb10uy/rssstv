@@ -328,7 +328,8 @@ When real-time slant adjustment is enabled, `AutoStopJob()` first rejects
 unstable sync histories, estimates a reference position from the latest five
 lines by least squares, and measures its drift over subsequent lines
 (`Main.cpp:3459`, `Main.cpp:3560`). The drift is converted to an effective sample
-rate and smoothed over 16 estimates. Correction thresholds become progressively
+rate and smoothed over the most recent 16 estimates, averaging however many have
+been collected so far. Correction thresholds become progressively
 smaller as more lines are received, so early acquisition accepts only large
 errors while later updates can refine the rate. Changing the rate requests a
 redraw from staged demodulator data when that data is available.

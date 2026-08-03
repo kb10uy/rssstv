@@ -119,17 +119,21 @@ independently. Turning Slant on after a reception has started applies to the
 next reception because the earlier samples were not staged.
 
 Slant is corrected while the image is still arriving, as MMSSTV does, not only
-after it finishes. Startup acquisition fits the raster rate from a few periods
-only, which on real signals lands thousands of parts per million away from the
-true rate and would otherwise leave a heavily slanted image for the whole
-reception.
+after it finishes. A reception begins on the configured capture rate, exactly as
+MMSSTV begins on its calibrated `SSTVSET.m_SampFreq`. The startup window spans
+too few periods to estimate a better rate; fitting one there lands hundreds to
+thousands of parts per million out on real signals, which is worse than the
+capture rate the operator already has, and it visibly bends the first lines
+before tracking can take over.
 
 `RxConfig::live_slant` turns on that tracking. The decoder refits the rate from
-the synchronization collected so far, smooths it over sixteen estimates, and
-applies a correction once the error clears a threshold that tightens as lines
-accumulate, redrawing the rows already decoded from the retained samples. This
-mirrors MMSSTV's `AutoStopJob()` real-time adjustment; see
-[mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
+the synchronization collected so far, smooths it over at most sixteen estimates,
+and applies a correction once the error clears a threshold that tightens as
+lines accumulate, redrawing the rows already decoded from the retained samples.
+As in MMSSTV, the average covers however many estimates have been collected, so
+a gross rate error is corrected from the first estimate rather than after the
+window has filled. This mirrors MMSSTV's `AutoStopJob()` real-time adjustment;
+see [mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
 `Staging::Memory`.
 
 A refit that runs faster than the previous estimate places the decoded units

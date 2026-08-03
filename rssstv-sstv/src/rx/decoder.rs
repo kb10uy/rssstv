@@ -21,9 +21,11 @@ const BAD_SYNC_SCORE_LIMIT: u8 = 8;
 const BAD_SYNC_PENALTY: u8 = 1;
 const GOOD_SYNC_REWARD: u8 = 2;
 const AUTO_STOP_WARMUP: usize = 8;
-/// Rate estimates averaged before a live refit is considered.
+/// Most recent rate estimates averaged for a live refit.
 ///
-/// MMSSTV smooths its real-time rate estimate over the same count.
+/// MMSSTV smooths its real-time rate estimate over the same count and averages
+/// however many estimates it has collected, so the first refit does not wait
+/// for the window to fill.
 const LIVE_SLANT_SMOOTHING: usize = 16;
 
 /// Raster units decoded before live rate tracking begins.
@@ -282,7 +284,6 @@ impl RxDecoder {
                         self.profile,
                         self.sample_rate_hz,
                         self.config.sync_detector_delay,
-                        self.config.fit_initial_rate,
                     ) {
                         Ok(clock) => {
                             self.decode.clock = Some(clock);
@@ -504,9 +505,6 @@ impl RxDecoder {
         }
         self.rate_estimates
             .push_back(estimate.effective_sample_rate_hz);
-        if self.rate_estimates.len() < LIVE_SLANT_SMOOTHING {
-            return Ok(());
-        }
         if self
             .last_slant_unit
             .is_some_and(|last| units < last + LIVE_SLANT_HOLDOFF_UNITS)
@@ -1977,14 +1975,9 @@ mod tests {
         (frequency, sync)
     }
 
-    /// Startup acquisition is left off the rate fit so the decoder begins with
-    /// the nominal clock. On clean synthetic sync the five-period startup fit
-    /// is accurate enough to hide the very error under test, whereas on real
-    /// signals it lands thousands of parts per million out.
     fn config(live_slant: bool, samples: usize) -> RxConfig {
         RxConfig {
             live_sync: true,
-            fit_initial_rate: false,
             live_slant,
             auto_stop: false,
             sync_detector_delay: crate::time::SstvDuration::ZERO,
@@ -2018,11 +2011,13 @@ mod tests {
         let (untracked, _) =
             drive_configured(mode, &frequency, &sync, config(false, frequency.len()));
 
+        let first_adjustment = events.iter().find_map(|event| match event {
+            RxEvent::SlantAdjusted { unit, .. } => Some(*unit),
+            _ => None,
+        });
         assert!(
-            events
-                .iter()
-                .any(|event| matches!(event, RxEvent::SlantAdjusted { .. })),
-            "live tracking never adjusted the raster: {events:?}"
+            first_adjustment.is_some_and(|unit| unit <= LIVE_SLANT_MIN_UNITS),
+            "live tracking did not adjust the raster at its first opportunity: {first_adjustment:?}"
         );
         let tracked_error = mean_abs_error(tracked.image(), &expected);
         let untracked_error = mean_abs_error(untracked.image(), &expected);
@@ -2033,6 +2028,32 @@ mod tests {
         assert!(
             tracked_error < untracked_error * 0.5,
             "live tracking scored {tracked_error} against {untracked_error} untracked"
+        );
+    }
+
+    /// MMSSTV starts a reception on its calibrated sample rate, so acquisition
+    /// must not hand the decoder a rate fitted from the few startup periods.
+    #[test]
+    fn a_reception_starts_on_the_configured_sample_rate() {
+        let mode = Mode::Martin2;
+        let (frequency, sync) = mistimed_body(mode, source_image(mode), 4_000.0);
+        let mut decoder =
+            RxDecoder::with_config(mode, SAMPLE_RATE, config(true, frequency.len())).unwrap();
+        let mut offset = 0;
+        while decoder.effective_sample_rate_hz().is_none() {
+            let result = decoder
+                .process(DemodulatedBlock::new(
+                    offset as u64,
+                    &frequency[offset..],
+                    &sync[offset..],
+                ))
+                .unwrap();
+            offset += result.consumed();
+            assert!(result.consumed() != 0 || result.event().is_some());
+        }
+        assert_eq!(
+            decoder.effective_sample_rate_hz(),
+            Some(f64::from(SAMPLE_RATE))
         );
     }
 

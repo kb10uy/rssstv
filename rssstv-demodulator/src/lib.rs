@@ -916,10 +916,10 @@ mod tests {
     #[case(Mode::Martin2, 8_000, 2.0)]
     #[case(Mode::Martin2, 48_000, 2.0)]
     #[case(Mode::Scottie2, 8_000, 3.1)]
-    #[case(Mode::Robot36, 8_000, 3.6)]
-    #[case(Mode::Robot36, 48_000, 3.6)]
-    #[case(Mode::Pd50, 8_000, 3.6)]
-    #[case(Mode::Pd50, 48_000, 3.6)]
+    #[case(Mode::Robot36, 8_000, 2.3)]
+    #[case(Mode::Robot36, 48_000, 2.3)]
+    #[case(Mode::Pd50, 8_000, 1.0)]
+    #[case(Mode::Pd50, 48_000, 1.0)]
     fn aligns_causal_sync_with_frequency_output(
         #[case] mode: Mode,
         #[case] rate: u32,

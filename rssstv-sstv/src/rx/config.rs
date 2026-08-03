@@ -20,12 +20,13 @@ pub enum Staging {
 /// Live synchronization accepts a pulse only when its peak is at least `0.35`
 /// and its local peak-to-background contrast is at least `0.20`; these are
 /// relative normalized criteria, not MMSSTV's integer-domain thresholds.
+///
+/// A reception always starts on the configured physical sample rate. The raster
+/// rate is changed only by live slant tracking and by staged refinement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RxConfig {
     /// Enables stable live raster epoch corrections without altering input samples.
     pub live_sync: bool,
-    /// Fits the initial raster rate from recurring synchronization pulses.
-    pub fit_initial_rate: bool,
     /// Refits the raster rate during decoding and redraws earlier rows.
     ///
     /// This is MMSSTV's real-time slant adjustment. It requires
@@ -47,7 +48,6 @@ impl Default for RxConfig {
     fn default() -> Self {
         Self {
             live_sync: false,
-            fit_initial_rate: true,
             live_slant: false,
             auto_stop: false,
             sync_detector_delay: SstvDuration::ZERO,

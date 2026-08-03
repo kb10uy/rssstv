@@ -40,3 +40,4 @@ rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }
 toml_edit = "0.25"
 unic-langid = "0.9"
+windows-sys = "0.61"

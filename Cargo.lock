@@ -3376,6 +3376,7 @@ dependencies = [
  "rstest",
  "toml_edit",
  "unic-langid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

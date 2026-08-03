@@ -102,6 +102,9 @@ fn load_face(database: &fontdb::Database, family: &str) -> Option<(Vec<u8>, u32)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    #[cfg(target_os = "windows")]
+    menu::allow_dark_mode_for_app();
+
     let paths = paths::AppPaths::discover()?;
     paths.initialize()?;
 

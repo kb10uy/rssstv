@@ -184,9 +184,10 @@ interval instead of waiting for a fixed fraction of the image.
 | `PhaseAdjusted` | Recorded for diagnostics only |
 | `Stopped` | Session ends with a synchronization-lost status |
 
-Synchronization confidence shown in the interface is derived from recent
-`DemodulatedChunk::sync_strength` values, which are already normalized to
-`0.0..=1.0`.
+The interface shows raw input level as a single meter. Its fill is white when
+no valid reception is active and uses the theme's green success color while
+raster acquisition or decoding is in progress. It does not show a numeric
+dBFS value or synchronization percentage.
 
 ### Transmit Worker
 
@@ -272,8 +273,7 @@ marked shared are built once and reused across tabs.
 | Receive action bar | Receive | Buttons, `checkbox`, mode and size text |
 | Transmit action bar | Transmit | Buttons including the transmit trigger |
 | History action bar | History | Navigation buttons and record metadata |
-| Input level meter | Shared | `progress_bar`; `canvas` if threshold marks are wanted |
-| Sync indicator | Shared | Colored dot plus label |
+| Input level meter | Shared | Signal-colored `progress_bar` |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Shared | Three toggle buttons |
 | QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
@@ -312,8 +312,9 @@ The composite preview and the list thumbnails have no overlays and remain plain
 Two mock behaviors are deliberately reduced relative to the original MMSSTV
 interface, as recorded in the reference breakdown:
 
-- Receive analysis shows an input level and a valid-signal indicator. There is
-  no spectrum display or waterfall.
+- Receive analysis shows one input-level meter whose color indicates whether a
+  valid signal is active. There is no numeric level, synchronization percentage,
+  spectrum display, or waterfall.
 - The mode panel defaults to automatic VIS detection, with manual selection
   available from a dropdown rather than a column of per-mode buttons.
 
@@ -333,8 +334,8 @@ expensive than doing it now, and the string volume is small.
 - Protocol identifiers are not translatable. Mode names such as `Scottie 2` and
   `PD120`, and the terms RSV, FSKID, AFC, LMS, and VIS, are rendered from
   `ModeSpec` and related core types directly.
-- Numeric and time formatting follows the active locale; frequency, sample
-  rate, and dBFS values keep their conventional units.
+- Numeric and time formatting follows the active locale; frequency and sample
+  rate values keep their conventional units.
 - The GUI default is `Yu Gothic UI` on Windows, `Hiragino Sans` on macOS, and
   `Noto Sans CJK JP` on Linux. These families cover Japanese UI text without an
   embedded CJK font; `cosmic-text` retains its system-font fallback when the
@@ -357,9 +358,9 @@ decodes the raster, and publishes snapshots. The interface adopts the newest
 snapshot on each frame and draws the partially decoded image progressively.
 
 Nothing simulated remains in the receive path. Mode, decoded rows, input level,
-synchronization strength, decoded callsigns, and overrun counts all come from
-the worker. When no reception is in progress, the canvas shows a blank raster
-sized to the selected mode.
+decoded callsigns, and overrun counts all come from the worker. When no
+reception is in progress, the canvas shows a blank raster sized to the selected
+mode.
 
 Transmit is not implemented. The transmit tab still shows a generated test
 pattern, and controls belonging to the transmit pipeline are rendered without

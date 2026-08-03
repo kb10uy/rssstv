@@ -14,10 +14,6 @@ tab-history = 履歴
 input-device = 入力デバイス
 
 section-rx-status = 受信ステータス
-label-input-level = 入力レベル
-label-signal-detected = 有効な受信信号を検出
-label-no-signal = 信号なし
-label-sync = SYNC { $percent }%
 
 section-mode = モード
 label-auto-vis = 自動判定 (VIS)

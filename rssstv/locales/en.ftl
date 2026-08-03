@@ -14,10 +14,6 @@ tab-history = History
 input-device = Input device
 
 section-rx-status = Receive status
-label-input-level = Input level
-label-signal-detected = Valid signal detected
-label-no-signal = No signal
-label-sync = SYNC { $percent }%
 
 section-mode = Mode
 label-auto-vis = Automatic detection (VIS)

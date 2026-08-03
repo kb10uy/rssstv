@@ -108,7 +108,6 @@ pub struct Snapshot {
     pub mode: Option<Mode>,
     pub progress: Progress,
     pub level: f32,
-    pub sync_strength: f32,
     pub frame: Option<Frame>,
     pub callsigns: Vec<String>,
     pub dropped_samples: u64,
@@ -459,7 +458,6 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
     };
     let mut pcm = vec![0.0_f32; READ_SAMPLES];
     let mut level = 0.0_f32;
-    let mut sync_strength = 0.0_f32;
     let mut callsigns: Vec<String> = Vec::new();
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut error = None;
@@ -487,8 +485,6 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
                         callsigns.push(text);
                     }
                 }
-                sync_strength =
-                    follow_peak(sync_strength, block_peak(chunk.sync_strength()), RELEASE);
                 if let Err(reason) = session.decode(&chunk, slant.load(Ordering::Relaxed)) {
                     error = Some(reason);
                     let _ = session.reset();
@@ -526,7 +522,6 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
             mode: session.decoder.as_ref().map(RxDecoder::mode),
             progress,
             level,
-            sync_strength,
             frame,
             callsigns: callsigns.clone(),
             dropped_samples: reader.dropped_samples(),

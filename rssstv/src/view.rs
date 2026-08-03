@@ -2,7 +2,7 @@ use iced::widget::{
     Space, button, canvas, checkbox, column, container, pick_list, progress_bar, row, scrollable,
     stack, text, text_input, toggler, tooltip,
 };
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Color, Element, Length};
 use rssstv_sstv::mode::Mode;
 
 use crate::app::{
@@ -221,38 +221,18 @@ fn section<'a>(app: &App, key: &str, content: Element<'a, Message>) -> Element<'
 
 fn rx_status(app: &App) -> Element<'_, Message> {
     let snapshot = app.audio.snapshot();
-    let sync_key = if snapshot.progress.is_active() {
-        "label-signal-detected"
-    } else {
-        "label-no-signal"
-    };
-    let percent = (snapshot.sync_strength * 100.0).round();
-    column![
-        row![
-            text(app.i18n.text("label-input-level")).size(12),
-            filler(),
-            text(format!("{:.0} dBFS", level_dbfs(snapshot.level))).size(11),
-        ],
-        progress_bar(0.0..=1.0, snapshot.level),
-        row![
-            text(app.i18n.text(sync_key)).size(12),
-            filler(),
-            text(
-                app.i18n
-                    .text_with("label-sync", &[("percent", number(percent))])
-            )
-            .size(11),
-        ],
-    ]
-    .spacing(8)
-    .into()
-}
-
-fn level_dbfs(level: f32) -> f32 {
-    if level <= 0.0 {
-        return -60.0;
-    }
-    20.0 * level.log10()
+    let has_signal = snapshot.progress.is_active();
+    progress_bar(0.0..=1.0, snapshot.level)
+        .style(move |theme| {
+            if has_signal {
+                progress_bar::success(theme)
+            } else {
+                let mut style = progress_bar::primary(theme);
+                style.bar = Color::WHITE.into();
+                style
+            }
+        })
+        .into()
 }
 
 fn mode_panel(app: &App) -> Element<'_, Message> {

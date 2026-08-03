@@ -375,9 +375,10 @@ The remaining implementation order is:
 3. History: retaining completed receptions, and the receive controls that act
    on them.
 
-Configuration persistence, template editing, PTT, CAT, and logging remain out
-of scope for this document and are still listed as planned gaps in
-[architecture.md](architecture.md).
+The application storage directories and an empty default configuration file
+are initialized at startup as described in [architecture.md](architecture.md).
+Loading and saving configuration values, template editing, PTT, CAT, and
+logging remain planned gaps.
 
 ## Verification Strategy
 

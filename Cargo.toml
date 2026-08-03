@@ -21,6 +21,7 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 
 [workspace.dependencies]
 anyhow = "1.0"
+directories = "6.0"
 fluent-bundle = "0.16"
 hound = "3.5"
 iced = { version = "0.14", features = ["canvas", "image"] }

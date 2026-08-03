@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+directories.workspace = true
 fluent-bundle.workspace = true
 iced.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }

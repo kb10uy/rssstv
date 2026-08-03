@@ -390,6 +390,27 @@ and can source-over composite that overlay into `rssstv-sstv::image::RgbImage`.
 It does not select or prepare the background image and does not access history
 or the filesystem implicitly.
 
+## Application Storage
+
+The desktop application uses the operating system's standard per-user
+directories. Portable storage beside the executable is not supported.
+
+| Content | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Configuration | `%APPDATA%\RSSSTV\config.toml` | `~/Library/Application Support/RSSSTV/config.toml` | `$XDG_CONFIG_HOME/rssstv/config.toml` |
+| Templates and assets | `%APPDATA%\RSSSTV\templates`, `%APPDATA%\RSSSTV\assets` | `~/Library/Application Support/RSSSTV/templates`, `~/Library/Application Support/RSSSTV/assets` | `$XDG_DATA_HOME/rssstv/templates`, `$XDG_DATA_HOME/rssstv/assets` |
+| User images | `Pictures\RSSSTV` | `~/Pictures/RSSSTV` | `$XDG_PICTURES_DIR/RSSSTV` |
+
+The image directory contains `Stocks`, `Sent`, and `Received`. Images are kept
+directly in those directories without year or month subdivisions. Templates
+are KDL files stored directly in `templates`; reusable template images and
+other resources are stored under `assets`.
+
+At startup the application creates all of these directories and creates an
+empty, valid `config.toml` when it does not already exist. Existing
+configuration files are never replaced. Loading and saving configuration
+values will be added with the configuration schema.
+
 ## Planned Gaps
 
 The architecture is not complete until the following boundaries have production
@@ -400,7 +421,7 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - An application composition root and user interface.
-- PTT, CAT, logging, history, template editing, and persistent configuration.
+- PTT, CAT, logging, history, template editing, and configuration persistence.
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

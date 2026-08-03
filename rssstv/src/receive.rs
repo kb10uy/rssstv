@@ -316,6 +316,7 @@ impl Session {
                     RxConfig {
                         live_sync: true,
                         fit_initial_rate: slant,
+                        live_slant: slant,
                         // Live scoring aborts real receptions early, so the
                         // worker's stall timeout ends dead signals instead.
                         auto_stop: false,

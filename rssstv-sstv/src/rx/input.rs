@@ -122,6 +122,22 @@ impl SampleBuffer {
         self.sync.get(index).copied()
     }
 
+    /// Copies the samples at `sample` and later into a new buffer.
+    ///
+    /// Live slant correction rebuilds the decoding window from retained
+    /// samples after the raster clock moves, and only the undecoded remainder
+    /// is needed, so this copies a short tail rather than the whole buffer.
+    pub(super) fn tail_from(&self, sample: u64) -> Self {
+        let skip = usize::try_from(sample.saturating_sub(self.first))
+            .unwrap_or(usize::MAX)
+            .min(self.len());
+        Self {
+            first: self.first + skip as u64,
+            frequency: self.frequency.iter().skip(skip).copied().collect(),
+            sync: self.sync.iter().skip(skip).copied().collect(),
+        }
+    }
+
     pub(super) fn discard_before(&mut self, sample: u64) {
         let count = sample.saturating_sub(self.first).min(self.len() as u64) as usize;
         self.frequency.drain(..count);

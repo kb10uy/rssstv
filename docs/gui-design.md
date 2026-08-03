@@ -118,11 +118,24 @@ control does not replace live phase synchronization, which remains enabled
 independently. Turning Slant on after a reception has started applies to the
 next reception because the earlier samples were not staged.
 
-Staged refinement is what makes the image usable, not a cosmetic extra. Startup
-acquisition fits the raster rate from a few periods only, which on real signals
-lands thousands of parts per million away from the true rate and produces a
-heavily slanted image; refitting over the whole reception brings it back to
-within about one part per million.
+Slant is corrected while the image is still arriving, as MMSSTV does, not only
+after it finishes. Startup acquisition fits the raster rate from a few periods
+only, which on real signals lands thousands of parts per million away from the
+true rate and would otherwise leave a heavily slanted image for the whole
+reception.
+
+`RxConfig::live_slant` turns on that tracking. The decoder refits the rate from
+the synchronization collected so far, smooths it over sixteen estimates, and
+applies a correction once the error clears a threshold that tightens as lines
+accumulate, redrawing the rows already decoded from the retained samples. This
+mirrors MMSSTV's `AutoStopJob()` real-time adjustment; see
+[mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
+`Staging::Memory`.
+
+Staged refinement stays as the more precise final pass, matching MMSSTV's
+separate `CorrectSlant()`. With live tracking on it is a refinement of an
+already-straight image rather than the only thing standing between the operator
+and an unusable one.
 
 A refit raster reaches slightly past the samples decoded live, so refinement
 cannot run the moment the raster completes. The worker keeps feeding trailing

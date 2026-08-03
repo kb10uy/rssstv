@@ -179,8 +179,11 @@ and reports typed events and errors. Its responsibilities include:
 - Optional automatic stop based on synchronization history.
 - Optional bounded staging and deterministic whole-image reconstruction.
 
-Staged refinement currently estimates one global sample rate and raster epoch.
-Local raster warping is outside the implemented contract.
+Raster rate correction has two stages, as in MMSSTV. `RxConfig::live_slant`
+refits the rate during decoding and redraws the rows already decoded from
+retained samples, and `refine_staged` performs one more precise global fit after
+completion. Both estimate a single global sample rate and raster epoch; local
+raster warping is outside the implemented contract.
 
 Refinement does not reuse synchronization observations collected through the
 provisional live clock. It first acquires a stable clock from the first 32

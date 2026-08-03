@@ -21,6 +21,23 @@ const BAD_SYNC_SCORE_LIMIT: u8 = 8;
 const BAD_SYNC_PENALTY: u8 = 1;
 const GOOD_SYNC_REWARD: u8 = 2;
 const AUTO_STOP_WARMUP: usize = 8;
+/// Rate estimates averaged before a live refit is considered.
+///
+/// MMSSTV smooths its real-time rate estimate over the same count.
+const LIVE_SLANT_SMOOTHING: usize = 16;
+
+/// Raster units decoded before live rate tracking begins.
+const LIVE_SLANT_MIN_UNITS: usize = 8;
+
+/// Raster units between applied live refits.
+const LIVE_SLANT_HOLDOFF_UNITS: usize = 8;
+
+/// Numerator of the shrinking acceptance threshold, in parts per million.
+const LIVE_SLANT_THRESHOLD_SCALE: f64 = 3_200.0;
+
+/// Smallest rate error a live refit acts on, in parts per million.
+const LIVE_SLANT_MIN_THRESHOLD_PPM: f64 = 8.0;
+
 const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
 const MIN_PHASE_DISPLACEMENT: u64 = 2;
@@ -54,6 +71,8 @@ pub struct RxDecoder {
     last_phase_adjustment: Option<usize>,
     bad_sync_score: u8,
     sync_checks: usize,
+    rate_estimates: VecDeque<f64>,
+    last_slant_unit: Option<usize>,
     staged: Option<SampleBuffer>,
     image_revision: u64,
     rebuilding: bool,
@@ -147,6 +166,8 @@ impl RxDecoder {
             last_phase_adjustment: None,
             bad_sync_score: 0,
             sync_checks: 0,
+            rate_estimates: VecDeque::with_capacity(LIVE_SLANT_SMOOTHING),
+            last_slant_unit: None,
             staged: None,
             image_revision: 0,
             rebuilding: false,
@@ -316,6 +337,7 @@ impl RxDecoder {
                 if let Some(row) = self.decode.pending_row.take() {
                     self.queue_event(RxEvent::RowDecoded { row });
                 }
+                self.track_slant()?;
                 if let Some(event) = self.poll_event() {
                     return Ok(RxProcess::new(consumed, Some(event)));
                 }
@@ -420,7 +442,7 @@ impl RxDecoder {
             .ok_or(SstvError::InsufficientStagedSync)?;
         let clock = RasterClock::from_estimate(slant.source_epoch, slant.effective_sample_rate_hz)?;
         let staged = self.staged.take().expect("staging checked above");
-        if let Err(error) = self.validate_staged_coverage(&staged, clock) {
+        if let Err(error) = self.validate_staged_coverage(&staged, clock, self.raster_units()) {
             self.staged = Some(staged);
             return Err(error);
         }
@@ -452,6 +474,116 @@ impl RxDecoder {
             revision: self.image_revision,
             slant,
         })
+    }
+
+    /// Refits the raster rate from the sync collected so far.
+    ///
+    /// This is MMSSTV's real-time slant adjustment: rather than waiting for the
+    /// transmission to end, the rate is re-estimated as lines accumulate and,
+    /// when it has moved far enough to matter, the rows already decoded are
+    /// redrawn from the retained samples so the whole image stays consistent.
+    fn track_slant(&mut self) -> Result<(), SstvError> {
+        if !self.config.live_slant || self.staged.is_none() {
+            return Ok(());
+        }
+        let units = self.decode.raster_unit;
+        if units < LIVE_SLANT_MIN_UNITS {
+            return Ok(());
+        }
+        let estimator = SlantEstimator::for_mode_with_sync_detector_delay(
+            self.sample_rate_hz,
+            self.mode,
+            self.config.sync_detector_delay,
+        )
+        .expect("decoder mode has a raster profile");
+        let Some(estimate) = estimator.estimate(&self.staged_observations) else {
+            return Ok(());
+        };
+        if self.rate_estimates.len() == LIVE_SLANT_SMOOTHING {
+            self.rate_estimates.pop_front();
+        }
+        self.rate_estimates
+            .push_back(estimate.effective_sample_rate_hz);
+        if self.rate_estimates.len() < LIVE_SLANT_SMOOTHING {
+            return Ok(());
+        }
+        if self
+            .last_slant_unit
+            .is_some_and(|last| units < last + LIVE_SLANT_HOLDOFF_UNITS)
+        {
+            return Ok(());
+        }
+        let smoothed = self.rate_estimates.iter().sum::<f64>() / self.rate_estimates.len() as f64;
+        let current = self
+            .decode
+            .clock
+            .expect("clock acquired")
+            .effective_sample_rate_hz();
+        if (smoothed / current - 1.0).abs() * 1.0e6 < live_slant_threshold_ppm(units) {
+            return Ok(());
+        }
+        let refit = RasterClock::from_estimate(estimate.source_epoch, smoothed)?;
+        // A refit the retained samples cannot cover is simply left for a later
+        // attempt, so tracking never destroys a usable image.
+        if self.rebuild_live(refit, units).is_ok() {
+            self.last_slant_unit = Some(units);
+            self.rate_estimates.clear();
+            self.phase_displacements.clear();
+            self.last_phase_adjustment = None;
+            self.queue_event(RxEvent::SlantAdjusted {
+                unit: units,
+                effective_sample_rate_hz: smoothed,
+            });
+        }
+        Ok(())
+    }
+
+    /// Redraws `units` decoded raster units under `clock` and resumes decoding.
+    fn rebuild_live(&mut self, clock: RasterClock, units: usize) -> Result<(), SstvError> {
+        let staged = self.staged.take().expect("staging checked by the caller");
+        if let Err(error) = self.validate_staged_coverage(&staged, clock, units) {
+            self.staged = Some(staged);
+            return Err(error);
+        }
+        let mut rebuilding = DecodeState::new(self.decode.image.size());
+        rebuilding.clock = Some(clock);
+        let old_decode = core::mem::replace(&mut self.decode, rebuilding);
+        let saved_input = self.input.take();
+        self.input = Some(staged);
+        self.rebuilding = true;
+        let result = (|| {
+            while self.decode.raster_unit < units {
+                self.decode_next(true)?;
+                self.decode.pending_row = None;
+            }
+            Ok(())
+        })();
+        self.rebuilding = false;
+        let staged = self.input.take().expect("staged buffer installed above");
+        if let Err(error) = result {
+            self.decode = old_decode;
+            self.input = saved_input;
+            self.staged = Some(staged);
+            return Err(error);
+        }
+        // Decoding continues from the refitted clock, so the working window is
+        // taken again from the retained samples rather than from the window
+        // that was trimmed against the old one.
+        let resume = clock.sample_at(
+            self.profile
+                .period_ps
+                .checked_mul(units as u64)
+                .ok_or(SstvError::TimeOverflow)?,
+        )?;
+        // Rows are delivered by the live path, not by a rebuild, so the
+        // delivery bookkeeping carries over rather than restarting at zero.
+        self.decode.delivered_rows = old_decode.delivered_rows;
+        self.decode.state = old_decode.state;
+        self.decode.pending_events = old_decode.pending_events;
+        self.input = Some(staged.tail_from(resume));
+        self.staged = Some(staged);
+        self.image_revision = self.image_revision.saturating_add(1);
+        Ok(())
     }
 
     fn append(
@@ -570,6 +702,7 @@ impl RxDecoder {
         &self,
         staged: &SampleBuffer,
         clock: RasterClock,
+        units: usize,
     ) -> Result<(), SstvError> {
         let width = self.decode.image.size().width();
         let require = |sample: u64| -> Result<(), SstvError> {
@@ -581,7 +714,7 @@ impl RxDecoder {
                 })
             }
         };
-        for unit in 0..self.raster_units() {
+        for unit in 0..units {
             // Sampling positions increase monotonically, so covering the first
             // and last sample of every segment covers everything between them.
             for segment in self.profile.pixels().iter() {
@@ -909,6 +1042,14 @@ impl RxDecoder {
             event => event,
         }
     }
+}
+
+/// Returns the rate error a live refit acts on after `units` raster units.
+///
+/// MMSSTV tightens this as lines accumulate, so early and noisy fits only
+/// correct gross errors while later ones can refine the rate.
+fn live_slant_threshold_ppm(units: usize) -> f64 {
+    (LIVE_SLANT_THRESHOLD_SCALE / units.max(1) as f64).max(LIVE_SLANT_MIN_THRESHOLD_PPM)
 }
 
 #[cfg(test)]
@@ -1767,5 +1908,93 @@ mod tests {
             let frequency = f64::from(band.level_to_frequency(level).as_hz());
             assert_eq!(decoder.frequency_to_level(frequency), level);
         }
+    }
+
+    /// Renders a raster whose transmitter clock runs `offset_ppm` fast or slow,
+    /// which is what puts slant into a real reception.
+    fn mistimed_body(mode: Mode, image: RgbImage, offset_ppm: f64) -> (Vec<f32>, Vec<f32>) {
+        let rate = f64::from(SAMPLE_RATE) * (1.0 + offset_ppm / 1.0e6);
+        let mut frequency = vec![1900.0_f32; 0];
+        let mut sync = vec![0.0_f32; 0];
+        for tone in TxEncoder::new(mode, image).unwrap().skip(13) {
+            let relative_end = tone.until().as_picos() - VIS_END_PS;
+            let end = (relative_end as f64 * rate / 1.0e12).ceil() as usize;
+            frequency.resize(end, tone.frequency().as_hz() as f32);
+            sync.resize(
+                end,
+                if tone.component() == TxComponent::Sync {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
+        }
+        frequency.resize(frequency.len() + 96_000, 1900.0);
+        sync.resize(frequency.len(), 0.0);
+        (frequency, sync)
+    }
+
+    fn config(live_slant: bool, samples: usize) -> RxConfig {
+        RxConfig {
+            live_sync: true,
+            fit_initial_rate: true,
+            live_slant,
+            auto_stop: false,
+            sync_detector_delay: crate::time::SstvDuration::ZERO,
+            staging: Staging::Memory {
+                max_samples: samples,
+            },
+        }
+    }
+
+    fn mean_abs_error(decoded: &RgbImage, expected: &RgbImage) -> f64 {
+        let mut total = 0_u64;
+        for (left, right) in decoded.pixels().iter().zip(expected.pixels()) {
+            total += u64::from(left.r.abs_diff(right.r));
+            total += u64::from(left.g.abs_diff(right.g));
+            total += u64::from(left.b.abs_diff(right.b));
+        }
+        total as f64 / (expected.size().pixel_count() * 3) as f64
+    }
+
+    /// Live tracking must fix the raster while it is still being decoded, so
+    /// this asserts on the image as it stands at completion, before any staged
+    /// refinement runs.
+    #[test]
+    fn live_tracking_corrects_a_mistimed_raster_before_completion() {
+        let mode = Mode::Martin2;
+        let expected = source_image(mode);
+        let (frequency, sync) = mistimed_body(mode, expected.clone(), 400.0);
+
+        let (tracked, events) =
+            drive_configured(mode, &frequency, &sync, config(true, frequency.len()));
+        let (untracked, _) =
+            drive_configured(mode, &frequency, &sync, config(false, frequency.len()));
+
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, RxEvent::SlantAdjusted { .. })),
+            "live tracking never adjusted the raster: {events:?}"
+        );
+        let tracked_error = mean_abs_error(tracked.image(), &expected);
+        let untracked_error = mean_abs_error(untracked.image(), &expected);
+        assert!(
+            tracked_error < untracked_error * 0.5,
+            "live tracking scored {tracked_error} against {untracked_error} untracked"
+        );
+    }
+
+    /// Tracking must not disturb a reception whose clock already matches.
+    #[test]
+    fn a_matched_raster_is_left_alone() {
+        let mode = Mode::Martin2;
+        let expected = source_image(mode);
+        let (frequency, sync) = mistimed_body(mode, expected.clone(), 0.0);
+
+        let (tracked, _) = drive_configured(mode, &frequency, &sync, config(true, frequency.len()));
+        let (untracked, _) =
+            drive_configured(mode, &frequency, &sync, config(false, frequency.len()));
+        assert_eq!(tracked.image(), untracked.image());
     }
 }

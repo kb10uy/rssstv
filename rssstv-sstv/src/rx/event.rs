@@ -32,6 +32,14 @@ pub enum StopReason {
 /// One bounded notification produced by [`super::RxDecoder::process`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RxEvent {
+    /// The raster rate was refitted while decoding and the rows already
+    /// decoded were redrawn from retained samples.
+    SlantAdjusted {
+        /// Raster unit after which the refit was applied.
+        unit: usize,
+        /// Effective physical samples per protocol second after the refit.
+        effective_sample_rate_hz: f64,
+    },
     /// A stable raster clock was acquired.
     RasterAcquired {
         /// Physical source sample corresponding to the effective raster epoch.

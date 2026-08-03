@@ -26,6 +26,12 @@ pub struct RxConfig {
     pub live_sync: bool,
     /// Fits the initial raster rate from recurring synchronization pulses.
     pub fit_initial_rate: bool,
+    /// Refits the raster rate during decoding and redraws earlier rows.
+    ///
+    /// This is MMSSTV's real-time slant adjustment. It requires
+    /// [`Staging::Memory`], because correcting the rate means redrawing the
+    /// rows already decoded from the retained samples.
+    pub live_slant: bool,
     /// Stops normally after synchronization failures persist in leaky history.
     pub auto_stop: bool,
     /// Compensates synchronization-envelope delay relative to frequency input.
@@ -42,6 +48,7 @@ impl Default for RxConfig {
         Self {
             live_sync: false,
             fit_initial_rate: true,
+            live_slant: false,
             auto_stop: false,
             sync_detector_delay: SstvDuration::ZERO,
             staging: Staging::Disabled,

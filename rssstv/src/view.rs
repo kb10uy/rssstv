@@ -19,6 +19,13 @@ const LABEL: f32 = 11.0;
 
 /// Draws the whole interface, returning the menu action the operator chose.
 pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Action> {
+    // Labels are inert throughout. Several of them sit inside rows that sense
+    // the click themselves, and a selectable label takes the text cursor and
+    // swallows the press; none of this text is worth dragging a selection
+    // across either. Set here rather than at startup so the interface behaves
+    // the same under test.
+    ui.style_mut().interaction.selectable_labels = false;
+
     let mut action = None;
     if menu::is_in_window() {
         Panel::top(Id::new("menu-bar")).show(ui, |ui| {
@@ -374,11 +381,6 @@ fn entry_list(
     action
 }
 
-/// Text inside a table cell, which must not intercept the row's click.
-fn cell(text: RichText) -> egui::Label {
-    egui::Label::new(text).selectable(false)
-}
-
 /// The files in one library list.
 ///
 /// A table rather than a column of buttons: the name and the geometry are
@@ -399,15 +401,12 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
                 let index = row.index();
                 let entry = &entries[index];
                 row.set_selected(*selected == Some(index));
-                // Cell text is drawn unselectable: a selectable label takes
-                // the text cursor and swallows the click, so the row would
-                // stop responding wherever it has text on it.
                 row.col(|ui| {
-                    ui.add(cell(RichText::new(&entry.name).size(SMALL)));
+                    ui.label(RichText::new(&entry.name).size(SMALL));
                 });
                 row.col(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add(cell(RichText::new(&entry.geometry).size(LABEL).weak()));
+                        ui.label(RichText::new(&entry.geometry).size(LABEL).weak());
                     });
                 });
                 if row.response().clicked() {

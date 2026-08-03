@@ -9,8 +9,8 @@ authors.workspace = true
 directories.workspace = true
 eframe.workspace = true
 egui.workspace = true
-egui-system-fonts.workspace = true
 fluent-bundle.workspace = true
+fontdb.workspace = true
 image.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }

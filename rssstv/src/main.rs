@@ -1,8 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::error::Error;
+use std::sync::Arc;
 
-use egui_system_fonts::{FontPreset, FontStyle};
+use egui::{FontData, FontDefinitions, FontFamily};
 
 mod app;
 mod audio;
@@ -33,24 +34,71 @@ const UI_FONTS: [&str; 3] = ["Noto Sans CJK JP", "Noto Sans", "DejaVu Sans"];
 
 /// Draws the interface with the platform's UI font.
 ///
-/// The families are installed at the front of egui's list rather than as a
-/// fallback, so Latin and Japanese come from one face instead of mixing the
-/// bundled font with a system one. The crate's own presets follow as a
-/// backstop; when nothing at all matches, egui keeps its bundled fonts.
+/// The families go at the front of egui's list rather than being appended as
+/// a fallback, so Latin and Japanese come from one face instead of mixing the
+/// bundled font with a system one. egui's own fonts stay behind them, so a
+/// machine with none of these installed still renders text.
+///
+/// The font database is queried directly because the face index matters:
+/// Windows ships `Yu Gothic UI` as the second face of a collection whose
+/// first face is `Yu Gothic`, and that first face carries a half-em line gap.
+/// Loading it would leave every label sitting high in its row.
 fn install_fonts(ctx: &egui::Context) {
-    let families = UI_FONTS.iter().map(|name| (*name).to_owned()).collect();
-    let applied = egui_system_fonts::set_with_presets(
-        ctx,
-        [
-            FontPreset::Custom(families),
-            FontPreset::Japanese,
-            FontPreset::Latin,
-        ],
-        FontStyle::Sans,
-    );
-    if applied.is_empty() {
+    let mut database = fontdb::Database::new();
+    database.load_system_fonts();
+    ctx.set_fonts(font_definitions(&database));
+}
+
+/// Puts whichever of [`UI_FONTS`] the system has in front of egui's own.
+fn font_definitions(database: &fontdb::Database) -> FontDefinitions {
+    let mut definitions = FontDefinitions::default();
+    let mut installed = Vec::new();
+    for family in UI_FONTS {
+        let Some((data, index)) = load_face(database, family) else {
+            continue;
+        };
+        definitions.font_data.insert(
+            (*family).to_owned(),
+            Arc::new(FontData {
+                font: data.into(),
+                index,
+                tweak: egui::FontTweak::default(),
+            }),
+        );
+        installed.push((*family).to_owned());
+    }
+
+    if installed.is_empty() {
         eprintln!("no system UI font matched; using the bundled fonts");
     }
+    for family in installed.iter().rev() {
+        for target in [FontFamily::Proportional, FontFamily::Monospace] {
+            definitions
+                .families
+                .entry(target)
+                .or_default()
+                .insert(0, family.clone());
+        }
+    }
+    definitions
+}
+
+/// Returns the bytes and face index of `family`, if the system has it.
+fn load_face(database: &fontdb::Database, family: &str) -> Option<(Vec<u8>, u32)> {
+    let id = database.query(&fontdb::Query {
+        families: &[fontdb::Family::Name(family)],
+        weight: fontdb::Weight::NORMAL,
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    })?;
+    let (source, index) = database.face_source(id)?;
+    let data = match source {
+        fontdb::Source::File(path) => std::fs::read(path).ok()?,
+        fontdb::Source::Binary(data) => data.as_ref().as_ref().to_vec(),
+        #[allow(unreachable_patterns)]
+        _ => return None,
+    };
+    Some((data, index))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -143,6 +191,45 @@ impl eframe::App for Interface {
         self.app.persist();
         if self.quitting {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A system with none of the wanted families still has to render text.
+    #[test]
+    fn an_empty_database_leaves_the_bundled_fonts_usable() {
+        let definitions = font_definitions(&fontdb::Database::new());
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            assert!(!definitions.families[&family].is_empty());
+        }
+    }
+
+    /// The wanted families have to come first, or Latin keeps rendering in
+    /// egui's bundled font while only Japanese falls through to the system.
+    #[test]
+    fn a_matched_family_is_installed_ahead_of_the_bundled_fonts() {
+        let mut database = fontdb::Database::new();
+        database.load_system_fonts();
+        let Some(wanted) = UI_FONTS
+            .iter()
+            .find(|family| load_face(&database, family).is_some())
+        else {
+            return; // No system font to check against on this machine.
+        };
+
+        let definitions = font_definitions(&database);
+        let bundled = FontDefinitions::default();
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            let installed = &definitions.families[&family];
+            assert_eq!(installed.first().map(String::as_str), Some(*wanted));
+            assert!(
+                installed.len() > bundled.families[&family].len(),
+                "the bundled fonts should still be behind the system ones"
+            );
         }
     }
 }

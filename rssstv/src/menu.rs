@@ -23,6 +23,7 @@ pub enum Action {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    RevealConfig,
     Quit,
 }
 
@@ -111,6 +112,11 @@ pub fn model(app: &App) -> Vec<Menu> {
                     label: text("menu-language"),
                     items: locale_items(app),
                 },
+                Item::Separator,
+                Item::Command {
+                    label: text("menu-open-config"),
+                    action: Action::RevealConfig,
+                },
             ],
         },
         Menu {
@@ -165,6 +171,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
         Action::ZoomReset => app.set_ui_scale(crate::config::DEFAULT_UI_SCALE),
+        Action::RevealConfig => app.reveal_config(),
         Action::Quit => return true,
     }
     false
@@ -172,6 +179,29 @@ pub fn apply(app: &mut App, action: Action) -> bool {
 
 /// Matches the step egui's own zoom shortcuts take.
 const ZOOM_STEP: f32 = 0.1;
+
+/// Every item of every menu, in the order a renderer creates them.
+///
+/// Building the platform menu and updating it later both walk this, so the
+/// two cannot disagree about which entry corresponds to which item. They did
+/// once: separators were created but not counted, which shifted every later
+/// label onto the wrong entry.
+pub fn flatten(menus: &[Menu]) -> Vec<&Item> {
+    fn walk<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
+        for item in items {
+            out.push(item);
+            if let Item::Submenu { items, .. } = item {
+                walk(items, out);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for menu in menus {
+        walk(&menu.items, &mut out);
+    }
+    out
+}
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod native {
@@ -188,17 +218,41 @@ mod native {
     /// re-measure the client area on each pass.
     pub struct Native {
         menu: muda::Menu,
-        entries: Vec<Entry>,
+        /// The top-level menus, in bar order.
+        bar: Vec<Submenu>,
+        /// Every entry below the bar, in [`super::flatten`] order.
+        ///
+        /// Held apart from `bar` so each vector lines up with one sequence
+        /// from the model. Interleaving the two is what once let the update
+        /// walk drift and write labels onto the wrong entries.
+        items: Vec<Entry>,
         actions: HashMap<MenuId, Action>,
         model: Vec<Menu>,
     }
 
-    /// One activatable entry, in the order the model produced it.
+    /// One created menu entry, positionally matched to a model item.
     enum Entry {
         Check(CheckMenuItem),
         Command(MenuItem),
         Pending(MenuItem),
         Submenu(Submenu),
+        Separator,
+    }
+
+    impl Entry {
+        fn update(&self, item: &Item) {
+            match (self, item) {
+                (Self::Submenu(entry), Item::Submenu { label, .. }) => entry.set_text(label),
+                (Self::Check(entry), Item::Check { label, checked, .. }) => {
+                    entry.set_text(label);
+                    entry.set_checked(*checked);
+                }
+                (Self::Command(entry), Item::Command { label, .. })
+                | (Self::Pending(entry), Item::Pending(label)) => entry.set_text(label),
+                (Self::Separator, Item::Separator) => {}
+                _ => debug_assert!(false, "menu entries drifted from the model"),
+            }
+        }
     }
 
     impl Native {
@@ -213,7 +267,8 @@ mod native {
             let menu = muda::Menu::new();
             let mut native = Self {
                 menu,
-                entries: Vec::new(),
+                bar: Vec::new(),
+                items: Vec::new(),
                 actions: HashMap::new(),
                 model: Vec::new(),
             };
@@ -247,13 +302,14 @@ mod native {
         /// Replaces every menu entry from `model`.
         fn build(&mut self, model: &[Menu]) -> Result<(), muda::Error> {
             while self.menu.remove_at(0).is_some() {}
-            self.entries.clear();
+            self.bar.clear();
+            self.items.clear();
             self.actions.clear();
 
             for menu in model {
                 let submenu = Submenu::new(&menu.label, true);
                 self.menu.append(&submenu)?;
-                self.entries.push(Entry::Submenu(submenu.clone()));
+                self.bar.push(submenu.clone());
                 self.append_items(&submenu, &menu.items)?;
             }
             self.model = model.to_vec();
@@ -266,7 +322,7 @@ mod native {
                     Item::Submenu { label, items } => {
                         let submenu = Submenu::new(label, true);
                         parent.append(&submenu)?;
-                        self.entries.push(Entry::Submenu(submenu.clone()));
+                        self.items.push(Entry::Submenu(submenu.clone()));
                         self.append_items(&submenu, items)?;
                     }
                     Item::Check {
@@ -277,20 +333,23 @@ mod native {
                         let entry = CheckMenuItem::new(label, true, *checked, None);
                         parent.append(&entry)?;
                         self.actions.insert(entry.id().clone(), action.clone());
-                        self.entries.push(Entry::Check(entry));
+                        self.items.push(Entry::Check(entry));
                     }
                     Item::Command { label, action } => {
                         let entry = MenuItem::new(label, true, None);
                         parent.append(&entry)?;
                         self.actions.insert(entry.id().clone(), action.clone());
-                        self.entries.push(Entry::Command(entry));
+                        self.items.push(Entry::Command(entry));
                     }
                     Item::Pending(label) => {
                         let entry = MenuItem::new(label, false, None);
                         parent.append(&entry)?;
-                        self.entries.push(Entry::Pending(entry));
+                        self.items.push(Entry::Pending(entry));
                     }
-                    Item::Separator => parent.append(&PredefinedMenuItem::separator())?,
+                    Item::Separator => {
+                        parent.append(&PredefinedMenuItem::separator())?;
+                        self.items.push(Entry::Separator);
+                    }
                 }
             }
             Ok(())
@@ -309,14 +368,40 @@ mod native {
                 let _ = self.build(model);
                 return;
             }
-            let mut entries = self.entries.iter();
-            for menu in model {
-                if let Some(Entry::Submenu(submenu)) = entries.next() {
-                    submenu.set_text(&menu.label);
-                }
-                update_items(&mut entries, &menu.items);
+            for (submenu, menu) in self.bar.iter().zip(model) {
+                submenu.set_text(&menu.label);
+            }
+            for (entry, item) in self.items.iter().zip(super::flatten(model)) {
+                entry.update(item);
             }
             self.model = model.to_vec();
+        }
+
+        /// Builds the menu without attaching it to a window, for tests.
+        #[cfg(test)]
+        pub fn detached(model: &[Menu]) -> Self {
+            let mut native = Self {
+                menu: muda::Menu::new(),
+                bar: Vec::new(),
+                items: Vec::new(),
+                actions: HashMap::new(),
+                model: Vec::new(),
+            };
+            native.build(model).expect("a detached menu can be built");
+            native
+        }
+
+        /// Returns the label each entry is currently showing, in model order.
+        #[cfg(test)]
+        pub fn labels(&self) -> Vec<String> {
+            let bar = self.bar.iter().map(Submenu::text);
+            let items = self.items.iter().map(|entry| match entry {
+                Entry::Check(entry) => entry.text(),
+                Entry::Command(entry) | Entry::Pending(entry) => entry.text(),
+                Entry::Submenu(entry) => entry.text(),
+                Entry::Separator => "-".to_owned(),
+            });
+            bar.chain(items).collect()
         }
 
         /// Returns whatever the operator activated since the last frame.
@@ -328,24 +413,6 @@ mod native {
                 }
             }
             actions
-        }
-    }
-
-    fn update_items<'a>(entries: &mut impl Iterator<Item = &'a Entry>, items: &[Item]) {
-        for item in items {
-            match (entries.next(), item) {
-                (Some(Entry::Submenu(submenu)), Item::Submenu { label, items }) => {
-                    submenu.set_text(label);
-                    update_items(entries, items);
-                }
-                (Some(Entry::Check(entry)), Item::Check { label, checked, .. }) => {
-                    entry.set_text(label);
-                    entry.set_checked(*checked);
-                }
-                (Some(Entry::Command(entry)), Item::Command { label, .. })
-                | (Some(Entry::Pending(entry)), Item::Pending(label)) => entry.set_text(label),
-                _ => {}
-            }
         }
     }
 
@@ -465,4 +532,133 @@ fn items(ui: &mut egui::Ui, items: &[Item]) -> Option<Action> {
         }
     }
     activated
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+
+    fn count(items: &[Item]) -> usize {
+        items
+            .iter()
+            .map(|item| match item {
+                Item::Submenu { items, .. } => 1 + count(items),
+                _ => 1,
+            })
+            .sum()
+    }
+
+    /// The platform renderer creates one entry per item and later matches them
+    /// by position, so a missed item shifts every later label onto the wrong
+    /// entry. Separators used to be skipped, which corrupted the submenus of
+    /// every menu after the first separator.
+    #[test]
+    fn flattening_counts_every_item_including_separators() {
+        let model = model(&App::headless());
+        let expected: usize = model.iter().map(|menu| count(&menu.items)).sum();
+        assert_eq!(flatten(&model).len(), expected);
+        assert!(
+            model
+                .iter()
+                .any(|menu| menu.items.contains(&Item::Separator)),
+            "the model needs a separator for this to be worth asserting"
+        );
+    }
+
+    #[test]
+    fn flattening_visits_a_submenu_before_its_contents() {
+        let model = vec![Menu {
+            label: "settings".to_owned(),
+            items: vec![
+                Item::Separator,
+                Item::Submenu {
+                    label: "outer".to_owned(),
+                    items: vec![Item::Pending("inner".to_owned())],
+                },
+                Item::Pending("after".to_owned()),
+            ],
+        }];
+        let flat = flatten(&model);
+        assert!(matches!(flat[0], Item::Separator));
+        assert!(matches!(flat[1], Item::Submenu { .. }));
+        assert!(matches!(flat[2], Item::Pending(label) if label == "inner"));
+        assert!(matches!(flat[3], Item::Pending(label) if label == "after"));
+    }
+
+    /// Every action the model offers has to be handled, or a menu entry does
+    /// nothing when clicked.
+    #[test]
+    fn every_action_in_the_model_is_applicable() {
+        let mut app = App::headless();
+        for item in flatten(&model(&App::headless())) {
+            let action = match item {
+                Item::Check { action, .. } | Item::Command { action, .. } => action.clone(),
+                _ => continue,
+            };
+            let quits = matches!(action, Action::Quit);
+            assert_eq!(apply(&mut app, action), quits);
+        }
+    }
+}
+
+/// Exercises the platform renderer itself, where the drift actually happened.
+#[cfg(all(test, any(target_os = "windows", target_os = "macos")))]
+mod native_tests {
+    use super::*;
+    use crate::app::App;
+    use crate::i18n::Locale;
+
+    /// The labels a menu should be showing, in the order [`Native::labels`]
+    /// reports them.
+    fn expected(model: &[Menu]) -> Vec<String> {
+        let bar = model.iter().map(|menu| menu.label.clone());
+        let items = flatten(model).into_iter().map(|item| match item {
+            Item::Submenu { label, .. }
+            | Item::Check { label, .. }
+            | Item::Command { label, .. }
+            | Item::Pending(label) => label.clone(),
+            Item::Separator => "-".to_owned(),
+        });
+        bar.chain(items).collect()
+    }
+
+    #[test]
+    fn a_freshly_built_menu_shows_the_model() {
+        let model = model(&App::headless());
+        assert_eq!(Native::detached(&model).labels(), expected(&model));
+    }
+
+    /// Switching the language relabels every entry in place. Getting this
+    /// wrong wrote each label onto its neighbour, which destroyed the
+    /// submenus rather than merely mislabelling the bar.
+    #[test]
+    fn relabelling_lands_on_the_right_entries() {
+        let mut app = App::headless();
+        let english = model(&app);
+        let mut native = Native::detached(&english);
+
+        app.select_locale(Locale::Ja);
+        let japanese = model(&app);
+        native.sync(&japanese);
+
+        assert_ne!(expected(&english), expected(&japanese));
+        assert_eq!(native.labels(), expected(&japanese));
+    }
+
+    #[test]
+    fn repeated_syncs_do_not_accumulate_drift() {
+        let mut app = App::headless();
+        let mut native = Native::detached(&model(&app));
+        for locale in [Locale::Ja, Locale::En, Locale::Ja, Locale::En] {
+            app.select_locale(locale);
+            native.sync(&model(&app));
+        }
+        // The zoom label carries a percentage, so a scale change relabels one
+        // entry without touching the structure.
+        app.zoom_by(0.5);
+        let scaled = model(&app);
+        native.sync(&scaled);
+        assert_eq!(native.labels(), expected(&scaled));
+    }
 }

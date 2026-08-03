@@ -8,6 +8,7 @@ menu-rig = リグコントロール
 menu-zoom-in = 拡大
 menu-zoom-out = 縮小
 menu-zoom-reset = 等倍に戻す ({ $percent }%)
+menu-open-config = 設定フォルダーを開く
 menu-quit = 終了
 menu-language = 言語
 menu-help = ヘルプ

@@ -320,6 +320,17 @@ impl App {
             .map(|error| error.to_string());
     }
 
+    /// Opens the directory holding the configuration file.
+    ///
+    /// The directory rather than the file itself: the application rewrites
+    /// the file as settings change, and a `.toml` has no dependable handler
+    /// on every platform.
+    pub fn reveal_config(&mut self) {
+        self.library_error = reveal_directory(self.paths.config_dir())
+            .err()
+            .map(|error| error.to_string());
+    }
+
     pub fn reveal_stocks(&mut self) {
         self.library_error = reveal_directory(self.paths.stocks_dir())
             .err()

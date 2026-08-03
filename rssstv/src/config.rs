@@ -158,11 +158,15 @@ impl Config {
             "language",
             Some(value(settings.locale.tag())),
         );
+        // Rounded on the way out: widening the f32 directly writes the likes
+        // of 1.2999999523162842 into a file meant to be readable by hand.
         set(
             document,
             None,
             "ui-scale",
-            Some(value(f64::from(settings.ui_scale))),
+            Some(value(
+                (f64::from(settings.ui_scale) * 100.0).round() / 100.0,
+            )),
         );
         set(
             document,
@@ -451,6 +455,22 @@ mod tests {
         let root = TestDirectory::new();
         fs::write(root.config(), stored).unwrap();
         assert_eq!(Config::load(&root.config()).settings().ui_scale, expected);
+    }
+
+    #[test]
+    fn the_ui_scale_is_written_readably() {
+        let root = TestDirectory::new();
+        let mut config = Config::load(&root.config());
+        config.store(&Settings {
+            ui_scale: 1.3,
+            ..Settings::default()
+        });
+
+        let stored = fs::read_to_string(root.config()).unwrap();
+        assert!(
+            stored.contains("ui-scale = 1.3"),
+            "the scale was written as {stored}"
+        );
     }
 
     #[test]

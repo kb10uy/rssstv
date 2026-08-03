@@ -8,6 +8,7 @@ menu-rig = Rig Control
 menu-zoom-in = Zoom In
 menu-zoom-out = Zoom Out
 menu-zoom-reset = Reset Zoom ({ $percent }%)
+menu-open-config = Open Config Folder
 menu-quit = Quit
 menu-language = Language
 menu-help = Help

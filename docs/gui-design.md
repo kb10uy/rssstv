@@ -12,23 +12,12 @@ assumed and are not restated here. Mode and timing data comes from
 
 ## Framework
 
-The interface uses [iced](https://github.com/iced-rs/iced) 0.14.
-
-iced was selected over GPUI for three reasons:
-
-- Its built-in widget set covers nearly every control the interface needs:
-  dropdowns, togglers, checkboxes, progress bars, scrollable lists, text inputs,
-  and image views. GPUI provides layout and paint primitives but no such
-  widgets, so it would require an additional third-party component library.
-- Its Elm-style `state -> message -> update` structure matches the existing
-  requirement that stateful processors own their configuration and mutable
-  state, with no global mutable state.
-- Text layout goes through `cosmic-text`, which provides consistent CJK shaping
-  and font fallback across platforms.
-
-The accepted costs are a single large `Message` type, which is mitigated by
-nesting per-area message enums, and continued breaking changes across iced
-`0.x` releases.
+The interface uses [egui](https://github.com/emilk/egui) 0.35 through eframe.
+Its immediate-mode model keeps widget state in the application model while the
+receive, composition, and transmit workers remain explicitly owned. Windows
+and macOS use `muda` for the native menu bar; Linux renders the same menu model
+inside the window. System fonts are discovered through `fontdb`, with egui's
+bundled fonts retained as fallback.
 
 Reproducing a specific visual style is not a goal. The design mock defines
 placement and information hierarchy only.
@@ -40,10 +29,13 @@ not add SSTV or DSP behavior.
 
 | Package | Role | Status |
 | --- | --- | --- |
-| `rssstv` | Composition root: window, state, messages, views, worker supervision | Implemented for receive |
-| `rssstv-audio` | Capture and playback adapters over the host audio API | Capture implemented; playback not implemented |
+| `rssstv` | Composition root: window, state, views, worker supervision | Receive and transmit implemented |
+| `rssstv-audio` | Capture and playback adapters over the host audio API | Implemented |
 
-`rssstv-audio` splits an open device into a `Capture` handle and a `CaptureReader`. The handle keeps the stream alive on the thread that opened it, because host streams are not `Send` on every platform; the reader is `Send` and moves into the receive worker.
+`rssstv-audio` splits an open input device into a `Capture` and
+`CaptureReader`, and an output device into a `Playback` and `PlaybackWriter`.
+The device handles stay on the thread that opened them because host streams are
+not `Send` on every platform. The queue halves move into the workers.
 
 `rssstv-audio` is a new crate. It owns device enumeration, stream formats, and
 callback scheduling, and exposes only normalized mono `f32` blocks with sample
@@ -67,11 +59,10 @@ audio capture callback
   -> bounded PCM queue
   -> receive worker (Demodulator + RxDecoder)
   -> single-slot snapshot mailbox
-  -> iced Subscription
-  -> update
+  -> interface polling
 
 Transmit:
-update
+interface action
   -> transmit worker (Renderer + TransmissionEncoder + Modulator)
   -> bounded PCM queue
   -> audio playback callback
@@ -82,7 +73,7 @@ Three properties follow from this split:
 - The audio callbacks only move blocks across a queue and never allocate,
   block, or run protocol code.
 - The interface never holds a `Demodulator`, `RxDecoder`, or `Modulator`, so
-  `update` stays cheap and the core stages stay deterministic and testable
+  each frame stays cheap and the core stages stay deterministic and testable
   without the interface.
 - Queue overflow is an explicit, reported condition rather than unbounded
   growth. Dropped capture blocks surface as a receive warning.
@@ -191,8 +182,9 @@ dBFS value or synchronization percentage.
 
 ### Transmit Worker
 
-The transmit worker renders the selected template over the prepared background,
-builds a `TransmissionEncoder`, and streams PCM through `Modulator` into the
+The composition worker renders the selected template over the prepared
+background. Set for transmit freezes that immutable frame. The transmit worker
+then builds a `TransmissionEncoder` and streams PCM through `Modulator` into the
 playback queue, mirroring `encode-wav`.
 Template rendering through `resvg` is not real-time and runs before the
 transmission starts, not inside the streaming loop.
@@ -222,27 +214,12 @@ Tab switching only changes which view is built. It never tears down a live
 receive session, so leaving the receive tab during reception does not lose the
 image.
 
-## Message Design
+## Event Handling
 
-A single top-level enum dispatches to per-area enums. This keeps `update` a
-shallow match that delegates, instead of one large flat match.
-
-```rust
-enum Message {
-    TabSelected(Tab),
-    Audio(AudioMessage),
-    Rx(RxMessage),
-    Tx(TxMessage),
-    History(HistoryMessage),
-    Library(LibraryMessage),
-    Qso(QsoMessage),
-}
-```
-
-Messages arriving from workers are distinguished from user interaction by their
-variant, not by an ambient flag. For example, `RxMessage::SnapshotReceived`
-originates from the receive subscription, while `RxMessage::ModeSelected`
-originates from the mode dropdown.
+Widgets call narrow `App` methods for user actions. At the start of every frame,
+the application polls the receive, composition, and transmit workers and adopts
+their latest snapshots. Long-running work never executes as part of a widget
+callback.
 
 The worker publishes into a single-slot mailbox rather than a queue. Writing
 replaces the pending snapshot, carrying forward an image frame or error the
@@ -261,12 +238,12 @@ detection is on. With it off, the dropdown selection stands.
 ## View Composition
 
 The mock decomposes into a fixed outer frame and one tab-dependent region. The
-following table maps each area of the mock to its iced construction. Areas
+following table maps each area of the mock to its egui construction. Areas
 marked shared are built once and reused across tabs.
 
 | Area | Scope | Construction |
 | --- | --- | --- |
-| Menu bar | Shared | Button row; `iced_aw` menu if submenus become necessary |
+| Menu bar | Shared | `muda` native menu or an egui in-window menu |
 | Tab selector | Shared | Button row with the active tab styled differently |
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
@@ -366,36 +343,32 @@ decoded callsigns, and overrun counts all come from the worker. When no
 reception is in progress, the canvas shows a blank raster sized to the selected
 mode.
 
-Transmit is not implemented. The transmit tab still shows a generated test
-pattern, and controls belonging to the transmit pipeline are rendered without
-an action so the layout stays reviewable without implying working transmit.
+Transmit is implemented end to end. Template and stock changes enqueue a
+latest-wins composite request. Set for transmit freezes the completed preview,
+and TX opens the selected output device, primes a bounded queue, and starts
+playback. Progress follows samples consumed by the device callback. Playback
+underrun is reported as a transmission error, and Stop TX closes playback and
+cancels the worker.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.
 
 ## Prerequisites
 
-The remaining implementation order is:
-
-1. `rssstv-audio` playback: output streams and bounded queues for transmit.
-2. Transmit worker: template rendering, `TransmissionEncoder`, and `Modulator`
-   over the playback queue.
-3. History: retaining completed receptions, and the receive controls that act
-   on them.
+The next application subsystem is history: retaining completed receptions and
+implementing the receive controls that act on them.
 
 The application storage directories and an empty default configuration file
 are initialized at startup as described in [architecture.md](architecture.md).
-Loading and saving configuration values, template editing, PTT, CAT, and
-logging remain planned gaps.
+Template editing, PTT, CAT, and logging remain planned gaps.
 
 ## Verification Strategy
 
 Core behavior stays covered by the existing deterministic tests. The interface
 adds:
 
-- `update` tests that drive message sequences against the state model without
-  constructing a window, including tab switching during an active receive
-  session and queue-overflow reporting.
+- State-model tests drive actions without constructing a window, including tab
+  switching during an active receive session and queue-overflow reporting.
 - Worker tests that feed recorded PCM through the receive worker and assert the
   published snapshot sequence, reusing the synthesized signals already used by
   the offline integrations.

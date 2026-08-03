@@ -211,6 +211,13 @@ preformatted text for values such as dates and times. A missing variable is a
 render error. Variable names consist of dot-separated ASCII identifier segments.
 `$${name}` produces the literal text `${name}`.
 
+The desktop composition worker currently supplies `${mycall}` and
+`${station.callsign}` from My call, `${contact.callsign}` from the QSO call
+field, `${report.sent}` from RSV, and `${report.number}` from the serial-number
+field. `${mycall}` is retained for compatibility with `encode-wav`. Image
+assets are resolved relative to the template first, then from the application's
+shared `assets` directory; an `assets/` prefix is stripped for the shared lookup.
+
 ## Text Rendering
 
 Text style is independent of the platform font API. A text layer can specify a

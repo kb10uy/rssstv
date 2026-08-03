@@ -101,6 +101,15 @@ fn load_face(database: &fontdb::Database, family: &str) -> Option<(Vec<u8>, u32)
     Some((data, index))
 }
 
+/// The window size the interface is laid out for, in points.
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 880.0];
+
+/// How much of the monitor the window may take up when it first opens.
+///
+/// The rest is left to the panels and window decorations the desktop puts
+/// around it, whose sizes the application cannot ask for.
+const MONITOR_FRACTION: f32 = 0.92;
+
 fn main() -> Result<(), Box<dyn Error>> {
     #[cfg(target_os = "windows")]
     menu::allow_dark_mode_for_app();
@@ -109,7 +118,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     paths.initialize()?;
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 940.0]),
+        // eframe's own clamp converts the monitor to points with the scale
+        // factor winit reports before the window exists. A Wayland compositor
+        // only sends the fractional scale once the surface is mapped, so a
+        // fractionally scaled output reads as the next whole number until
+        // then and the window opens at a fraction of the size asked for.
+        // `fit_to_monitor` does the same job once the real scale has arrived.
+        viewport: egui::ViewportBuilder::default()
+            .with_clamp_size_to_monitor_size(false)
+            .with_inner_size(DEFAULT_WINDOW_SIZE),
         ..Default::default()
     };
     eframe::run_native(
@@ -129,9 +146,30 @@ struct Interface {
     /// Held so the localized title is only pushed to the platform when it
     /// actually changes, rather than on every frame.
     title: String,
+    /// Set when the opening size has been measured against the monitor.
+    ///
+    /// The monitor is not known on the first frame, so this stays clear until
+    /// a frame reports one.
+    fitted: bool,
     /// Set when the operator chose to quit, so the frame can finish drawing
     /// and persist before the window closes.
     quitting: bool,
+}
+
+/// Shrinks the window to fit the monitor it opened on.
+///
+/// Returns whether the monitor was known yet, not whether anything was
+/// resized: a window that already fits is left alone.
+fn fit_to_monitor(ctx: &egui::Context) -> bool {
+    let Some(monitor) = ctx.input(|i| i.viewport().monitor_size) else {
+        return false;
+    };
+    let wanted = egui::Vec2::from(DEFAULT_WINDOW_SIZE);
+    let fitted = wanted.min(monitor * MONITOR_FRACTION);
+    if fitted != wanted {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(fitted));
+    }
+    true
 }
 
 impl Interface {
@@ -152,6 +190,7 @@ impl Interface {
             title: app.title(),
             app,
             menu,
+            fitted: false,
             quitting: false,
         }
     }
@@ -170,6 +209,9 @@ impl eframe::App for Interface {
         // The receive worker runs ahead of the interface, so a repaint is
         // requested unconditionally: a decoded row must not wait for input.
         ui.ctx().request_repaint();
+        if !self.fitted {
+            self.fitted = fit_to_monitor(ui.ctx());
+        }
         self.app.poll_audio();
 
         // egui handles Ctrl+Plus/Minus itself, so the factor it holds is

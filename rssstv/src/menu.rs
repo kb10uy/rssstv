@@ -210,6 +210,10 @@ const ZOOM_STEP: f32 = 0.1;
 /// two cannot disagree about which entry corresponds to which item. They did
 /// once: separators were created but not counted, which shifted every later
 /// label onto the wrong entry.
+///
+/// The in-window bar draws straight from the model, so this is built only
+/// where the native menu is, and for the tests that cover it everywhere.
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 pub fn flatten(menus: &[Menu]) -> Vec<&Item> {
     fn walk<'a>(items: &'a [Item], out: &mut Vec<&'a Item>) {
         for item in items {

@@ -197,12 +197,16 @@ fn pending(ui: &mut Ui, app: &App, key: &str) {
 }
 
 fn side_panel(ui: &mut Ui, app: &mut App) {
-    ui.add_space(4.0);
-    let status_title = app.i18n.text("section-rx-status");
-    section(ui, &status_title, |ui| receive_controls(ui, app));
-    ui.add_space(16.0);
-    let qso_title = app.i18n.text("section-qso");
-    section(ui, &qso_title, |ui| qso_panel(ui, app));
+    // The sections below can outgrow the panel's height on a small window or
+    // a large font scale; scroll rather than silently clipping the bottom.
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        ui.add_space(4.0);
+        let status_title = app.i18n.text("section-rx-status");
+        section(ui, &status_title, |ui| receive_controls(ui, app));
+        ui.add_space(16.0);
+        let qso_title = app.i18n.text("section-qso");
+        section(ui, &qso_title, |ui| qso_panel(ui, app));
+    });
 }
 
 fn receive_controls(ui: &mut Ui, app: &mut App) {

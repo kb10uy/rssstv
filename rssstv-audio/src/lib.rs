@@ -7,6 +7,7 @@
 
 mod capture;
 mod error;
+mod playback;
 
 use std::{
     fmt,
@@ -21,6 +22,7 @@ use ringbuf::{HeapRb, traits::Split};
 
 pub use capture::{Capture, CaptureFeed, CaptureReader, Reading, synthetic_capture};
 pub use error::AudioError;
+pub use playback::{Playback, PlaybackReader, PlaybackWriter, synthetic_playback};
 
 /// Capture rate preferred by the rest of the project.
 pub const PREFERRED_SAMPLE_RATE_HZ: u32 = 48_000;
@@ -36,6 +38,26 @@ pub const MINIMUM_SAMPLE_RATE_HZ: u32 = 6_000;
 pub struct InputDevice {
     id: cpal::DeviceId,
     name: String,
+}
+
+/// One selectable playback device.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct OutputDevice {
+    id: cpal::DeviceId,
+    name: String,
+}
+
+impl OutputDevice {
+    /// Returns the human-readable device name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl fmt::Display for OutputDevice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.name)
+    }
 }
 
 impl InputDevice {
@@ -83,6 +105,23 @@ impl AudioHost {
     /// Returns the host's default input device.
     pub fn default_input_device(&self) -> Option<InputDevice> {
         describe(&self.host.default_input_device()?)
+    }
+
+    /// Lists usable playback devices.
+    pub fn output_devices(&self) -> Result<Vec<OutputDevice>, AudioError> {
+        let devices = self
+            .host
+            .output_devices()
+            .map_err(|error| AudioError::Backend(error.to_string()))?;
+        Ok(devices
+            .filter(|device| device.default_output_config().is_ok())
+            .filter_map(|device| describe_output(&device))
+            .collect())
+    }
+
+    /// Returns the host's default playback device.
+    pub fn default_output_device(&self) -> Option<OutputDevice> {
+        describe_output(&self.host.default_output_device()?)
     }
 
     /// Opens `device` for capture and starts delivery.
@@ -158,6 +197,65 @@ impl AudioHost {
         capture.play()?;
         Ok((capture, CaptureReader::new(consumer, dropped, sample_rate)))
     }
+
+    /// Opens `device` with a bounded mono queue, initially paused.
+    pub fn open_playback(
+        &self,
+        device: &OutputDevice,
+        capacity_samples: usize,
+    ) -> Result<(Playback, PlaybackWriter), AudioError> {
+        let target = self
+            .host
+            .device_by_id(&device.id)
+            .ok_or_else(|| AudioError::DeviceNotFound(device.name.clone()))?;
+        let supported = target
+            .default_output_config()
+            .map_err(|_| AudioError::UnsupportedConfiguration(device.name.clone()))?;
+        let sample_format = supported.sample_format();
+        let channels = supported.channels();
+        let sample_rate = preferred_output_rate(&target, supported.sample_rate());
+        if sample_rate < MINIMUM_SAMPLE_RATE_HZ || channels == 0 {
+            return Err(AudioError::UnsupportedConfiguration(device.name.clone()));
+        }
+        let (writer, consumer, state) = playback::queue(sample_rate, capacity_samples)?;
+        let config = StreamConfig {
+            channels,
+            sample_rate,
+            buffer_size: cpal::BufferSize::Default,
+        };
+        let report = |error: cpal::Error| eprintln!("audio playback error: {error}");
+        let lanes = channels as usize;
+        let callback_state = Arc::clone(&state);
+        let stream = match sample_format {
+            SampleFormat::F32 => target.build_output_stream(
+                config,
+                playback::playback_callback::<f32>(lanes, consumer, callback_state),
+                report,
+                None,
+            ),
+            SampleFormat::I16 => target.build_output_stream(
+                config,
+                playback::playback_callback::<i16>(lanes, consumer, callback_state),
+                report,
+                None,
+            ),
+            SampleFormat::U16 => target.build_output_stream(
+                config,
+                playback::playback_callback::<u16>(lanes, consumer, callback_state),
+                report,
+                None,
+            ),
+            SampleFormat::I32 => target.build_output_stream(
+                config,
+                playback::playback_callback::<i32>(lanes, consumer, callback_state),
+                report,
+                None,
+            ),
+            _ => return Err(AudioError::UnsupportedConfiguration(device.name.clone())),
+        }
+        .map_err(|error| AudioError::Backend(error.to_string()))?;
+        Ok((Playback::new(stream, sample_rate, channels, state), writer))
+    }
 }
 
 impl Default for AudioHost {
@@ -179,9 +277,31 @@ fn describe(device: &cpal::Device) -> Option<InputDevice> {
     })
 }
 
+fn describe_output(device: &cpal::Device) -> Option<OutputDevice> {
+    Some(OutputDevice {
+        id: device.id().ok()?,
+        name: device.description().ok()?.name().to_owned(),
+    })
+}
+
 /// Chooses [`PREFERRED_SAMPLE_RATE_HZ`] when the device supports it.
 fn preferred_rate(device: &cpal::Device, fallback: u32) -> u32 {
     let Ok(configs) = device.supported_input_configs() else {
+        return fallback;
+    };
+    let supported = configs.into_iter().any(|range| {
+        range.min_sample_rate() <= PREFERRED_SAMPLE_RATE_HZ
+            && PREFERRED_SAMPLE_RATE_HZ <= range.max_sample_rate()
+    });
+    if supported {
+        PREFERRED_SAMPLE_RATE_HZ
+    } else {
+        fallback
+    }
+}
+
+fn preferred_output_rate(device: &cpal::Device, fallback: u32) -> u32 {
+    let Ok(configs) = device.supported_output_configs() else {
         return fallback;
     };
     let supported = configs.into_iter().any(|range| {

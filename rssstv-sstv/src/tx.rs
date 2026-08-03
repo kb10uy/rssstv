@@ -6,7 +6,7 @@ use crate::{
     image::{ImageSize, RgbImage},
     mode::{Mode, ScanChannel, ScanContent, Support},
     signal::{Frequency, TimedTone, TxComponent},
-    time::TxInstant,
+    time::{SstvDuration, TxInstant},
 };
 use rssstv_fskid::{FskEncoder, FskId};
 
@@ -228,6 +228,39 @@ impl TransmissionEncoder {
             voice_activation: 0,
             deadline_ps: 0,
         })
+    }
+
+    /// Returns the exact duration of this complete transmission.
+    pub fn duration(&self) -> SstvDuration {
+        let spec = self.image.mode.spec();
+        let scan = self.image.mode.scan();
+        let units = usize::from(spec.active_rows() / u16::from(spec.rows_per_raster_unit()));
+        let leading = scan
+            .leading()
+            .iter()
+            .map(|segment| segment.duration().as_picos())
+            .sum::<u64>();
+        let raster = (0..units)
+            .map(|unit| {
+                scan.duration(unit)
+                    .expect("supported transmit modes have raster segments")
+                    .as_picos()
+            })
+            .sum::<u64>();
+        let fsk = self
+            .fsk
+            .clone()
+            .map(|event| u64::from(event.duration_micros()) * 1_000_000)
+            .sum::<u64>();
+        SstvDuration::from_picos(
+            VOX_DURATION_PS
+                + VIS_END_PS
+                + leading
+                + raster
+                + 300 * PS_PER_MS
+                + fsk
+                + 500 * PS_PER_MS,
+        )
     }
 
     fn emit(&mut self, component: TxComponent, frequency_hz: u32, duration_ps: u64) -> TimedTone {
@@ -605,6 +638,7 @@ mod tests {
         let station_id = FskId::new("N0CALL").unwrap();
         let mut transmission =
             TransmissionEncoder::new(mode, image(mode, fill), station_id).unwrap();
+        let duration = transmission.duration();
 
         let voice_activation: Vec<_> = transmission.by_ref().take(8).collect();
         assert_eq!(
@@ -659,6 +693,7 @@ mod tests {
             silence.until().as_picos(),
             footer.until().as_picos() + 1_410 * PS_PER_MS + 500 * PS_PER_MS
         );
+        assert_eq!(duration.as_picos(), silence.until().as_picos());
         assert_eq!(transmission.next(), None);
     }
 }

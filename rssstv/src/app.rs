@@ -160,7 +160,7 @@ impl App {
     /// Builds an interface with no host audio and no stored settings, for
     /// tests.
     #[cfg(test)]
-    fn headless() -> Self {
+    pub(crate) fn headless() -> Self {
         Self::from_parts(
             AudioState::disconnected(),
             AppPaths::from_roots(PathBuf::new(), PathBuf::new(), PathBuf::new()),

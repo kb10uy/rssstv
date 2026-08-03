@@ -411,3 +411,79 @@ fn status_bar(ui: &mut Ui, app: &App) {
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable as _;
+    use rstest::rstest;
+
+    use super::*;
+    use crate::app::App;
+    use crate::i18n::Locale;
+
+    /// Runs the interface for a few frames and returns the harness.
+    ///
+    /// egui reports duplicate widget ids and bad layouts by panicking at run
+    /// time rather than at compile time, so the whole view is exercised here:
+    /// nothing else in the suite would notice.
+    fn render(app: &mut App) -> Harness<'_> {
+        let mut harness = Harness::new_ui(|ui| {
+            let model = menu::model(app);
+            view(ui, app, &model);
+        });
+        harness.run();
+        harness
+    }
+
+    #[rstest]
+    #[case(Tab::Receive)]
+    #[case(Tab::Transmit)]
+    #[case(Tab::History)]
+    fn every_tab_renders(#[case] tab: Tab) {
+        let mut app = App::headless();
+        app.tab = tab;
+        let harness = render(&mut app);
+        harness.get_by_label(&app_label(tab));
+    }
+
+    fn app_label(tab: Tab) -> String {
+        crate::i18n::I18n::new(Locale::default()).text(tab.label_key())
+    }
+
+    #[rstest]
+    #[case(Locale::En)]
+    #[case(Locale::Ja)]
+    fn every_locale_renders(#[case] locale: Locale) {
+        let mut app = App::headless();
+        app.select_locale(locale);
+        let harness = render(&mut app);
+        let receive = crate::i18n::I18n::new(locale).text("tab-receive");
+        harness.get_by_label(&receive);
+    }
+
+    #[test]
+    fn the_in_window_menu_bar_renders_on_every_platform() {
+        // muda is not compiled on Linux, so this renderer is the only menu
+        // there. Exercising it here keeps it working on a machine that never
+        // takes that path at run time.
+        let model = menu::model(&App::headless());
+        let labels: Vec<String> = model.iter().map(|menu| menu.label.clone()).collect();
+        let mut harness = Harness::new_ui(|ui| {
+            menu::bar(ui, &model);
+        });
+        harness.run();
+        for label in &labels {
+            harness.get_by_label(label);
+        }
+    }
+
+    #[test]
+    fn switching_tabs_does_not_collide_widget_ids() {
+        let mut app = App::headless();
+        for tab in Tab::ALL {
+            app.tab = tab;
+            render(&mut app);
+        }
+    }
+}

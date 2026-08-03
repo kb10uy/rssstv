@@ -25,6 +25,7 @@ directories = "6.0"
 eframe = "0.35"
 egui = "0.35"
 egui-system-fonts = "0.35"
+egui_kittest = "0.35"
 fluent-bundle = "0.16"
 hound = "3.5"
 muda = { version = "0.19", default-features = false }

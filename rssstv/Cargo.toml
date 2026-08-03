@@ -29,5 +29,6 @@ muda.workspace = true
 raw-window-handle.workspace = true
 
 [dev-dependencies]
+egui_kittest.workspace = true
 hound.workspace = true
 rstest.workspace = true

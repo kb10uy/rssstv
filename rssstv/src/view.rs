@@ -374,6 +374,11 @@ fn entry_list(
     action
 }
 
+/// Text inside a table cell, which must not intercept the row's click.
+fn cell(text: RichText) -> egui::Label {
+    egui::Label::new(text).selectable(false)
+}
+
 /// The files in one library list.
 ///
 /// A table rather than a column of buttons: the name and the geometry are
@@ -394,12 +399,15 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
                 let index = row.index();
                 let entry = &entries[index];
                 row.set_selected(*selected == Some(index));
+                // Cell text is drawn unselectable: a selectable label takes
+                // the text cursor and swallows the click, so the row would
+                // stop responding wherever it has text on it.
                 row.col(|ui| {
-                    ui.label(RichText::new(&entry.name).size(SMALL));
+                    ui.add(cell(RichText::new(&entry.name).size(SMALL)));
                 });
                 row.col(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(&entry.geometry).size(LABEL).weak());
+                        ui.add(cell(RichText::new(&entry.geometry).size(LABEL).weak()));
                     });
                 });
                 if row.response().clicked() {
@@ -553,6 +561,31 @@ mod tests {
         let harness = render(&mut app);
         harness.get_by_label_contains("field-day.kdl");
         harness.get_by_label_contains("antenna.png");
+    }
+
+    /// The row is what senses the click, so its text must not. A selectable
+    /// label takes the text cursor and swallows the press, which leaves the
+    /// row unclickable exactly where it has text on it.
+    #[test]
+    fn clicking_a_row_label_selects_that_row() {
+        let mut app = App::headless();
+        app.stocks = vec![
+            crate::app::Entry::sample("antenna.png", "640x496"),
+            crate::app::Entry::sample("shack.png", "320x256"),
+        ];
+        app.stock = Some(0);
+
+        {
+            let mut harness = Harness::new_ui(|ui| {
+                let model = menu::model(&app);
+                view(ui, &mut app, &model);
+            });
+            harness.run();
+            harness.get_by_label("shack.png").click();
+            harness.run();
+        }
+
+        assert_eq!(app.stock, Some(1));
     }
 
     #[test]

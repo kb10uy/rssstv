@@ -1,0 +1,3 @@
+// The application icon, embedded so the shell can show it on the executable.
+// Identifier 1 is the lowest in the file, which is what Explorer picks.
+1 ICON "icon.ico"

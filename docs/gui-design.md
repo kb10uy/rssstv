@@ -19,6 +19,12 @@ and macOS use `muda` for the native menu bar; Linux renders the same menu model
 inside the window. System fonts are discovered through `fontdb`, with egui's
 bundled fonts retained as fallback.
 
+The window icon comes from the platform's own artwork store. On Windows the
+build script embeds `rssstv/assets/icon.ico` as an executable resource, and the
+application loads that resource back at startup, so the shell, the window, and
+the task switcher all show one icon. Other platforms have no resource section,
+so `rssstv/assets/icon.png` is compiled into the binary and decoded instead.
+
 Reproducing a specific visual style is not a goal. The design mock defines
 placement and information hierarchy only.
 

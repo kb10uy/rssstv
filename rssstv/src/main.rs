@@ -9,6 +9,7 @@ mod audio;
 mod canvas;
 mod config;
 mod i18n;
+mod icon;
 mod menu;
 mod paths;
 mod raster;
@@ -117,16 +118,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let paths = paths::AppPaths::discover()?;
     paths.initialize()?;
 
+    // eframe's own clamp converts the monitor to points with the scale factor
+    // winit reports before the window exists. A Wayland compositor only sends
+    // the fractional scale once the surface is mapped, so a fractionally
+    // scaled output reads as the next whole number until then and the window
+    // opens at a fraction of the size asked for. `fit_to_monitor` does the
+    // same job once the real scale has arrived.
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_clamp_size_to_monitor_size(false)
+        .with_inner_size(DEFAULT_WINDOW_SIZE);
+    match icon::window_icon() {
+        Some(icon) => viewport = viewport.with_icon(icon),
+        None => eprintln!("could not load the application icon; using the platform default"),
+    }
+
     let options = eframe::NativeOptions {
-        // eframe's own clamp converts the monitor to points with the scale
-        // factor winit reports before the window exists. A Wayland compositor
-        // only sends the fractional scale once the surface is mapped, so a
-        // fractionally scaled output reads as the next whole number until
-        // then and the window opens at a fraction of the size asked for.
-        // `fit_to_monitor` does the same job once the real scale has arrived.
-        viewport: egui::ViewportBuilder::default()
-            .with_clamp_size_to_monitor_size(false)
-            .with_inner_size(DEFAULT_WINDOW_SIZE),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(

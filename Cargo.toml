@@ -23,6 +23,7 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 anyhow = "1.0"
 directories = "6.0"
 eframe = "0.35"
+embed-resource = "3.0"
 egui = "0.35"
 egui_extras = "0.35"
 fontdb = "0.23"

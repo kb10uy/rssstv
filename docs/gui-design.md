@@ -282,6 +282,10 @@ marked shared are built once and reused across tabs.
 | Composite preview | Shared | `image` plus edit and set-for-transmit actions |
 | Status bar | Shared | Text row |
 
+The input level meter, mode panel, and DSP controls share one bordered
+container. The mode dropdown fills the container width and no tab shows helper
+text below it.
+
 ### Main Image Canvas
 
 The main image view is a `canvas` rather than an `image` widget. The received

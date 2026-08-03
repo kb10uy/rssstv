@@ -197,15 +197,37 @@ fn pending<'a>(app: &App, key: &str) -> Element<'a, Message> {
 
 fn side_panel(app: &App) -> Element<'_, Message> {
     column![
-        section(app, "section-rx-status", rx_status(app)),
-        section(app, "section-mode", mode_panel(app)),
-        section(app, "section-dsp", dsp_panel(app)),
+        receive_controls(app),
         section(app, "section-qso", qso_panel(app)),
     ]
     .spacing(16)
     .padding(14)
     .width(SIDE_PANEL_WIDTH)
     .into()
+}
+
+fn receive_controls(app: &App) -> Element<'_, Message> {
+    container(
+        column![
+            labeled_control(app, "section-rx-status", rx_status(app)),
+            labeled_control(app, "section-mode", mode_panel(app)),
+            labeled_control(app, "section-dsp", dsp_panel(app)),
+        ]
+        .spacing(16),
+    )
+    .padding(12)
+    .style(container::bordered_box)
+    .into()
+}
+
+fn labeled_control<'a>(
+    app: &App,
+    key: &str,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![text(app.i18n.text(key)).size(11), content]
+        .spacing(8)
+        .into()
 }
 
 fn section<'a>(app: &App, key: &str, content: Element<'a, Message>) -> Element<'a, Message> {
@@ -236,33 +258,27 @@ fn rx_status(app: &App) -> Element<'_, Message> {
 }
 
 fn mode_panel(app: &App) -> Element<'_, Message> {
-    let (selected, options, hint) = match app.tab {
-        Tab::Transmit => (
-            app.tx_mode,
-            app.tx_modes.as_slice(),
-            app.i18n.text("hint-tx-mode"),
-        ),
-        Tab::Receive | Tab::History => (
-            app.rx_mode,
-            app.rx_modes.as_slice(),
-            app.i18n.text("hint-auto-mode"),
-        ),
+    let (selected, options) = match app.tab {
+        Tab::Transmit => (app.tx_mode, app.tx_modes.as_slice()),
+        Tab::Receive | Tab::History => (app.rx_mode, app.rx_modes.as_slice()),
     };
     let on_select: fn(ModeChoice) -> Message = match app.tab {
         Tab::Transmit => |mode| Message::Tx(TxMessage::ModeSelected(mode)),
         Tab::Receive | Tab::History => |mode| Message::Rx(RxMessage::ModeSelected(mode)),
     };
-    let dropdown = pick_list(options, Some(selected), on_select);
-    let mut panel = column![].spacing(10);
-    if app.tab != Tab::Transmit {
-        panel = panel.push(
+    let dropdown = pick_list(options, Some(selected), on_select).width(Length::Fill);
+    match app.tab {
+        Tab::Transmit => dropdown.into(),
+        Tab::Receive | Tab::History => column![
             toggler(app.auto_mode)
                 .label(app.i18n.text("label-auto-vis"))
                 .text_size(13)
                 .on_toggle(|value| Message::Rx(RxMessage::AutoModeToggled(value))),
-        );
+            dropdown,
+        ]
+        .spacing(10)
+        .into(),
     }
-    panel.push(dropdown).push(text(hint).size(11)).into()
 }
 
 fn dsp_panel(app: &App) -> Element<'_, Message> {

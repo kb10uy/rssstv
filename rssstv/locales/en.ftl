@@ -17,8 +17,6 @@ section-rx-status = Receive status
 
 section-mode = Mode
 label-auto-vis = Automatic detection (VIS)
-hint-auto-mode = Turn off automatic detection to select a mode manually.
-hint-tx-mode = Selects the SSTV mode used for transmission.
 mode-detecting = { $mode } (detecting)
 
 section-dsp = DSP

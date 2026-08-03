@@ -17,8 +17,6 @@ section-rx-status = 受信ステータス
 
 section-mode = モード
 label-auto-vis = 自動判定 (VIS)
-hint-auto-mode = 自動判定をオフにすると手動でモードを選択できます。
-hint-tx-mode = 送信する SSTV モードを選択します。
 mode-detecting = { $mode }（自動検出中）
 
 section-dsp = DSP

@@ -10,7 +10,7 @@ use crate::{RxProcessError, SstvError};
 
 use super::acquisition::{acquire, acquire_startup, startup_window_samples};
 use super::clock::{RasterClock, ceil_sample};
-use super::config::{RxConfig, Staging, sync_detector_delay_samples};
+use super::config::{RxConfig, Staging};
 use super::event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
 use super::input::{DemodulatedBlock, SampleBuffer};
 use super::raster::{PixelSegment, RasterProfile};
@@ -287,7 +287,10 @@ impl RxDecoder {
                     ) {
                         Ok(clock) => {
                             self.decode.clock = Some(clock);
-                            self.decode.state = RxState::Decoding { completed_rows: 0 };
+                            self.skip_units_before_input(clock)?;
+                            self.decode.state = RxState::Decoding {
+                                completed_rows: self.decode.delivered_rows,
+                            };
                             return Ok(RxProcess::new(
                                 consumed,
                                 Some(RxEvent::RasterAcquired {
@@ -413,12 +416,8 @@ impl RxDecoder {
         if self.staged.is_none() {
             return Err(SstvError::StagingDisabled);
         }
-        let estimator = SlantEstimator::for_mode_with_sync_detector_delay(
-            self.sample_rate_hz,
-            self.mode,
-            self.config.sync_detector_delay,
-        )
-        .expect("decoder mode has a raster profile");
+        let estimator = SlantEstimator::for_mode(self.sample_rate_hz, self.mode)
+            .expect("decoder mode has a raster profile");
         let staged = self.staged.as_ref().expect("staging checked above");
         let acquisition_clock = acquire(
             staged,
@@ -491,12 +490,8 @@ impl RxDecoder {
         if units < LIVE_SLANT_MIN_UNITS {
             return Ok(());
         }
-        let estimator = SlantEstimator::for_mode_with_sync_detector_delay(
-            self.sample_rate_hz,
-            self.mode,
-            self.config.sync_detector_delay,
-        )
-        .expect("decoder mode has a raster profile");
+        let estimator = SlantEstimator::for_mode(self.sample_rate_hz, self.mode)
+            .expect("decoder mode has a raster profile");
         let Some(estimate) = estimator.estimate(&self.staged_observations) else {
             return Ok(());
         };
@@ -688,6 +683,32 @@ impl RxDecoder {
         let first = edge(start_ps)?;
         let last = edge(end_ps)?;
         Ok((first, last.max(first.saturating_add(1))))
+    }
+
+    /// Starts the raster at the first unit whose picture the input still holds.
+    ///
+    /// Mode detection completes a few milliseconds after the raster epoch it
+    /// implies, so for modes that begin their picture right after the leading
+    /// sync pulse the first unit is already partly gone by the time decoding
+    /// starts. Those rows are left blank and counted as delivered, which is
+    /// what MMSSTV shows as well, rather than failing the whole reception on
+    /// samples that were never received.
+    fn skip_units_before_input(&mut self, clock: RasterClock) -> Result<(), SstvError> {
+        let Some(segment) = self.profile.pixels().iter().next() else {
+            return Err(SstvError::UnsupportedRxMode(self.mode));
+        };
+        let first = self.input.as_ref().expect("input initialized").first();
+        let units = self.raster_units();
+        let mut unit = 0;
+        while unit < units && self.pixel_window(clock, unit, segment, 0)?.0 < first {
+            unit += 1;
+        }
+        if unit == units {
+            return Err(SstvError::RasterNotAcquired);
+        }
+        self.decode.raster_unit = unit;
+        self.decode.delivered_rows = unit * self.mode.spec().rows_per_raster_unit() as usize;
+        Ok(())
     }
 
     fn required_end(&self) -> Result<u64, SstvError> {
@@ -983,12 +1004,7 @@ impl RxDecoder {
             .decode
             .clock
             .expect("clock acquired")
-            .sample_at(expected_protocol)?
-            .checked_add(
-                sync_detector_delay_samples(self.sample_rate_hz, self.config.sync_detector_delay)
-                    .round() as u64,
-            )
-            .ok_or(SstvError::SamplePositionOverflow)?;
+            .sample_at(expected_protocol)?;
         let displacement = observation.center_sample as i128 - expected as i128;
         let max_consistent = self
             .decode
@@ -1704,10 +1720,49 @@ mod tests {
         );
     }
 
+    /// Displaces whole sync pulses in both streams, as a timing slip does.
+    fn shift_sync(
+        frequency: &[f32],
+        sync: &[f32],
+        shift_for_run: impl Fn(usize) -> Option<usize>,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let mut shifted_frequency = frequency.to_vec();
+        let mut shifted_sync = vec![0.0; sync.len()];
+        let mut index = 0;
+        let mut run = 0;
+        while index < sync.len() {
+            if sync[index] == 0.0 {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            while index < sync.len() && sync[index] != 0.0 {
+                index += 1;
+            }
+            if let Some(displacement) = shift_for_run(run) {
+                let destination = start + displacement;
+                let count = (index - start).min(sync.len().saturating_sub(destination));
+                shifted_sync[destination..destination + count]
+                    .copy_from_slice(&sync[start..start + count]);
+                let filler = if start == 0 {
+                    1900.0
+                } else {
+                    frequency[start - 1]
+                };
+                shifted_frequency[start..destination.min(frequency.len())].fill(filler);
+                shifted_frequency[destination..destination + count]
+                    .copy_from_slice(&frequency[start..start + count]);
+            }
+            run += 1;
+        }
+        (shifted_frequency, shifted_sync)
+    }
+
     #[test]
     fn live_phase_correction_is_stable_and_held_off() {
-        let (mut frequency, sync) = sampled_body(Mode::Martin2, 311);
-        let mut shifted = shift_sync_runs(&sync, |run| Some(if run < 6 { 0 } else { 4 }));
+        let (frequency, sync) = sampled_body(Mode::Martin2, 311);
+        let (mut frequency, mut shifted) =
+            shift_sync(&frequency, &sync, |run| Some(if run < 6 { 0 } else { 4 }));
         frequency.resize(frequency.len() + 64, 1900.0);
         shifted.resize(frequency.len(), 0.0);
         let (decoder, events) = drive_configured(

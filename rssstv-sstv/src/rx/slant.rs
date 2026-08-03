@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
 use crate::mode::Mode;
-use crate::time::SstvDuration;
 
 use super::raster::RasterProfile;
 use super::sync::{MIN_CONFIDENCE, SyncObservation};
@@ -29,41 +28,28 @@ pub struct SlantEstimator {
     configured_sample_rate_hz: f64,
     period_ps: u64,
     sync_center_ps: u64,
-    sync_detector_delay_ps: u64,
 }
 
 impl SlantEstimator {
     /// Constructs an estimator for a mode with implemented raster metadata.
+    ///
+    /// Observations are expected in the frequency stream's time base, which is
+    /// what [`super::SyncObservation`] reports, so no detector delay enters the
+    /// fitted epoch.
     pub fn for_mode(configured_sample_rate_hz: u32, mode: Mode) -> Option<Self> {
-        Self::for_mode_with_sync_detector_delay(configured_sample_rate_hz, mode, SstvDuration::ZERO)
-    }
-
-    /// Constructs an estimator with sync delay relative to frequency input.
-    pub fn for_mode_with_sync_detector_delay(
-        configured_sample_rate_hz: u32,
-        mode: Mode,
-        sync_detector_delay: SstvDuration,
-    ) -> Option<Self> {
         let profile = RasterProfile::for_mode(mode)?;
         Some(Self::new(
             configured_sample_rate_hz,
             profile.period_ps,
             profile.sync_center_ps,
-            sync_detector_delay.as_picos(),
         ))
     }
 
-    pub(super) fn new(
-        configured_sample_rate_hz: u32,
-        period_ps: u64,
-        sync_center_ps: u64,
-        sync_detector_delay_ps: u64,
-    ) -> Self {
+    pub(super) fn new(configured_sample_rate_hz: u32, period_ps: u64, sync_center_ps: u64) -> Self {
         Self {
             configured_sample_rate_hz: f64::from(configured_sample_rate_hz),
             period_ps,
             sync_center_ps,
-            sync_detector_delay_ps,
         }
     }
 
@@ -155,9 +141,8 @@ impl SlantEstimator {
             .sum::<f64>()
             / n;
         let residual_samples = libm::sqrt(residual_variance);
-        let source_epoch = intercept
-            - effective_sample_rate_hz * self.sync_center_ps as f64 / 1.0e12
-            - self.configured_sample_rate_hz * self.sync_detector_delay_ps as f64 / 1.0e12;
+        let source_epoch =
+            intercept - effective_sample_rate_hz * self.sync_center_ps as f64 / 1.0e12;
         if !source_epoch.is_finite() || source_epoch < 0.0 {
             return None;
         }
@@ -189,7 +174,7 @@ mod tests {
 
     #[test]
     fn estimates_zero_positive_and_negative_error() {
-        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 0, 0);
+        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 0);
         for rate in [10_000.0, 10_010.0, 9_990.0] {
             let estimate = estimator.estimate(&observations(rate, 1000.0)).unwrap();
             assert!((estimate.effective_sample_rate_hz - rate).abs() < 1.0);
@@ -198,7 +183,7 @@ mod tests {
 
     #[test]
     fn rejects_weak_outliers_and_short_sets() {
-        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 0, 0);
+        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 0);
         let mut values = observations(10_000.0, 1000.0);
         values[3].center_sample += 900;
         values[4].confidence = 0.1;
@@ -208,21 +193,17 @@ mod tests {
 
     #[test]
     fn phase_offset_is_removed_from_rate_fit() {
-        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 50_000_000_000, 0);
+        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 50_000_000_000);
         let values = observations(10_000.0, 12_500.0);
         let estimate = estimator.estimate(&values).unwrap();
         assert!((estimate.source_epoch - 12_000.0).abs() < 0.6);
     }
 
     #[test]
-    fn detector_delay_is_removed_from_epoch_fit() {
-        let delay = SstvDuration::from_picos(8_000_000_000);
-        let estimator =
-            SlantEstimator::for_mode_with_sync_detector_delay(10_000, Mode::Martin2, delay)
-                .unwrap();
+    fn mode_timing_places_the_epoch_ahead_of_the_observed_pulse() {
+        let estimator = SlantEstimator::for_mode(10_000, Mode::Martin2).unwrap();
         let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
-        let center_ps = profile.sync_center_ps;
-        let observed_epoch = 12_000.0 + 10_000.0 * (center_ps + delay.as_picos()) as f64 / 1.0e12;
+        let observed_epoch = 12_000.0 + 10_000.0 * profile.sync_center_ps as f64 / 1.0e12;
         let period_samples = 10_000.0 * profile.period_ps as f64 / 1.0e12;
         let values = (0..10)
             .map(|unit| SyncObservation {
@@ -239,7 +220,7 @@ mod tests {
 
     #[test]
     fn nonzero_wrapped_unit_origin_does_not_change_epoch() {
-        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 50_000_000_000, 0);
+        let estimator = SlantEstimator::new(10_000, 200_000_000_000, 50_000_000_000);
         let values: Vec<_> = (250..258)
             .map(|unit| SyncObservation {
                 unit,

@@ -160,13 +160,26 @@ samples. `DemodulatedBlock` enforces continuity and value validation at this
 boundary.
 
 Frequency and synchronization strength are causal detector outputs and remain at
-the sample positions where they were produced. The synchronization envelope
-lags the frequency-discriminator output, so a demodulator reports that calibrated
-relative delay separately. The integration passes it through `RxConfig` so
-raster acquisition, live phase correction, and staged slant refinement use the
-frequency stream's time coordinate. The delay is converted with the physical
-receive sample rate, independently of the estimated raster clock. Inputs whose
-two streams are already aligned use a zero delay.
+the sample positions where they were produced. The synchronization envelope is
+used to find a pulse, never to time one. Its lag behind the frequency stream
+runs to several milliseconds, and because the envelope is a ratio against
+competing tone detectors, its weighted center also moves with the picture tones
+either side of the pulse. Both errors would displace the whole picture
+horizontally.
+
+Every measured sync center is therefore refined on the frequency stream, where
+the pulse is the interval below the level separating the 1200 Hz sync from the
+1500 Hz porch above it. The frequency stream's own group delay needs no
+compensation at all: pixel windows are read from that same stream, so a raster
+placed on a frequency-domain center samples every pixel where its content
+actually is. Acquisition, live phase correction, and staged slant refinement all
+work in that one time base.
+
+`RxConfig` still carries the envelope's approximate lag, but only to place the
+search window around a detected pulse, so a rough figure is enough. Inputs whose
+two streams are already aligned use a zero delay. A pulse that the search window
+cannot see whole — one cut short by the start or the end of the retained samples
+— has no usable center and is left out of the fit rather than pulling it.
 
 `RxDecoder` is stateful and streaming. It exposes acquisition, decoding,
 completion, and stopped states, consumes an explicit prefix of each input block,
@@ -176,6 +189,10 @@ and reports typed events and errors. Its responsibilities include:
   buffering at most five periods when the first post-VIS pulse is incomplete.
   The phase is averaged over those pulses, leaving out the first one because the
   buffer can begin part way through it.
+- Skipping the leading raster units whose picture arrived before mode detection
+  finished. Those rows stay blank and count as delivered, which is what the
+  operator sees in MMSSTV too, instead of failing a reception over samples that
+  were never received.
 - Family-specific RGB and luminance/chroma reconstruction.
 - Stable live raster-phase correction.
 - Optional automatic stop based on synchronization history.

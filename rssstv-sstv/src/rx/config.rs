@@ -35,10 +35,12 @@ pub struct RxConfig {
     pub live_slant: bool,
     /// Stops normally after synchronization failures persist in leaky history.
     pub auto_stop: bool,
-    /// Compensates synchronization-envelope delay relative to frequency input.
+    /// Approximate synchronization-envelope delay relative to frequency input.
     ///
-    /// Leave this at zero for synchronization samples already aligned with the
-    /// frequency input.
+    /// The envelope only locates a pulse; its center is then measured on the
+    /// frequency stream, so this value places that search rather than entering
+    /// the raster phase. A rough figure is enough, and zero is right for
+    /// synchronization samples already aligned with the frequency input.
     pub sync_detector_delay: SstvDuration,
     /// Controls immutable sample retention for whole-image refinement.
     pub staging: Staging,

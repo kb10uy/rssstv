@@ -46,6 +46,7 @@ pub(super) struct RasterProfile {
     pub(super) organization: RasterOrganization,
     pub(super) period_ps: u64,
     pub(super) sync_center_ps: u64,
+    pub(super) sync_duration_ps: u64,
     pixels: PixelSegments,
     selector_ps: Option<(u64, u64)>,
 }
@@ -58,6 +59,7 @@ impl RasterProfile {
         }
         let mut pixels = PixelSegments::default();
         let mut selector_ps = None;
+        let mut sync_duration_ps = 0;
         // Both parities of an alternating raster share one geometry, so unit
         // zero fully describes receive timing.
         for (offset, segment) in scan.offsets(0) {
@@ -80,6 +82,11 @@ impl RasterProfile {
                 ScanContent::Tone(_) if segment.component() == TxComponent::ChrominanceSelector => {
                     selector_ps = Some((start_ps, start_ps + duration_ps));
                 }
+                ScanContent::Tone(_) if segment.component() == TxComponent::Sync => {
+                    if sync_duration_ps == 0 {
+                        sync_duration_ps = duration_ps;
+                    }
+                }
                 ScanContent::Tone(_) => {}
             }
         }
@@ -88,6 +95,7 @@ impl RasterProfile {
             organization: mode.spec().raster_organization(),
             period_ps: mode.spec().period().as_picos(),
             sync_center_ps: scan.sync_center(0)?.as_picos(),
+            sync_duration_ps,
             pixels,
             selector_ps,
         })

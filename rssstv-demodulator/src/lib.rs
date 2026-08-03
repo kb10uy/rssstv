@@ -277,6 +277,10 @@ pub fn demodulate(
 
 /// Returns sync-envelope delay relative to demodulated frequency output.
 ///
+/// The receive decoder uses this to place its search for a pulse, not to place
+/// the raster, so the single measured figure covers every supported mode even
+/// though the envelope's exact lag varies with pulse length and picture content.
+///
 /// Modes without an implemented raster decoder return zero.
 pub const fn sync_detector_delay(mode: Mode) -> SstvDuration {
     let delay = match mode {
@@ -687,6 +691,9 @@ mod tests {
     use rssstv_sstv::{RxDecoder, TxEncoder};
     use rstest::rstest;
 
+    /// Measured delay of the band-pass and discriminator chain, in milliseconds.
+    const GROUP_DELAY_MS: f64 = 1.95;
+
     fn tone(samples: &mut Vec<f32>, rate: u32, frequency: f64, seconds: f64, phase: &mut f64) {
         for _ in 0..(rate as f64 * seconds).round() as usize {
             samples.push((*phase).sin() as f32 * 0.8);
@@ -730,6 +737,84 @@ mod tests {
             }
         }
         tone(samples, rate, 2_100.0, 0.1, phase);
+    }
+
+    /// Transmits a vertical edge and checks where the decoded raster puts it.
+    ///
+    /// This is the end-to-end statement of horizontal alignment: the modulated
+    /// audio, the demodulator's own group delay, and the decoder's raster phase
+    /// all have to agree before a picture stops sliding off one side.
+    #[rstest]
+    #[case(Mode::Martin1, 48_000)]
+    #[case(Mode::Martin2, 48_000)]
+    #[case(Mode::Scottie2, 48_000)]
+    #[case(Mode::Robot36, 48_000)]
+    #[case(Mode::Robot72, 48_000)]
+    #[case(Mode::Pd50, 48_000)]
+    #[case(Mode::Martin2, 8_000)]
+    fn a_transmitted_edge_decodes_where_it_was_sent(#[case] mode: Mode, #[case] rate: u32) {
+        let width = mode.spec().width() as usize;
+        let size = ImageSize::new(width, mode.spec().height() as usize).unwrap();
+        let mut image = RgbImage::new(size, Rgb8::new(0, 0, 0));
+        for row in 0..size.height() {
+            for x in width / 2..width {
+                if let Some(pixel) = image.row_mut(row).and_then(|row| row.get_mut(x)) {
+                    *pixel = Rgb8::new(255, 255, 255);
+                }
+            }
+        }
+        let scan = mode.scan();
+        let leading_ps = scan
+            .leading()
+            .iter()
+            .map(|segment| segment.duration().as_picos())
+            .sum::<u64>();
+        let stop_ps = 910_000_000_000 + leading_ps + mode.spec().period().as_picos() * 14;
+        let stop_sample = u128::from(stop_ps) * u128::from(rate) / 1_000_000_000_000;
+        let mut samples = Vec::new();
+        let mut phase = 0.0_f64;
+        let mut written = 0_u64;
+        for timed in TxEncoder::new(mode, image).unwrap() {
+            let deadline = timed.until().as_picos() * u64::from(rate) / 1_000_000_000_000;
+            while written < deadline && u128::from(written) < stop_sample {
+                samples.push((phase.sin() * 0.8) as f32);
+                phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
+                    .rem_euclid(TAU);
+                written += 1;
+            }
+            if u128::from(written) >= stop_sample {
+                break;
+            }
+        }
+        let output = demodulate(&samples, rate).unwrap();
+        let mut decoder = RxDecoder::with_config(
+            mode,
+            rate,
+            RxConfig {
+                sync_detector_delay: output.sync_detector_delay(),
+                ..RxConfig::default()
+            },
+        )
+        .unwrap();
+        let mut offset = 0;
+        while let Ok(processed) = decoder.process(DemodulatedBlock::new(
+            output.first_sample() + offset as u64,
+            &output.frequency_hz()[offset..],
+            &output.sync_strength()[offset..],
+        )) {
+            offset += processed.consumed();
+            if processed.consumed() == 0 && processed.event().is_none() {
+                break;
+            }
+        }
+        let rows = mode.spec().rows_per_raster_unit() as usize;
+        let row = decoder.image().row(rows * 6).unwrap();
+        let edge = (0..width).find(|x| row[*x].g > 128);
+        assert!(
+            edge.is_some_and(|edge| edge.abs_diff(width / 2) <= 1),
+            "{mode:?} @{rate}: the edge decoded at {edge:?} instead of {}",
+            width / 2,
+        );
     }
 
     fn raster_epoch_error_ms(mode: Mode, rate: u32) -> f64 {
@@ -912,22 +997,22 @@ mod tests {
         assert_eq!(demodulator.next_sample(), 10);
     }
 
+    /// The acquired epoch trails the protocol raster by the demodulator's own
+    /// group delay, which is the delay the picture samples carry as well. That
+    /// figure has to be the same for every mode and rate: anything mode-specific
+    /// left in it would displace that mode's picture horizontally.
     #[rstest]
-    #[case(Mode::Martin2, 8_000, 2.0)]
-    #[case(Mode::Martin2, 48_000, 2.0)]
-    #[case(Mode::Scottie2, 8_000, 3.1)]
-    #[case(Mode::Robot36, 8_000, 2.3)]
-    #[case(Mode::Robot36, 48_000, 2.3)]
-    #[case(Mode::Pd50, 8_000, 1.0)]
-    #[case(Mode::Pd50, 48_000, 1.0)]
-    fn aligns_causal_sync_with_frequency_output(
-        #[case] mode: Mode,
-        #[case] rate: u32,
-        #[case] expected_ms: f64,
-    ) {
+    #[case(Mode::Martin2, 8_000)]
+    #[case(Mode::Martin2, 48_000)]
+    #[case(Mode::Scottie2, 8_000)]
+    #[case(Mode::Robot36, 8_000)]
+    #[case(Mode::Robot36, 48_000)]
+    #[case(Mode::Pd50, 8_000)]
+    #[case(Mode::Pd50, 48_000)]
+    fn aligns_causal_sync_with_frequency_output(#[case] mode: Mode, #[case] rate: u32) {
         let offset_ms = raster_epoch_error_ms(mode, rate);
         assert!(
-            (offset_ms - expected_ms).abs() <= 0.75,
+            (offset_ms - GROUP_DELAY_MS).abs() <= 0.4,
             "raster epoch offset was {offset_ms} ms"
         );
     }

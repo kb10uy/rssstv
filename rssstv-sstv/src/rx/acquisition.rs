@@ -7,7 +7,7 @@ use super::clock::RasterClock;
 use super::config::sync_detector_delay_samples;
 use super::input::SampleBuffer;
 use super::raster::RasterProfile;
-use super::sync::RUN_THRESHOLD;
+use super::sync::{RUN_THRESHOLD, refine_center};
 
 pub(super) const ACQUISITION_PERIODS: u64 = 32;
 pub(super) const STARTUP_PERIODS: u64 = 5;
@@ -108,12 +108,31 @@ fn acquire_inner(
             total += f64::from(sync[index]);
             index += 1;
         }
+        // A pulse the window cuts short has no usable center: both its envelope
+        // and its frequency span end early, which would pull the fit forward.
+        if index == sync_len {
+            break;
+        }
         let relative = if total > 0.0 {
             (weighted / total + 0.5) as u64
         } else {
             ((start + index) / 2) as u64
         };
-        centers.push(input.first() + relative);
+        let envelope_center = input.first() + relative;
+        centers.push(
+            refine_center(
+                input,
+                profile,
+                envelope_center,
+                sample_rate_hz,
+                sync_detector_delay,
+            )
+            .unwrap_or_else(|| {
+                (envelope_center as f64
+                    - sync_detector_delay_samples(sample_rate_hz, sync_detector_delay))
+                .max(0.0) as u64
+            }),
+        );
     }
 
     let nominal = profile.period_ps as f64 * f64::from(sample_rate_hz) / 1_000_000_000_000.0;
@@ -222,9 +241,7 @@ fn acquire_inner(
             / steps;
         sequence[0] as f64 + mean_offset
     };
-    let epoch = fitted_first
-        - effective * profile.sync_center_ps as f64 / 1.0e12
-        - sync_detector_delay_samples(sample_rate_hz, sync_detector_delay);
+    let epoch = fitted_first - effective * profile.sync_center_ps as f64 / 1.0e12;
     RasterClock::from_estimate(epoch, effective)
 }
 

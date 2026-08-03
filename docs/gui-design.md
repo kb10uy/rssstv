@@ -66,7 +66,7 @@ Receive:
 audio capture callback
   -> bounded PCM queue
   -> receive worker (Demodulator + RxDecoder)
-  -> bounded snapshot queue
+  -> single-slot snapshot mailbox
   -> iced Subscription
   -> update
 
@@ -117,6 +117,57 @@ rebuilds the completed image with a fitted global raster rate and epoch. The
 control does not replace live phase synchronization, which remains enabled
 independently. Turning Slant on after a reception has started applies to the
 next reception because the earlier samples were not staged.
+
+Slant is corrected while the image is still arriving, as MMSSTV does, not only
+after it finishes. A reception begins on the configured capture rate, exactly as
+MMSSTV begins on its calibrated `SSTVSET.m_SampFreq`. The startup window spans
+too few periods to estimate a better rate; fitting one there lands hundreds to
+thousands of parts per million out on real signals, which is worse than the
+capture rate the operator already has, and it visibly bends the first lines
+before tracking can take over.
+
+`RxConfig::live_slant` turns on that tracking. The decoder refits the rate from
+the synchronization collected so far, smooths it over at most sixteen estimates,
+and applies a correction once the error clears a threshold that tightens as
+lines accumulate, redrawing the rows already decoded from the retained samples.
+As in MMSSTV, the average covers however many estimates have been collected, so
+a gross rate error is corrected from the first estimate rather than after the
+window has filled. This mirrors MMSSTV's `AutoStopJob()` real-time adjustment;
+see [mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
+`Staging::Memory`.
+
+A refit that runs faster than the previous estimate places the decoded units
+later in the stream, sometimes past the audio received so far. The redraw
+therefore covers as many leading units as the retained samples reach and the
+remainder is decoded again as the audio arrives, rather than the correction
+being rejected for lack of coverage.
+
+Staged refinement stays as the more precise final pass, matching MMSSTV's
+separate `CorrectSlant()`. With live tracking on it is a refinement of an
+already-straight image rather than the only thing standing between the operator
+and an unusable one.
+
+A refit raster reaches slightly past the samples decoded live, so refinement
+cannot run the moment the raster completes. The worker keeps feeding trailing
+audio through `RxDecoder::stage_for_refinement` and retries
+`RxDecoder::refine_staged` on a sample budget, treating
+`InsufficientStagedData` as "wait for more audio" rather than as a failure. The
+search for the next signal is held off until refinement resolves, because
+restarting the demodulator would cut off the tail it is waiting for.
+
+The corrected image therefore appears about a second after the raster fills,
+once enough trailing audio has arrived. A live device supplies that tail on its
+own, because it keeps delivering samples once the transmission has stopped.
+
+`rssstv-audio` exposes `synthetic_capture`, a capture queue with no device
+behind it. Recorded audio pushed through it drives the receive worker over
+exactly the code path a live device uses, which is what makes the pipeline
+testable without hardware.
+
+`auto_stop` is left disabled. Its live synchronization scoring aborts genuine
+receptions part way through, which loses both the remaining rows and the
+refinement that would have corrected the slant. A reception whose signal simply
+disappears is ended by a worker-side stall timeout instead.
 
 Raster phase acquisition collects four recurring synchronization pulses, as
 MMSSTV does, buffering at most five periods when the first post-VIS pulse is
@@ -192,10 +243,19 @@ variant, not by an ambient flag. For example, `RxMessage::SnapshotReceived`
 originates from the receive subscription, while `RxMessage::ModeSelected`
 originates from the mode dropdown.
 
-Worker snapshots are coalesced. If several snapshots are queued when the
-subscription is polled, the newest state is returned with the latest queued
-image frame and transient error attached. This prevents a newer meter-only
-snapshot from discarding a decoded frame before the interface observes it.
+The worker publishes into a single-slot mailbox rather than a queue. Writing
+replaces the pending snapshot, carrying forward an image frame or error the
+interface has not collected yet, so a newer meter-only snapshot cannot discard
+a decoded frame. Because each snapshot fully describes the receive state, one
+slot is sufficient, and it bounds the handoff by construction: an interface
+that stops polling cannot make the worker accumulate megabyte frames.
+
+The interface invalidates the canvas cache only when the raster, the detected
+mode, or the decoded fraction actually changed, so an idle receiver does not
+retessellate every frame.
+
+A detected mode replaces the operator's selection only while automatic
+detection is on. With it off, the dropdown selection stands.
 
 ## View Composition
 

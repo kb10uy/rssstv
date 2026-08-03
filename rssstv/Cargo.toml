@@ -15,4 +15,6 @@ rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 unic-langid.workspace = true
 
 [dev-dependencies]
+hound.workspace = true
+image.workspace = true
 rstest.workspace = true

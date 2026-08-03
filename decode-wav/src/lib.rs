@@ -136,7 +136,7 @@ impl ReceivePipeline {
                     self.demodulator.sample_rate_hz(),
                     RxConfig {
                         live_sync: true,
-                        fit_initial_rate: true,
+                        live_slant: false,
                         auto_stop: false,
                         sync_detector_delay: sync_detector_delay(mode),
                         staging: Staging::Memory {

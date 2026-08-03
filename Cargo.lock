@@ -3524,7 +3524,9 @@ name = "rssstv"
 version = "0.1.0"
 dependencies = [
  "fluent-bundle",
+ "hound",
  "iced",
+ "image",
  "rssstv-audio",
  "rssstv-demodulator",
  "rssstv-fskid",

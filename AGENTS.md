@@ -68,6 +68,7 @@ in the original DSP classes.
 
 - Use Rust edition 2024.
 - Follow standard Rust naming and formatting conventions.
+- Use LF line endings for all text files.
 - Avoid comments by default. Add comments only when explicitly requested by the
   user.
 - Prefer the smallest correct implementation and avoid speculative abstractions.

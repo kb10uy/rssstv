@@ -50,10 +50,13 @@ action-transmit = TX
 action-tone = 1750
 action-cw = CW
 action-fskid = FSKID
+action-open-folder = Open folder
+action-refresh = Refresh
 
 section-templates = Templates
 section-stocks = Stock images
 section-composite = Composite preview
+library-empty = No files
 
 badge-waiting = WAITING FOR SIGNAL
 badge-receiving = RECEIVING · { $mode } · { $percent }%

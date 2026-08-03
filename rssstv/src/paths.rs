@@ -40,7 +40,11 @@ impl AppPaths {
         ))
     }
 
-    fn from_roots(config_dir: PathBuf, data_dir: PathBuf, pictures_dir: PathBuf) -> Self {
+    pub(crate) fn from_roots(
+        config_dir: PathBuf,
+        data_dir: PathBuf,
+        pictures_dir: PathBuf,
+    ) -> Self {
         Self {
             config_file: config_dir.join("config.toml"),
             templates_dir: data_dir.join("templates"),
@@ -71,6 +75,14 @@ impl AppPaths {
         }
 
         create_default_config(&self.config_file)
+    }
+
+    pub fn templates_dir(&self) -> &Path {
+        &self.templates_dir
+    }
+
+    pub fn stocks_dir(&self) -> &Path {
+        &self.stocks_dir
     }
 }
 

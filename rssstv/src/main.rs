@@ -10,7 +10,8 @@ mod receive;
 mod view;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    paths::AppPaths::discover()?.initialize()?;
-    app::run()?;
+    let paths = paths::AppPaths::discover()?;
+    paths.initialize()?;
+    app::run(paths)?;
     Ok(())
 }

@@ -411,6 +411,12 @@ empty, valid `config.toml` when it does not already exist. Existing
 configuration files are never replaced. Loading and saving configuration
 values will be added with the configuration schema.
 
+The GUI template list is populated from regular `.kdl` files directly inside
+`templates`. The stock list is populated from regular files directly inside
+`Stocks` when the configured `image` crate decoders can read their dimensions.
+Both lists can be refreshed independently and provide an action that opens the
+corresponding directory in Explorer, Finder, or the desktop file manager.
+
 ## Planned Gaps
 
 The architecture is not complete until the following boundaries have production

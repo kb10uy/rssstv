@@ -50,10 +50,13 @@ action-transmit = TX
 action-tone = 1750
 action-cw = CW
 action-fskid = FSKID
+action-open-folder = フォルダーを開く
+action-refresh = 再読み込み
 
 section-templates = テンプレート
 section-stocks = ストック画像
 section-composite = 合成プレビュー
+library-empty = ファイルなし
 
 badge-waiting = 信号待ち
 badge-receiving = RECEIVING · { $mode } · { $percent }%

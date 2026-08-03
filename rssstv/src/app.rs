@@ -1,4 +1,8 @@
 use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use iced::widget::canvas::Cache;
 use iced::{Element, Subscription};
@@ -7,14 +11,15 @@ use rssstv_sstv::mode::{Mode, Support};
 
 use crate::audio::AudioState;
 use crate::i18n::{I18n, Locale};
+use crate::paths::AppPaths;
 use crate::raster::Raster;
 use crate::view;
 
 const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
 
-pub fn run() -> iced::Result {
-    iced::application(App::new, App::update, App::view)
+pub fn run(paths: AppPaths) -> iced::Result {
+    iced::application(move || App::new(paths.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
         .window_size((1280.0, 940.0))
@@ -94,13 +99,20 @@ pub struct Qso {
 pub struct Entry {
     pub name: String,
     pub geometry: String,
+    path: PathBuf,
 }
 
 impl Entry {
-    fn new(name: &str, geometry: &str) -> Self {
+    fn new(path: PathBuf, geometry: String) -> Self {
+        let name = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy()
+            .into_owned();
         Self {
-            name: name.to_owned(),
-            geometry: geometry.to_owned(),
+            name,
+            geometry,
+            path,
         }
     }
 }
@@ -134,6 +146,10 @@ pub enum TxMessage {
 pub enum LibraryMessage {
     TemplateSelected(usize),
     StockSelected(usize),
+    RevealTemplates,
+    RevealStocks,
+    RefreshTemplates,
+    RefreshStocks,
 }
 
 #[derive(Clone, Debug)]
@@ -157,27 +173,38 @@ pub struct App {
     pub auto_history: bool,
     pub qso: Qso,
     pub templates: Vec<Entry>,
-    pub template: usize,
+    pub template: Option<usize>,
     pub stocks: Vec<Entry>,
-    pub stock: usize,
+    pub stock: Option<usize>,
+    pub library_error: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
     pub main_cache: Cache,
     pub preview_cache: Cache,
+    paths: AppPaths,
 }
 
 impl App {
-    pub fn new() -> Self {
-        Self::with_audio(AudioState::new())
+    pub fn new(paths: AppPaths) -> Self {
+        Self::with_audio(AudioState::new(), paths)
     }
 
     /// Builds an interface with no host audio, for tests.
     #[cfg(test)]
     fn headless() -> Self {
-        Self::with_audio(AudioState::disconnected())
+        Self::from_parts(
+            AudioState::disconnected(),
+            AppPaths::from_roots(PathBuf::new(), PathBuf::new(), PathBuf::new()),
+        )
     }
 
-    fn with_audio(audio: AudioState) -> Self {
+    fn with_audio(audio: AudioState, paths: AppPaths) -> Self {
+        let mut app = Self::from_parts(audio, paths);
+        app.refresh_library();
+        app
+    }
+
+    fn from_parts(audio: AudioState, paths: AppPaths) -> Self {
         Self {
             tab: Tab::default(),
             i18n: I18n::new(Locale::default()),
@@ -194,28 +221,16 @@ impl App {
             },
             auto_history: true,
             qso: Qso::default(),
-            templates: vec![
-                Entry::new("cqsstv-640.kdl", "640×496"),
-                Entry::new("cqsstv-320.kdl", "320×256"),
-                Entry::new("cq-nyp.kdl", "320×256"),
-                Entry::new("tocall-595.kdl", "320×256"),
-                Entry::new("tocall-newyear.kdl", "320×256"),
-                Entry::new("rx-report.kdl", "640×496"),
-                Entry::new("plain-callsign.kdl", "320×256"),
-            ],
-            template: 0,
-            stocks: vec![
-                Entry::new("202608022202.png", "640×496"),
-                Entry::new("202607281940.png", "640×496"),
-                Entry::new("garden-bg.png", "320×256"),
-                Entry::new("newyear-bg.png", "320×256"),
-                Entry::new("shack.png", "640×496"),
-            ],
-            stock: 0,
+            templates: Vec::new(),
+            template: None,
+            stocks: Vec::new(),
+            stock: None,
+            library_error: None,
             rx_raster: Raster::blank(DEFAULT_RX_MODE),
             tx_raster: Raster::test_pattern(DEFAULT_TX_MODE),
             main_cache: Cache::new(),
             preview_cache: Cache::new(),
+            paths,
         }
     }
 
@@ -282,9 +297,57 @@ impl App {
 
     fn update_library(&mut self, message: LibraryMessage) {
         match message {
-            LibraryMessage::TemplateSelected(index) => self.template = index,
-            LibraryMessage::StockSelected(index) => self.stock = index,
+            LibraryMessage::TemplateSelected(index) if index < self.templates.len() => {
+                self.template = Some(index);
+            }
+            LibraryMessage::StockSelected(index) if index < self.stocks.len() => {
+                self.stock = Some(index);
+            }
+            LibraryMessage::RevealTemplates => {
+                self.library_error = reveal_directory(self.paths.templates_dir())
+                    .err()
+                    .map(|error| error.to_string());
+            }
+            LibraryMessage::RevealStocks => {
+                self.library_error = reveal_directory(self.paths.stocks_dir())
+                    .err()
+                    .map(|error| error.to_string());
+            }
+            LibraryMessage::RefreshTemplates => self.refresh_templates(),
+            LibraryMessage::RefreshStocks => self.refresh_stocks(),
+            LibraryMessage::TemplateSelected(_) | LibraryMessage::StockSelected(_) => {}
         }
+    }
+
+    fn refresh_library(&mut self) {
+        let mut errors = Vec::new();
+        if let Err(error) = self.load_templates() {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = self.load_stocks() {
+            errors.push(error.to_string());
+        }
+        self.library_error = (!errors.is_empty()).then(|| errors.join("; "));
+    }
+
+    fn refresh_templates(&mut self) {
+        self.library_error = self.load_templates().err().map(|error| error.to_string());
+    }
+
+    fn refresh_stocks(&mut self) {
+        self.library_error = self.load_stocks().err().map(|error| error.to_string());
+    }
+
+    fn load_templates(&mut self) -> io::Result<()> {
+        let entries = template_entries(self.paths.templates_dir())?;
+        replace_entries(&mut self.templates, &mut self.template, entries);
+        Ok(())
+    }
+
+    fn load_stocks(&mut self) -> io::Result<()> {
+        let entries = stock_entries(self.paths.stocks_dir())?;
+        replace_entries(&mut self.stocks, &mut self.stock, entries);
+        Ok(())
     }
 
     fn update_qso(&mut self, message: QsoMessage) {
@@ -339,12 +402,6 @@ impl App {
     }
 }
 
-impl Default for App {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 fn modes(support: fn(Mode) -> Support) -> Vec<ModeChoice> {
     Mode::ALL
         .into_iter()
@@ -353,12 +410,107 @@ fn modes(support: fn(Mode) -> Support) -> Vec<ModeChoice> {
         .collect()
 }
 
+fn template_entries(directory: &Path) -> io::Result<Vec<Entry>> {
+    directory_entries(directory, |path| {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("kdl"))
+            .then(|| Entry::new(path.to_owned(), String::new()))
+    })
+}
+
+fn stock_entries(directory: &Path) -> io::Result<Vec<Entry>> {
+    directory_entries(directory, |path| {
+        image::image_dimensions(path)
+            .ok()
+            .map(|(width, height)| Entry::new(path.to_owned(), format!("{width}×{height}")))
+    })
+}
+
+fn directory_entries(
+    directory: &Path,
+    load: impl Fn(&Path) -> Option<Entry>,
+) -> io::Result<Vec<Entry>> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path.is_file()
+            && let Some(entry) = load(&path)
+        {
+            entries.push(entry);
+        }
+    }
+    entries.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    Ok(entries)
+}
+
+fn replace_entries(entries: &mut Vec<Entry>, selected: &mut Option<usize>, next: Vec<Entry>) {
+    let selected_path = selected.and_then(|index| entries.get(index).map(|entry| &entry.path));
+    let next_selected = selected_path
+        .and_then(|path| next.iter().position(|entry| entry.path == *path))
+        .or_else(|| (!next.is_empty()).then_some(0));
+    *entries = next;
+    *selected = next_selected;
+}
+
+fn reveal_directory(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut command = Command::new("explorer.exe");
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = Command::new("xdg-open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "opening a directory is not supported on this platform",
+    ));
+
+    let mut child = command
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use rstest::rstest;
 
     use super::*;
     use crate::receive::{Progress, Snapshot};
+
+    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("rssstv-app-library-{}-{index}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
 
     #[test]
     fn only_supported_modes_are_selectable() {
@@ -459,5 +611,47 @@ mod tests {
         app.update(Message::LocaleSelected(Locale::Ja));
         assert_eq!(app.i18n.locale(), Locale::Ja);
         assert_ne!(app.i18n.text("tab-receive"), english);
+    }
+
+    #[test]
+    fn library_refresh_lists_matching_files_and_preserves_selection() {
+        let root = TestDirectory::new();
+        let paths = AppPaths::from_roots(
+            root.0.join("config"),
+            root.0.join("data"),
+            root.0.join("pictures"),
+        );
+        paths.initialize().unwrap();
+        fs::write(paths.templates_dir().join("beta.kdl"), "").unwrap();
+        fs::write(paths.templates_dir().join("alpha.KDL"), "").unwrap();
+        fs::write(paths.templates_dir().join("ignored.txt"), "").unwrap();
+        image::RgbImage::new(7, 5)
+            .save(paths.stocks_dir().join("valid.png"))
+            .unwrap();
+        fs::write(paths.stocks_dir().join("broken.png"), "not an image").unwrap();
+
+        let mut app = App::from_parts(AudioState::disconnected(), paths.clone());
+        app.refresh_library();
+
+        assert_eq!(
+            app.templates
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            ["alpha.KDL", "beta.kdl"]
+        );
+        assert_eq!(app.template, Some(0));
+        assert_eq!(app.stocks.len(), 1);
+        assert_eq!(app.stocks[0].name, "valid.png");
+        assert_eq!(app.stocks[0].geometry, "7×5");
+
+        app.update_library(LibraryMessage::TemplateSelected(1));
+        fs::write(paths.templates_dir().join("aardvark.kdl"), "").unwrap();
+        app.refresh_templates();
+
+        assert_eq!(
+            app.template.map(|index| app.templates[index].name.as_str()),
+            Some("beta.kdl")
+        );
     }
 }

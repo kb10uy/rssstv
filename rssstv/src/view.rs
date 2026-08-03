@@ -1,6 +1,6 @@
 use iced::widget::{
     Space, button, canvas, checkbox, column, container, pick_list, progress_bar, row, scrollable,
-    stack, text, text_input, toggler,
+    stack, text, text_input, toggler, tooltip,
 };
 use iced::{Alignment, Element, Length};
 use rssstv_sstv::mode::Mode;
@@ -350,6 +350,8 @@ fn library(app: &App) -> Element<'_, Message> {
             &app.templates,
             app.template,
             LibraryMessage::TemplateSelected,
+            LibraryMessage::RevealTemplates,
+            LibraryMessage::RefreshTemplates,
         ),
         entry_list(
             app,
@@ -357,6 +359,8 @@ fn library(app: &App) -> Element<'_, Message> {
             &app.stocks,
             app.stock,
             LibraryMessage::StockSelected,
+            LibraryMessage::RevealStocks,
+            LibraryMessage::RefreshStocks,
         ),
         composite(app),
     ]
@@ -370,12 +374,21 @@ fn entry_list<'a>(
     app: &'a App,
     key: &str,
     entries: &'a [Entry],
-    selected: usize,
+    selected: Option<usize>,
     on_select: fn(usize) -> LibraryMessage,
+    reveal: LibraryMessage,
+    refresh: LibraryMessage,
 ) -> Element<'a, Message> {
     let mut list = column![].spacing(2);
+    if entries.is_empty() {
+        list = list.push(
+            container(text(app.i18n.text("library-empty")).size(11))
+                .padding(8)
+                .width(Length::Fill),
+        );
+    }
     for (index, entry) in entries.iter().enumerate() {
-        let style = if index == selected {
+        let style = if Some(index) == selected {
             button::primary
         } else {
             button::text
@@ -395,13 +408,39 @@ fn entry_list<'a>(
         );
     }
     column![
-        text(app.i18n.text(key)).size(11),
+        row![
+            text(app.i18n.text(key)).size(11),
+            filler(),
+            library_action(app, "📂", "action-open-folder", reveal),
+            library_action(app, "↻", "action-refresh", refresh),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center),
         container(scrollable(list))
             .height(Length::Fill)
             .style(container::bordered_box),
     ]
     .spacing(8)
     .width(LIST_WIDTH)
+    .into()
+}
+
+fn library_action<'a>(
+    app: &App,
+    symbol: &'static str,
+    label_key: &str,
+    message: LibraryMessage,
+) -> Element<'a, Message> {
+    tooltip(
+        button(text(symbol).size(13).center())
+            .padding([2, 6])
+            .style(button::text)
+            .on_press(Message::Library(message)),
+        container(text(app.i18n.text(label_key)).size(11))
+            .padding(6)
+            .style(container::rounded_box),
+        tooltip::Position::Top,
+    )
     .into()
 }
 
@@ -457,6 +496,9 @@ fn status_bar(app: &App) -> Element<'_, Message> {
         );
     }
     if let Some(error) = app.audio.error.as_ref().or(snapshot.error.as_ref()) {
+        bar = bar.push(text(error.as_str()).size(11));
+    }
+    if let Some(error) = app.library_error.as_ref() {
         bar = bar.push(text(error.as_str()).size(11));
     }
     bar.push(filler()).spacing(16).padding([4, 12]).into()

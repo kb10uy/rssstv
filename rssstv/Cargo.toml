@@ -9,6 +9,7 @@ authors.workspace = true
 directories.workspace = true
 fluent-bundle.workspace = true
 iced.workspace = true
+image.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
 rssstv-fskid = { path = "../rssstv-fskid" }
@@ -17,5 +18,4 @@ unic-langid.workspace = true
 
 [dev-dependencies]
 hound.workspace = true
-image.workspace = true
 rstest.workspace = true

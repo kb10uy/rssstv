@@ -346,7 +346,9 @@ system locale when it matches an available translation.
 
 The `rssstv` shell implements the state model, message dispatch, and view
 composition described above. Tabs, mode selection, DSP toggles, QSO fields,
-locale switching, and the template and stock lists are interactive.
+and locale switching are interactive. Template and stock lists are loaded from
+the application directories at startup; each list can be refreshed and its
+directory can be opened in the platform file manager.
 
 Receive is implemented end to end. Selecting a device opens a capture stream
 and spawns the receive worker, which demodulates, detects the mode from VIS,

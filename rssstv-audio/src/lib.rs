@@ -17,7 +17,7 @@ use cpal::{Host, SampleFormat, StreamConfig};
 use ringbuf::HeapRb;
 use ringbuf::traits::Split;
 
-pub use capture::{Capture, CaptureReader, Reading};
+pub use capture::{Capture, CaptureFeed, CaptureReader, Reading, synthetic_capture};
 pub use error::AudioError;
 
 /// Capture rate preferred by the rest of the project.

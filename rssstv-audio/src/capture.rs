@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cpal::traits::StreamTrait;
 use cpal::{FromSample, Sample, Stream};
-use ringbuf::traits::{Consumer, Producer};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::{HeapCons, HeapProd};
 
 use crate::AudioError;
@@ -159,6 +159,65 @@ impl CaptureReader {
         let count = self.consumer.pop_slice(buffer);
         self.timeline.advance(dropped_total, count)
     }
+}
+
+/// Writing end of a capture queue fed by the caller instead of a device.
+///
+/// This exists so the receive pipeline can be driven from recorded audio
+/// without hardware, keeping offline runs on exactly the same code path as a
+/// live device.
+pub struct CaptureFeed {
+    producer: HeapProd<f32>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl CaptureFeed {
+    /// Pushes what fits and counts the rest as dropped, like a device overrun.
+    pub fn push(&mut self, samples: &[f32]) -> usize {
+        let written = self.producer.push_slice(samples);
+        if written < samples.len() {
+            self.dropped
+                .fetch_add((samples.len() - written) as u64, Ordering::Relaxed);
+        }
+        written
+    }
+
+    /// Returns the number of samples that would fit right now.
+    pub fn vacant(&self) -> usize {
+        self.producer.vacant_len()
+    }
+}
+
+impl core::fmt::Debug for CaptureFeed {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("CaptureFeed")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Creates an in-memory capture queue with no device behind it.
+pub fn synthetic_capture(
+    sample_rate_hz: u32,
+    capacity_samples: usize,
+) -> Result<(CaptureFeed, CaptureReader), AudioError> {
+    if capacity_samples == 0 {
+        return Err(AudioError::EmptyCapacity);
+    }
+    if sample_rate_hz < crate::MINIMUM_SAMPLE_RATE_HZ {
+        return Err(AudioError::UnsupportedConfiguration(format!(
+            "{sample_rate_hz} Hz"
+        )));
+    }
+    let (producer, consumer) = ringbuf::HeapRb::<f32>::new(capacity_samples).split();
+    let dropped = Arc::new(AtomicU64::new(0));
+    Ok((
+        CaptureFeed {
+            producer,
+            dropped: Arc::clone(&dropped),
+        },
+        CaptureReader::new(consumer, dropped, sample_rate_hz),
+    ))
 }
 
 impl core::fmt::Debug for CaptureReader {

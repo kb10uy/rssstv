@@ -132,6 +132,15 @@ audio through `RxDecoder::stage_for_refinement` and retries
 search for the next signal is held off until refinement resolves, because
 restarting the demodulator would cut off the tail it is waiting for.
 
+The corrected image therefore appears about a second after the raster fills,
+once enough trailing audio has arrived. A live device supplies that tail on its
+own, because it keeps delivering samples once the transmission has stopped.
+
+`rssstv-audio` exposes `synthetic_capture`, a capture queue with no device
+behind it. Recorded audio pushed through it drives the receive worker over
+exactly the code path a live device uses, which is what makes the pipeline
+testable without hardware.
+
 `auto_stop` is left disabled. Its live synchronization scoring aborts genuine
 receptions part way through, which loses both the remaining rows and the
 refinement that would have corrected the slant. A reception whose signal simply

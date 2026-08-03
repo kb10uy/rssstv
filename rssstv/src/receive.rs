@@ -24,12 +24,13 @@ const RELEASE: f32 = 0.88;
 
 const STAGING_SECONDS: usize = 300;
 
-/// Trailing audio staged between staged-refinement attempts.
+/// Trailing audio staged between staged-refinement attempts, in milliseconds.
 ///
-/// A refit raster usually reaches a little past the samples decoded so far, so
-/// the first attempts fail until enough tail has arrived. Retrying on a sample
-/// budget rather than every block keeps the cost of a failed attempt bounded.
-const REFINEMENT_RETRY_SECONDS: usize = 1;
+/// A refit raster reaches a little past the samples decoded so far, so early
+/// attempts fail until enough tail has arrived. Retrying on a sample budget
+/// rather than on every block bounds the cost of a failed attempt, while a
+/// short budget keeps the corrected image from appearing late.
+const REFINEMENT_RETRY_MS: usize = 250;
 
 /// Trailing audio staged before staged refinement is abandoned.
 const REFINEMENT_TAIL_SECONDS: usize = 15;
@@ -413,7 +414,7 @@ impl Session {
         let rate = self.sample_rate_hz as usize;
         if self.refine_limit_len == 0 {
             self.refine_limit_len = staged.saturating_add(rate * REFINEMENT_TAIL_SECONDS);
-            self.refine_next_len = staged.saturating_add(rate * REFINEMENT_RETRY_SECONDS);
+            self.refine_next_len = staged.saturating_add(retry_step(rate));
             return;
         }
         if staged < self.refine_next_len {
@@ -424,7 +425,7 @@ impl Session {
             // The refit raster reaches past the tail collected so far. More
             // audio is still arriving, so wait rather than give up.
             Err(SstvError::InsufficientStagedData { .. }) if staged < self.refine_limit_len => {
-                self.refine_next_len = staged.saturating_add(rate * REFINEMENT_RETRY_SECONDS);
+                self.refine_next_len = staged.saturating_add(retry_step(rate));
             }
             Err(error) => {
                 self.refinement = Refinement::Failed(format!("slant refinement failed: {error}"));
@@ -536,6 +537,11 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
             error = Some(reason);
         }
     }
+}
+
+/// Samples of trailing audio between staged-refinement attempts.
+fn retry_step(sample_rate_hz: usize) -> usize {
+    (sample_rate_hz * REFINEMENT_RETRY_MS / 1_000).max(1)
 }
 
 fn block_peak(samples: &[f32]) -> f32 {
@@ -659,5 +665,144 @@ mod tests {
             ..Snapshot::default()
         });
         assert_eq!(mailbox.take().unwrap().error.as_deref(), Some("second"));
+    }
+}
+
+#[cfg(test)]
+mod pipeline_tests {
+    use std::f64::consts::TAU;
+
+    use rssstv_audio::synthetic_capture;
+    use rssstv_sstv::TxEncoder;
+    use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
+
+    use super::*;
+
+    const RATE: u32 = 8_000;
+
+    /// Smooth ramps keep chroma subsampling out of the measurement while still
+    /// making a mistimed raster obvious: any slant shears the gradient.
+    fn source_image(mode: Mode) -> RgbImage {
+        let width = mode.spec().width() as usize;
+        let height = mode.spec().height() as usize;
+        let size = ImageSize::new(width, height).unwrap();
+        let pixels = (0..height)
+            .flat_map(|y| {
+                (0..width).map(move |x| {
+                    Rgb8::new(
+                        (x * 255 / width) as u8,
+                        (y * 255 / height) as u8,
+                        ((x * 255 / width) + (y * 255 / height)) as u8 / 2,
+                    )
+                })
+            })
+            .collect();
+        RgbImage::from_pixels(size, pixels).unwrap()
+    }
+
+    /// Renders one transmission whose clock runs `offset_ppm` away from the
+    /// receiver's, which is what puts slant into a real reception.
+    fn transmission(mode: Mode, image: RgbImage, offset_ppm: f64) -> Vec<f32> {
+        let transmit_rate = f64::from(RATE) * (1.0 + offset_ppm / 1.0e6);
+        let mut pcm = Vec::new();
+        let mut phase = 0.0_f64;
+        for tone in TxEncoder::new(mode, image).unwrap() {
+            let deadline =
+                (tone.until().as_picos() as f64 * transmit_rate / 1.0e12).round() as usize;
+            while pcm.len() < deadline {
+                pcm.push((phase.sin() * 0.8) as f32);
+                phase = (phase + TAU * f64::from(tone.frequency().as_hz()) / transmit_rate)
+                    .rem_euclid(TAU);
+            }
+        }
+        pcm
+    }
+
+    fn mean_abs_error(decoded: &Frame, expected: &RgbImage) -> f64 {
+        let mut total = 0_u64;
+        for (pixel, chunk) in expected.pixels().iter().zip(decoded.rgba.chunks_exact(4)) {
+            total += u64::from(pixel.r.abs_diff(chunk[0]));
+            total += u64::from(pixel.g.abs_diff(chunk[1]));
+            total += u64::from(pixel.b.abs_diff(chunk[2]));
+        }
+        total as f64 / (expected.size().pixel_count() * 3) as f64
+    }
+
+    /// Drives the real worker through the capture queue and returns its last
+    /// image, so the test covers the same code path a live device does.
+    fn receive(pcm: &[f32], trailing_silence: usize) -> (Snapshot, Option<Frame>) {
+        let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
+        let worker = Worker::spawn(reader, true);
+        let mut snapshot = Snapshot::default();
+        let mut frame = None;
+        let silence = vec![0.0_f32; trailing_silence];
+
+        for source in [pcm, silence.as_slice()] {
+            let mut offset = 0;
+            while offset < source.len() {
+                let room = feed.vacant().min(source.len() - offset);
+                if room == 0 {
+                    thread::sleep(Duration::from_millis(1));
+                } else {
+                    offset += feed.push(&source[offset..offset + room]);
+                }
+                collect(&worker, &mut snapshot, &mut frame);
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while feed.vacant() < (1 << 16) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+            collect(&worker, &mut snapshot, &mut frame);
+        }
+        thread::sleep(Duration::from_millis(100));
+        collect(&worker, &mut snapshot, &mut frame);
+        (snapshot, frame)
+    }
+
+    fn collect(worker: &Worker, snapshot: &mut Snapshot, frame: &mut Option<Frame>) {
+        if let Some(mut latest) = worker.latest() {
+            if let Some(new) = latest.frame.take() {
+                *frame = Some(new);
+            }
+            *snapshot = latest;
+        }
+    }
+
+    fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (Snapshot, f64) {
+        let pcm = transmission(mode, expected.clone(), offset_ppm);
+        let (snapshot, frame) = receive(&pcm, RATE as usize * 3);
+        let frame = frame.expect("a decoded frame");
+        assert_eq!(frame.width, u32::from(mode.spec().width()));
+        let error = mean_abs_error(&frame, expected);
+        (snapshot, error)
+    }
+
+    /// A transmitter whose clock is off produces a slanted raster unless the
+    /// worker refits the clock from the staged reception. Refinement needs
+    /// audio that arrives after the raster completes, so this only passes when
+    /// the worker keeps staging its tail.
+    ///
+    /// The mistimed reception is judged against a matched reception rather
+    /// than an absolute threshold, so the assertion measures slant correction
+    /// and not codec fidelity.
+    #[test]
+    fn a_mistimed_transmission_decodes_like_a_matched_one() {
+        let mode = Mode::Robot36;
+        let expected = source_image(mode);
+        let (matched, baseline) = decode_at(mode, &expected, 0.0);
+        assert_eq!(matched.progress, Progress::Complete, "{matched:?}");
+        assert!(
+            baseline < 40.0,
+            "matched reception is already poor: {baseline}"
+        );
+
+        let (mistimed, error) = decode_at(mode, &expected, 300.0);
+        assert_eq!(mistimed.progress, Progress::Complete, "{mistimed:?}");
+        assert_eq!(mistimed.mode, Some(mode));
+        assert_eq!(mistimed.error, None);
+        assert!(
+            error < baseline + 4.0,
+            "mistimed reception scored {error} against a {baseline} baseline"
+        );
     }
 }

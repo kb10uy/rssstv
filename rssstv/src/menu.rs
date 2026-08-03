@@ -252,6 +252,8 @@ mod native {
         items: Vec<Entry>,
         actions: HashMap<MenuId, Action>,
         model: Vec<Menu>,
+        #[cfg(target_os = "windows")]
+        hwnd: Option<isize>,
     }
 
     /// One created menu entry, positionally matched to a model item.
@@ -295,6 +297,8 @@ mod native {
                 items: Vec::new(),
                 actions: HashMap::new(),
                 model: Vec::new(),
+                #[cfg(target_os = "windows")]
+                hwnd: None,
             };
             native.build(model)?;
             native.attach(cc)?;
@@ -302,7 +306,7 @@ mod native {
         }
 
         #[cfg(target_os = "windows")]
-        fn attach(&self, cc: &eframe::CreationContext<'_>) -> Result<(), muda::Error> {
+        fn attach(&mut self, cc: &eframe::CreationContext<'_>) -> Result<(), muda::Error> {
             use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 
             let Ok(handle) = cc.window_handle() else {
@@ -315,15 +319,31 @@ mod native {
                 let hwnd = window.hwnd.get();
                 allow_dark_mode_for_window(hwnd);
                 unsafe { self.menu.init_for_hwnd(hwnd) }?;
+                self.hwnd = Some(hwnd);
             }
             Ok(())
         }
 
         #[cfg(target_os = "macos")]
-        fn attach(&self, _cc: &eframe::CreationContext<'_>) -> Result<(), muda::Error> {
+        fn attach(&mut self, _cc: &eframe::CreationContext<'_>) -> Result<(), muda::Error> {
             self.menu.init_for_nsapp();
             Ok(())
         }
+
+        #[cfg(target_os = "windows")]
+        pub fn prepare_for_close(&self) {
+            use windows_sys::Win32::{
+                Foundation::HWND,
+                UI::WindowsAndMessaging::{SW_HIDE, ShowWindow},
+            };
+
+            if let Some(hwnd) = self.hwnd {
+                unsafe { ShowWindow(hwnd as HWND, SW_HIDE) };
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        pub fn prepare_for_close(&self) {}
 
         /// Replaces every menu entry from `model`.
         fn build(&mut self, model: &[Menu]) -> Result<(), muda::Error> {
@@ -412,6 +432,8 @@ mod native {
                 items: Vec::new(),
                 actions: HashMap::new(),
                 model: Vec::new(),
+                #[cfg(target_os = "windows")]
+                hwnd: None,
             };
             native.build(model).expect("a detached menu can be built");
             native
@@ -590,6 +612,8 @@ mod in_window {
         pub fn poll(&self) -> Vec<Action> {
             Vec::new()
         }
+
+        pub fn prepare_for_close(&self) {}
     }
 }
 

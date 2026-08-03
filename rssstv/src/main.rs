@@ -157,6 +157,14 @@ impl Interface {
     }
 }
 
+impl Drop for Interface {
+    fn drop(&mut self) {
+        if let Some(menu) = &self.menu {
+            menu.prepare_for_close();
+        }
+    }
+}
+
 impl eframe::App for Interface {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // The receive worker runs ahead of the interface, so a repaint is

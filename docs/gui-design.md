@@ -335,9 +335,10 @@ expensive than doing it now, and the string volume is small.
   `ModeSpec` and related core types directly.
 - Numeric and time formatting follows the active locale; frequency, sample
   rate, and dBFS values keep their conventional units.
-- The default font must resolve Japanese glyphs. `cosmic-text` performs system
-  font fallback, so this is a matter of verifying rendering per platform rather
-  than embedding a CJK font.
+- The GUI default is `Yu Gothic UI` on Windows, `Hiragino Sans` on macOS, and
+  `Noto Sans CJK JP` on Linux. These families cover Japanese UI text without an
+  embedded CJK font; `cosmic-text` retains its system-font fallback when the
+  preferred family is unavailable.
 
 Locale selection is explicit in application configuration, defaulting to the
 system locale when it matches an available translation.

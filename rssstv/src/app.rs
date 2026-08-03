@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use iced::widget::canvas::Cache;
-use iced::{Element, Subscription};
+use iced::{Element, Font, Subscription};
 use rssstv_audio::InputDevice;
 use rssstv_sstv::mode::{Mode, Support};
 
@@ -17,11 +17,20 @@ use crate::view;
 
 const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
+#[cfg(target_os = "windows")]
+const UI_FONT: Font = Font::with_name("Yu Gothic UI");
+#[cfg(target_os = "macos")]
+const UI_FONT: Font = Font::with_name("Hiragino Sans");
+#[cfg(target_os = "linux")]
+const UI_FONT: Font = Font::with_name("Noto Sans CJK JP");
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+const UI_FONT: Font = Font::DEFAULT;
 
 pub fn run(paths: AppPaths) -> iced::Result {
     iced::application(move || App::new(paths.clone()), App::update, App::view)
         .title(App::title)
         .subscription(App::subscription)
+        .default_font(UI_FONT)
         .window_size((1280.0, 940.0))
         .run()
 }

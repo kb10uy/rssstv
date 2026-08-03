@@ -1,4 +1,5 @@
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 use super::clock::RasterClock;
 use super::config::sync_detector_delay_samples;
@@ -13,16 +14,10 @@ pub(super) const MIN_PEAK: f32 = 0.35;
 pub(super) const RUN_THRESHOLD: f32 = 0.5;
 
 /// Level separating the 1200 Hz sync pulse from the 1500 Hz porch above it.
-const SYNC_LEVEL_HZ: f32 = 1_350.0;
+const SYNC_LEVEL_HZ: f64 = 1_350.0;
 
-/// Accepted span of a refined pulse relative to the protocol sync duration.
-const SYNC_SPAN_RANGE: (f64, f64) = (0.5, 1.6);
-
-/// Fraction of a refined pulse's span that must read below the sync level.
-///
-/// The frequency discriminator ripples at twice the tone it is tracking, so a
-/// sync pulse reads as a dense but broken band rather than one solid run.
-const SYNC_SPAN_DENSITY: f64 = 0.5;
+/// Synchronization tone, whose discriminator ripple is at twice this.
+const SYNC_TONE_HZ: f64 = 1_200.0;
 
 /// A synchronization pulse measured for one raster unit.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -132,6 +127,14 @@ pub(super) fn observe(
 /// raster placed on a frequency-domain center needs no delay compensation and
 /// samples every pixel where its content actually is.
 ///
+/// The pulse is the window of one sync duration whose mean frequency is lowest.
+/// Sliding a window of the known length beats reading edges off a threshold on
+/// two counts: the discriminator ripples at twice the tone it tracks, which
+/// breaks a threshold into fragments, and a threshold crossing sits at a
+/// different point on each flank whenever the tones either side of the pulse
+/// differ. Displacing the window in either direction trades sync samples for
+/// higher ones, so its minimum is on the pulse whatever surrounds it.
+///
 /// Returns `None` when no plausible pulse is present, which leaves the caller
 /// with the envelope estimate it already has.
 pub(super) fn refine_center(
@@ -154,23 +157,34 @@ pub(super) fn refine_center(
         return None;
     }
 
-    let mut edges: Option<(u64, u64)> = None;
-    let mut below = 0_u64;
-    for sample in start..end {
-        if input.frequency(sample).is_some_and(|hz| hz < SYNC_LEVEL_HZ) {
-            edges = Some(edges.map_or((sample, sample), |(first, _)| (first, sample)));
-            below += 1;
-        }
-    }
-    let (first, last) = edges?;
-    let span = (last - first + 1) as f64;
-    if span < expected * SYNC_SPAN_RANGE.0
-        || span > expected * SYNC_SPAN_RANGE.1
-        || (below as f64) < span * SYNC_SPAN_DENSITY
-    {
+    let length = (expected as usize).max(1);
+    if (end - start) as usize <= length {
         return None;
     }
-    Some((first + last) / 2)
+    let mut prefix = Vec::with_capacity((end - start) as usize + 1);
+    prefix.push(0.0_f64);
+    for sample in start..end {
+        prefix.push(prefix[prefix.len() - 1] + f64::from(input.frequency(sample)?));
+    }
+    let cost: Vec<_> = (0..prefix.len() - length)
+        .map(|offset| prefix[offset + length] - prefix[offset])
+        .collect();
+    // One window is a whole number of ripple cycles only by chance, so what it
+    // leaves behind still sways the minimum by a few samples. Averaging the
+    // cost over one cycle takes that out, and does so symmetrically.
+    let half = (sample_rate_hz as usize / (4 * SYNC_TONE_HZ as usize)).max(1);
+    let smoothed = |offset: usize| {
+        let from = offset.saturating_sub(half);
+        let to = (offset + half + 1).min(cost.len());
+        cost[from..to].iter().sum::<f64>() / (to - from) as f64
+    };
+    let (offset, total) = (0..cost.len())
+        .map(|offset| (offset, smoothed(offset)))
+        .min_by(|left, right| left.1.total_cmp(&right.1))?;
+    if total / length as f64 >= SYNC_LEVEL_HZ {
+        return None;
+    }
+    Some(start + offset as u64 + length as u64 / 2)
 }
 
 pub(super) fn push_bounded(history: &mut VecDeque<SyncObservation>, value: SyncObservation) {
@@ -212,5 +226,46 @@ mod tests {
             SstvDuration::from_picos(delay_ps),
         );
         assert_eq!(center, Some((start + pulse / 2) as u64));
+    }
+
+    /// The discriminator ripples at twice the tone, which puts the porch either
+    /// side of a pulse below the sync level for part of every cycle. Reading the
+    /// edges off the raw stream would stretch the pulse into that porch.
+    #[test]
+    fn refinement_survives_discriminator_ripple_around_the_pulse() {
+        let profile = RasterProfile::for_mode(Mode::Scottie2).unwrap();
+        let rate = 48_000;
+        let count = 8_000;
+        let pulse = (f64::from(rate) * profile.sync_duration_ps as f64 / 1.0e12) as usize;
+        let porch = (f64::from(rate) * 0.0015) as usize;
+        let start = 3_000;
+        // Only the trailing porch sits at the level the ripple drags under the
+        // sync threshold, as in a Scottie unit, so the stretch is one-sided.
+        let mut frequency = vec![1_900.0_f32; count];
+        frequency[start..start + pulse].fill(1_200.0);
+        frequency[start + pulse..start + pulse + porch].fill(1_500.0);
+        for (index, value) in frequency.iter_mut().enumerate() {
+            let phase = core::f32::consts::TAU * 2_400.0 * index as f32 / rate as f32;
+            *value += 250.0 * libm::sinf(phase);
+        }
+        let mut sync = vec![0.0_f32; count];
+        let envelope = start + pulse / 2 + (f64::from(rate) * 8.0e-3) as usize;
+        sync[envelope - 40..envelope + 40].fill(1.0);
+        let mut input = SampleBuffer::new(0);
+        input.append(DemodulatedBlock::new(0, &frequency, &sync), count);
+
+        let center = refine_center(
+            &input,
+            profile,
+            envelope as u64,
+            rate,
+            SstvDuration::from_picos(6_000_000_000),
+        )
+        .expect("a rippling pulse is still a pulse");
+        assert!(
+            center.abs_diff((start + pulse / 2) as u64) <= 4,
+            "center landed at {center} instead of {}",
+            start + pulse / 2
+        );
     }
 }

@@ -168,8 +168,13 @@ either side of the pulse. Both errors would displace the whole picture
 horizontally.
 
 Every measured sync center is therefore refined on the frequency stream, where
-the pulse is the interval below the level separating the 1200 Hz sync from the
-1500 Hz porch above it. The frequency stream's own group delay needs no
+the pulse is the window of one sync duration whose mean frequency is lowest.
+Sliding a window of the known length beats reading edges off a threshold on two
+counts: the discriminator ripples at twice the tone it tracks, which breaks a
+threshold into fragments, and a threshold crossing sits at a different point on
+each flank whenever the tones either side of the pulse differ. Displacing the
+window either way trades sync samples for higher ones, so its minimum is on the
+pulse whatever surrounds it. The frequency stream's own group delay needs no
 compensation at all: pixel windows are read from that same stream, so a raster
 placed on a frequency-domain center samples every pixel where its content
 actually is. Acquisition, live phase correction, and staged slant refinement all
@@ -194,7 +199,9 @@ and reports typed events and errors. Its responsibilities include:
   operator sees in MMSSTV too, instead of failing a reception over samples that
   were never received.
 - Family-specific RGB and luminance/chroma reconstruction.
-- Stable live raster-phase correction.
+- Stable live raster-phase correction. A correction may move the raster
+  backwards, so the working window keeps one raster period behind the unit being
+  decoded rather than trimming to its start.
 - Optional automatic stop based on synchronization history.
 - Optional bounded staging and deterministic whole-image reconstruction.
 

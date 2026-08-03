@@ -692,7 +692,7 @@ mod tests {
     use rstest::rstest;
 
     /// Measured delay of the band-pass and discriminator chain, in milliseconds.
-    const GROUP_DELAY_MS: f64 = 1.95;
+    const GROUP_DELAY_MS: f64 = 2.05;
 
     fn tone(samples: &mut Vec<f32>, rate: u32, frequency: f64, seconds: f64, phase: &mut f64) {
         for _ in 0..(rate as f64 * seconds).round() as usize {
@@ -752,6 +752,9 @@ mod tests {
     #[case(Mode::Robot72, 48_000)]
     #[case(Mode::Pd50, 48_000)]
     #[case(Mode::Martin2, 8_000)]
+    #[case(Mode::Scottie2, 8_000)]
+    #[case(Mode::Robot36, 8_000)]
+    #[case(Mode::Pd50, 8_000)]
     fn a_transmitted_edge_decodes_where_it_was_sent(#[case] mode: Mode, #[case] rate: u32) {
         let width = mode.spec().width() as usize;
         let size = ImageSize::new(width, mode.spec().height() as usize).unwrap();

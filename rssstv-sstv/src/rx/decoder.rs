@@ -885,11 +885,13 @@ impl RxDecoder {
         if !rebuilding {
             self.image_revision = self.image_revision.saturating_add(1);
         }
-        let discard = self
-            .decode
-            .clock
-            .expect("clock acquired")
-            .sample_at(self.profile.period_ps * self.decode.raster_unit as u64)?;
+        // One period of margin stays behind the current unit so that a live
+        // phase correction, which may move the raster backwards, still reaches
+        // the samples of the unit it corrects.
+        let discard =
+            self.decode.clock.expect("clock acquired").sample_at(
+                self.profile.period_ps * self.decode.raster_unit.saturating_sub(1) as u64,
+            )?;
         if !rebuilding {
             self.input
                 .as_mut()
@@ -1791,6 +1793,36 @@ mod tests {
             Mode::Martin2.spec().active_rows() as usize
         );
         assert_eq!(decoder.sync_observations().len(), 16);
+    }
+
+    /// A reception that locks onto an early offset and then sees the sync return
+    /// corrects its raster backwards, onto samples the previous unit's decode
+    /// had already stepped past.
+    #[test]
+    fn a_backward_phase_correction_still_reaches_its_unit() {
+        let (frequency, sync) = sampled_body(Mode::Scottie2, 311);
+        let (frequency, sync) =
+            shift_sync(&frequency, &sync, |run| Some(if run < 12 { 24 } else { 0 }));
+        let (decoder, events) = drive_configured(
+            Mode::Scottie2,
+            &frequency,
+            &sync,
+            RxConfig {
+                live_sync: true,
+                ..RxConfig::default()
+            },
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                RxEvent::PhaseAdjusted {
+                    displacement_samples,
+                    ..
+                } if *displacement_samples < 0
+            )),
+            "the raster never moved backwards: {events:?}"
+        );
+        assert_eq!(decoder.state(), RxState::Complete);
     }
 
     #[test]

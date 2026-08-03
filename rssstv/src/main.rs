@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use egui_system_fonts::{FontRegion, FontStyle};
+use egui_system_fonts::{FontPreset, FontStyle};
 
 mod app;
 mod audio;
@@ -16,6 +16,42 @@ mod receive;
 mod view;
 
 use app::App;
+
+/// Font families the interface is drawn with, in priority order.
+///
+/// The platform's own UI face is named rather than left to the font crate's
+/// list, which puts `Noto Sans JP` first. On Windows that resolves to
+/// `NotoSansJP-VF.ttf`, a variable font whose weight axis defaults to Thin;
+/// egui does not apply variable axes, so the whole interface would be drawn
+/// hairline.
+#[cfg(target_os = "windows")]
+const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
+#[cfg(target_os = "macos")]
+const UI_FONTS: [&str; 2] = ["Hiragino Sans", "Helvetica Neue"];
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const UI_FONTS: [&str; 3] = ["Noto Sans CJK JP", "Noto Sans", "DejaVu Sans"];
+
+/// Draws the interface with the platform's UI font.
+///
+/// The families are installed at the front of egui's list rather than as a
+/// fallback, so Latin and Japanese come from one face instead of mixing the
+/// bundled font with a system one. The crate's own presets follow as a
+/// backstop; when nothing at all matches, egui keeps its bundled fonts.
+fn install_fonts(ctx: &egui::Context) {
+    let families = UI_FONTS.iter().map(|name| (*name).to_owned()).collect();
+    let applied = egui_system_fonts::set_with_presets(
+        ctx,
+        [
+            FontPreset::Custom(families),
+            FontPreset::Japanese,
+            FontPreset::Latin,
+        ],
+        FontStyle::Sans,
+    );
+    if applied.is_empty() {
+        eprintln!("no system UI font matched; using the bundled fonts");
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let paths = paths::AppPaths::discover()?;
@@ -49,9 +85,7 @@ struct Interface {
 
 impl Interface {
     fn new(cc: &eframe::CreationContext<'_>, paths: paths::AppPaths) -> Self {
-        // egui ships Latin glyphs only, so the Japanese locale needs the
-        // platform's own fonts appended before any text is laid out.
-        egui_system_fonts::add_with_region(&cc.egui_ctx, FontRegion::Japanese, FontStyle::Sans);
+        install_fonts(&cc.egui_ctx);
 
         let app = App::new(paths);
         cc.egui_ctx.set_zoom_factor(app.ui_scale);

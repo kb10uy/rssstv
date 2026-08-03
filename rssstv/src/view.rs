@@ -7,8 +7,12 @@ use crate::menu;
 use crate::receive::Progress;
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
-const LIBRARY_HEIGHT: f32 = 246.0;
-const LIST_WIDTH: f32 = 236.0;
+/// Tall enough for the template and stock lists stacked in one column.
+const LIBRARY_HEIGHT: f32 = 340.0;
+const LIST_WIDTH: f32 = 260.0;
+const FIELD_LABEL_WIDTH: f32 = 46.0;
+const NR_LABEL_WIDTH: f32 = 26.0;
+const NR_WIDTH: f32 = 64.0;
 const SMALL: f32 = 12.0;
 const LABEL: f32 = 11.0;
 
@@ -218,7 +222,8 @@ fn mode_panel(ui: &mut Ui, app: &mut App) {
 fn dsp_panel(ui: &mut Ui, app: &mut App) {
     let mut toggled = None;
     ui.horizontal(|ui| {
-        let width = (ui.available_width() - 16.0) / 3.0;
+        let gaps = ui.spacing().item_spacing.x * (Dsp::ALL.len() - 1) as f32;
+        let width = (ui.available_width() - gaps) / Dsp::ALL.len() as f32;
         for dsp in Dsp::ALL {
             let label = RichText::new(app.i18n.text(dsp.label_key())).size(SMALL);
             let button = egui::Button::new(label)
@@ -235,20 +240,31 @@ fn dsp_panel(ui: &mut Ui, app: &mut App) {
 }
 
 fn qso_panel(ui: &mut Ui, app: &mut App) {
-    egui::Grid::new("qso").num_columns(2).show(ui, |ui| {
-        ui.label(RichText::new(app.i18n.text("qso-call")).size(SMALL));
-        if ui.text_edit_singleline(&mut app.qso.call).changed() {
+    // Text fields default to a width far wider than this panel, so every one
+    // of them is sized from the space actually available.
+    let gap = ui.spacing().item_spacing.x;
+    let full = ui.available_width();
+    let call_label = app.i18n.text("qso-call");
+    let rsv_label = app.i18n.text("qso-rsv");
+    let nr_label = app.i18n.text("qso-nr");
+
+    ui.horizontal(|ui| {
+        field_label(ui, &call_label);
+        let edit = egui::TextEdit::singleline(&mut app.qso.call)
+            .desired_width(full - FIELD_LABEL_WIDTH - gap);
+        if ui.add(edit).changed() {
             app.normalize_call();
         }
-        ui.end_row();
-
-        ui.label(RichText::new(app.i18n.text("qso-rsv")).size(SMALL));
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut app.qso.rsv);
-            ui.label(RichText::new(app.i18n.text("qso-nr")).size(SMALL));
-            ui.text_edit_singleline(&mut app.qso.number);
-        });
-        ui.end_row();
+    });
+    ui.horizontal(|ui| {
+        field_label(ui, &rsv_label);
+        let rsv_width = full - FIELD_LABEL_WIDTH - NR_LABEL_WIDTH - NR_WIDTH - gap * 3.0;
+        ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(rsv_width));
+        ui.add_sized(
+            [NR_LABEL_WIDTH, 0.0],
+            egui::Label::new(RichText::new(&nr_label).size(SMALL)),
+        );
+        ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(NR_WIDTH));
     });
     ui.horizontal(|ui| {
         pending(ui, app, "qso-record");
@@ -261,21 +277,36 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     });
 }
 
+fn field_label(ui: &mut Ui, label: &str) {
+    ui.add_sized(
+        [FIELD_LABEL_WIDTH, 0.0],
+        egui::Label::new(RichText::new(label).size(SMALL)),
+    );
+}
+
 fn library(ui: &mut Ui, app: &mut App) {
     ui.horizontal_top(|ui| {
-        let labels = ListLabels::new(app, "section-templates");
-        match entry_list(ui, &labels, &app.templates, &mut app.template) {
-            Some(ListAction::Reveal) => app.reveal_templates(),
-            Some(ListAction::Refresh) => app.refresh_templates(),
-            None => {}
-        }
+        ui.allocate_ui(egui::vec2(LIST_WIDTH, ui.available_height()), |ui| {
+            ui.vertical(|ui| {
+                // The two lists split the column evenly, so neither grows into
+                // the other as its contents change.
+                let height = (ui.available_height() - ui.spacing().item_spacing.y) / 2.0;
 
-        let labels = ListLabels::new(app, "section-stocks");
-        match entry_list(ui, &labels, &app.stocks, &mut app.stock) {
-            Some(ListAction::Reveal) => app.reveal_stocks(),
-            Some(ListAction::Refresh) => app.refresh_stocks(),
-            None => {}
-        }
+                let labels = ListLabels::new(app, "section-templates");
+                match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
+                    Some(ListAction::Reveal) => app.reveal_templates(),
+                    Some(ListAction::Refresh) => app.refresh_templates(),
+                    None => {}
+                }
+
+                let labels = ListLabels::new(app, "section-stocks");
+                match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
+                    Some(ListAction::Reveal) => app.reveal_stocks(),
+                    Some(ListAction::Refresh) => app.refresh_stocks(),
+                    None => {}
+                }
+            });
+        });
 
         composite(ui, app);
     });
@@ -308,48 +339,58 @@ impl ListLabels {
 fn entry_list(
     ui: &mut Ui,
     labels: &ListLabels,
+    height: f32,
     entries: &[Entry],
     selected: &mut Option<usize>,
 ) -> Option<ListAction> {
     let mut action = None;
-    ui.allocate_ui(egui::vec2(LIST_WIDTH, ui.available_height()), |ui| {
-        ui.horizontal(|ui| {
-            heading(ui, &labels.title);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("↻").on_hover_text(&labels.refresh).clicked() {
-                    action = Some(ListAction::Refresh);
-                }
-                if ui.button("📂").on_hover_text(&labels.reveal).clicked() {
-                    action = Some(ListAction::Reveal);
-                }
-            });
-        });
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.set_min_size(ui.available_size());
-            ScrollArea::vertical()
-                .id_salt(&labels.title)
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    if entries.is_empty() {
-                        ui.label(RichText::new(&labels.empty).size(LABEL).weak());
+    ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                heading(ui, &labels.title);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.button("↻").on_hover_text(&labels.refresh).clicked() {
+                        action = Some(ListAction::Refresh);
                     }
-                    for (index, entry) in entries.iter().enumerate() {
-                        let row = ui.selectable_label(
-                            *selected == Some(index),
-                            RichText::new(&entry.name).size(SMALL),
-                        );
-                        if !entry.geometry.is_empty() {
-                            row.clone()
-                                .on_hover_text(RichText::new(&entry.geometry).size(LABEL));
-                        }
-                        if row.clicked() {
-                            *selected = Some(index);
-                        }
+                    if ui.button("📂").on_hover_text(&labels.reveal).clicked() {
+                        action = Some(ListAction::Reveal);
                     }
                 });
+            });
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                ScrollArea::vertical()
+                    .id_salt(&labels.title)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if entries.is_empty() {
+                            ui.label(RichText::new(&labels.empty).size(LABEL).weak());
+                        }
+                        for (index, entry) in entries.iter().enumerate() {
+                            if entry_row(ui, entry, *selected == Some(index)).clicked() {
+                                *selected = Some(index);
+                            }
+                        }
+                    });
+            });
         });
     });
     action
+}
+
+/// One file in a library list.
+///
+/// A button spanning the list is used rather than a label so the highlight
+/// covers the whole row, and so the geometry can sit at the far end of the
+/// same row instead of in a tooltip.
+fn entry_row(ui: &mut Ui, entry: &Entry, selected: bool) -> egui::Response {
+    ui.add(
+        egui::Button::new(RichText::new(&entry.name).size(SMALL))
+            .right_text(RichText::new(&entry.geometry).size(LABEL).weak())
+            .selected(selected)
+            .frame_when_inactive(false)
+            .min_size(egui::vec2(ui.available_width(), 0.0)),
+    )
 }
 
 fn composite(ui: &mut Ui, app: &mut App) {
@@ -476,6 +517,26 @@ mod tests {
         for label in &labels {
             harness.get_by_label(label);
         }
+    }
+
+    /// A populated library exercises the entry rows, which an interface built
+    /// over empty directories never reaches.
+    #[test]
+    fn a_populated_library_renders() {
+        let mut app = App::headless();
+        app.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
+        app.template = Some(0);
+        app.stocks = vec![
+            crate::app::Entry::sample("antenna.png", "640×496"),
+            crate::app::Entry::sample("shack.png", "320×256"),
+        ];
+        app.stock = Some(1);
+
+        // Rows carry the geometry alongside the name, so the accessible label
+        // is the two of them together rather than the file name alone.
+        let harness = render(&mut app);
+        harness.get_by_label_contains("field-day.kdl");
+        harness.get_by_label_contains("antenna.png");
     }
 
     #[test]

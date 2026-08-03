@@ -101,6 +101,16 @@ pub struct Entry {
 }
 
 impl Entry {
+    /// Builds an entry that names no real file, for tests.
+    #[cfg(test)]
+    pub(crate) fn sample(name: &str, geometry: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            geometry: geometry.to_owned(),
+            path: PathBuf::from(name),
+        }
+    }
+
     fn new(path: PathBuf, geometry: String) -> Self {
         let name = path
             .file_name()

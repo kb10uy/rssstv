@@ -11,9 +11,8 @@ const SIDE_PANEL_WIDTH: f32 = 320.0;
 /// Default height of the library row; the operator can drag it.
 const LIBRARY_HEIGHT: f32 = 260.0;
 const LIST_WIDTH: f32 = 260.0;
-const FIELD_LABEL_WIDTH: f32 = 54.0;
+const FIELD_LABEL_WIDTH: f32 = 64.0;
 
-const NR_WIDTH: f32 = 64.0;
 const SMALL: f32 = 12.0;
 const LABEL: f32 = 11.0;
 
@@ -163,24 +162,23 @@ fn pending(ui: &mut Ui, app: &App, key: &str) {
 }
 
 fn side_panel(ui: &mut Ui, app: &mut App) {
-    receive_controls(ui, app);
+    ui.add_space(4.0);
+    let status_title = app.i18n.text("section-rx-status");
+    section(ui, &status_title, |ui| receive_controls(ui, app));
     ui.add_space(16.0);
-    let title = app.i18n.text("section-qso");
-    section(ui, &title, |ui| qso_panel(ui, app));
+    let qso_title = app.i18n.text("section-qso");
+    section(ui, &qso_title, |ui| qso_panel(ui, app));
 }
 
 fn receive_controls(ui: &mut Ui, app: &mut App) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        heading(ui, &app.i18n.text("section-rx-status"));
-        rx_status(ui, app);
-        ui.add_space(12.0);
-        heading(ui, &app.i18n.text("section-mode"));
-        mode_panel(ui, app);
-        ui.add_space(12.0);
-        heading(ui, &app.i18n.text("section-dsp"));
-        dsp_panel(ui, app);
-    });
+    ui.set_width(ui.available_width());
+    rx_status(ui, app);
+    ui.add_space(12.0);
+    heading(ui, &app.i18n.text("section-mode"));
+    mode_panel(ui, app);
+    ui.add_space(12.0);
+    heading(ui, &app.i18n.text("section-dsp"));
+    dsp_panel(ui, app);
 }
 
 fn heading(ui: &mut Ui, label: &str) {
@@ -271,9 +269,9 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         // RSV and the serial number are one report, so they share a label and
         // sit next to each other rather than being introduced separately.
         field_label(ui, &report_label);
-        let rsv_width = fields - NR_WIDTH - gap;
-        ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(rsv_width));
-        ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(NR_WIDTH));
+        let field_width = (fields - gap) / 2.0;
+        ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
+        ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
     });
     ui.horizontal(|ui| {
         pending(ui, app, "qso-record");
@@ -295,11 +293,15 @@ fn field_label(ui: &mut Ui, label: &str) {
     ui.allocate_ui_with_layout(
         egui::vec2(FIELD_LABEL_WIDTH, height),
         Layout::left_to_right(Align::Center),
-        |ui| ui.label(RichText::new(label).size(SMALL)),
+        |ui| {
+            ui.set_min_size(egui::vec2(FIELD_LABEL_WIDTH, height));
+            ui.label(RichText::new(label).size(SMALL));
+        },
     );
 }
 
 fn library(ui: &mut Ui, app: &mut App) {
+    ui.add_space(2.0);
     ui.horizontal_top(|ui| {
         let height = ui.available_height();
 

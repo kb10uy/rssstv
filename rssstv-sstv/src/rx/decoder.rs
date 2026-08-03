@@ -525,25 +525,29 @@ impl RxDecoder {
         let refit = RasterClock::from_estimate(estimate.source_epoch, smoothed)?;
         // A refit the retained samples cannot cover is simply left for a later
         // attempt, so tracking never destroys a usable image.
-        if self.rebuild_live(refit, units).is_ok() {
-            self.last_slant_unit = Some(units);
+        if let Ok(redrawn) = self.rebuild_live(refit, units) {
+            self.last_slant_unit = Some(redrawn);
             self.rate_estimates.clear();
             self.phase_displacements.clear();
             self.last_phase_adjustment = None;
             self.queue_event(RxEvent::SlantAdjusted {
-                unit: units,
+                unit: redrawn,
                 effective_sample_rate_hz: smoothed,
             });
         }
         Ok(())
     }
 
-    /// Redraws `units` decoded raster units under `clock` and resumes decoding.
-    fn rebuild_live(&mut self, clock: RasterClock, units: usize) -> Result<(), SstvError> {
+    /// Redraws the decoded raster under `clock` and resumes decoding.
+    ///
+    /// Returns the number of units redrawn, which may be fewer than `units`
+    /// when the refit reaches past the samples received so far.
+    fn rebuild_live(&mut self, clock: RasterClock, units: usize) -> Result<usize, SstvError> {
         let staged = self.staged.take().expect("staging checked by the caller");
-        if let Err(error) = self.validate_staged_coverage(&staged, clock, units) {
+        let units = self.covered_units(&staged, clock, units);
+        if units == 0 {
             self.staged = Some(staged);
-            return Err(error);
+            return Err(SstvError::InsufficientStagedSync);
         }
         let mut rebuilding = DecodeState::new(self.decode.image.size());
         rebuilding.clock = Some(clock);
@@ -576,14 +580,16 @@ impl RxDecoder {
                 .ok_or(SstvError::TimeOverflow)?,
         )?;
         // Rows are delivered by the live path, not by a rebuild, so the
-        // delivery bookkeeping carries over rather than restarting at zero.
-        self.decode.delivered_rows = old_decode.delivered_rows;
-        self.decode.state = old_decode.state;
+        // delivery bookkeeping is restated for the units that were redrawn.
+        self.decode.delivered_rows = units * self.mode.spec().rows_per_raster_unit() as usize;
+        self.decode.state = RxState::Decoding {
+            completed_rows: self.decode.delivered_rows,
+        };
         self.decode.pending_events = old_decode.pending_events;
         self.input = Some(staged.tail_from(resume));
         self.staged = Some(staged);
         self.image_revision = self.image_revision.saturating_add(1);
-        Ok(())
+        Ok(units)
     }
 
     fn append(
@@ -696,6 +702,43 @@ impl RxDecoder {
         let width = self.decode.image.size().width();
         let (_, end) = self.pixel_window(clock, self.decode.raster_unit, last, width - 1)?;
         Ok(end)
+    }
+
+    /// Returns how many leading raster units `staged` covers under `clock`.
+    ///
+    /// A refit that runs faster than the current estimate places already
+    /// decoded units later in the stream, sometimes past the samples received
+    /// so far. Those units are redrawn as the audio arrives, so the correction
+    /// applies to what is covered instead of being rejected outright.
+    fn covered_units(&self, staged: &SampleBuffer, clock: RasterClock, units: usize) -> usize {
+        (0..units)
+            .take_while(|unit| self.unit_is_covered(staged, clock, *unit))
+            .count()
+    }
+
+    fn unit_is_covered(&self, staged: &SampleBuffer, clock: RasterClock, unit: usize) -> bool {
+        let width = self.decode.image.size().width();
+        let covered = |sample: u64| staged.frequency(sample).is_some();
+        for segment in self.profile.pixels().iter() {
+            let Ok((first, _)) = self.pixel_window(clock, unit, segment, 0) else {
+                return false;
+            };
+            let Ok((_, end)) = self.pixel_window(clock, unit, segment, width - 1) else {
+                return false;
+            };
+            if !covered(first) || !covered(end - 1) {
+                return false;
+            }
+        }
+        if self.profile.selector_window_ps().is_some() {
+            let Ok((first, end)) = self.selector_window(clock, unit) else {
+                return false;
+            };
+            if !covered(first) || !covered(end - 1) {
+                return false;
+            }
+        }
+        true
     }
 
     fn validate_staged_coverage(
@@ -1934,10 +1977,14 @@ mod tests {
         (frequency, sync)
     }
 
+    /// Startup acquisition is left off the rate fit so the decoder begins with
+    /// the nominal clock. On clean synthetic sync the five-period startup fit
+    /// is accurate enough to hide the very error under test, whereas on real
+    /// signals it lands thousands of parts per million out.
     fn config(live_slant: bool, samples: usize) -> RxConfig {
         RxConfig {
             live_sync: true,
-            fit_initial_rate: true,
+            fit_initial_rate: false,
             live_slant,
             auto_stop: false,
             sync_detector_delay: crate::time::SstvDuration::ZERO,
@@ -1964,7 +2011,7 @@ mod tests {
     fn live_tracking_corrects_a_mistimed_raster_before_completion() {
         let mode = Mode::Martin2;
         let expected = source_image(mode);
-        let (frequency, sync) = mistimed_body(mode, expected.clone(), 400.0);
+        let (frequency, sync) = mistimed_body(mode, expected.clone(), 4_000.0);
 
         let (tracked, events) =
             drive_configured(mode, &frequency, &sync, config(true, frequency.len()));
@@ -1979,6 +2026,10 @@ mod tests {
         );
         let tracked_error = mean_abs_error(tracked.image(), &expected);
         let untracked_error = mean_abs_error(untracked.image(), &expected);
+        assert!(
+            untracked_error > 8.0,
+            "the untracked reception was supposed to be slanted: {untracked_error}"
+        );
         assert!(
             tracked_error < untracked_error * 0.5,
             "live tracking scored {tracked_error} against {untracked_error} untracked"

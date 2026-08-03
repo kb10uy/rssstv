@@ -132,6 +132,12 @@ mirrors MMSSTV's `AutoStopJob()` real-time adjustment; see
 [mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
 `Staging::Memory`.
 
+A refit that runs faster than the previous estimate places the decoded units
+later in the stream, sometimes past the audio received so far. The redraw
+therefore covers as many leading units as the retained samples reach and the
+remainder is decoded again as the audio arrives, rather than the correction
+being rejected for lack of coverage.
+
 Staged refinement stays as the more precise final pass, matching MMSSTV's
 separate `CorrectSlant()`. With live tracking on it is a refinement of an
 already-straight image rather than the only thing standing between the operator

@@ -43,7 +43,7 @@ const LIVE_SLANT_MIN_THRESHOLD_PPM: f64 = 8.0;
 const PHASE_AGREEMENT: usize = 3;
 const PHASE_HOLDOFF_UNITS: usize = 6;
 const MIN_PHASE_DISPLACEMENT: u64 = 2;
-const PIXEL_GUARD: f64 = 0.25;
+const PIXEL_GUARD: f64 = 0.1875;
 
 /// Result of rebuilding an image from staged immutable samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -633,9 +633,9 @@ impl RxDecoder {
 
     /// Returns the half-open sample range averaged for one transmitted pixel.
     ///
-    /// A guard band at both edges keeps sub-sample timing error from pulling a
-    /// neighbouring porch or component into the average. Pixels too short to
-    /// hold a guarded sample fall back to the reading nearest their centre.
+    /// A narrow edge guard excludes samples that can belong to an adjacent
+    /// component after sub-sample rounding. Pixels too short to contain a
+    /// guarded sample fall back to the reading nearest their centre.
     fn pixel_window(
         &self,
         clock: RasterClock,
@@ -929,8 +929,8 @@ impl RxDecoder {
     fn level_at(&self, unit: usize, segment: PixelSegment, x: usize) -> Result<u8, SstvError> {
         let clock = self.decode.clock.expect("clock acquired");
         let window = self.pixel_window(clock, unit, segment, x)?;
-        // Averaging the guarded pixel interior suppresses boundary transitions
-        // without reducing the demodulated stream's sample rate.
+        // Averaging most of the transmitted pixel interval suppresses random
+        // frequency noise without reducing the demodulated stream's sample rate.
         Ok(self.frequency_to_level(self.mean_frequency(window)?))
     }
 
@@ -1326,9 +1326,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Mode::Martin1, 2)]
-    #[case(Mode::Martin2, 1)]
-    fn pixel_window_averages_only_what_a_pixel_can_hold(#[case] mode: Mode, #[case] expected: u64) {
+    #[case(Mode::Martin1, 3)]
+    #[case(Mode::Martin2, 2)]
+    fn pixel_window_averages_the_expanded_transmitted_interval(
+        #[case] mode: Mode,
+        #[case] expected: u64,
+    ) {
         let decoder = RxDecoder::new(mode, SAMPLE_RATE).unwrap();
         let clock = RasterClock::from_estimate(0.0, f64::from(SAMPLE_RATE)).unwrap();
         let segment = decoder.segment(ScanChannel::Green, 0).unwrap();

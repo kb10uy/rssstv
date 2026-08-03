@@ -350,7 +350,8 @@ detection, conventional VIS decoding, zero-crossing AFC measurement, and
 Hilbert frequency discrimination. Its synchronization envelope is causal, with
 its calibrated delay relative to the frequency output carried as metadata rather
 than implemented by shifting the sample array. It requires at least a 6000 Hz
-sample rate.
+sample rate. The Hilbert transformer spans 100 Hz to 100 Hz below Nyquist, as
+in MMSSTV; the preceding receive band-pass filter limits the SSTV audio band.
 
 The live receive path does not resample or decimate PCM. Each captured mono
 sample produces one demodulated frequency and synchronization value after VIS
@@ -359,10 +360,11 @@ phase span still emits one result per input sample, while its explicit
 decimation is limited to displays and offline file conversion.
 
 Raster conversion intentionally differs from MMSSTV's first-sample selection.
-The Rust decoder averages the guarded central portion of every transmitted
-pixel interval. This is a deterministic anti-noise reconstruction policy rather
-than a downsampled intermediate stream. Live phase correction adjusts the
-raster clock without inserting or deleting demodulated samples.
+The Rust decoder averages the central five-eighths of the transmitted pixel
+interval, leaving a narrow guard against adjacent-component contamination. This
+is a deterministic anti-noise reconstruction policy rather than a downsampled
+intermediate stream. Live phase correction adjusts the raster clock without
+inserting or deleting demodulated samples.
 
 `decode-wav` composes the existing receive stages packet by packet. It uses the
 first WAV channel, enables live raster synchronization and bounded in-memory

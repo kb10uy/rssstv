@@ -219,12 +219,12 @@ preformatted text for values such as dates and times. A missing variable is a
 render error. Variable names consist of dot-separated ASCII identifier segments.
 `$${name}` produces the literal text `${name}`.
 
-The desktop composition worker currently supplies `${mycall}`,
-`${station.callsign}`, `${station.qth}`, and `${station.grid}` from the station
-dialog, `${contact.callsign}` from the QSO call field, `${report.sent}` from
-RSV, and `${report.number}` from the serial-number field. `${mycall}` is retained for compatibility with `encode-wav`. Image
-assets are resolved relative to the template first, then from the application's
-shared `assets` directory; an `assets/` prefix is stripped for the shared lookup.
+The desktop composition worker currently supplies `${station.callsign}`,
+`${station.qth}`, and `${station.grid}` from the station dialog,
+`${contact.callsign}` from the QSO call field, `${report.sent}` from RSV, and
+`${report.number}` from the serial-number field. Image assets are resolved
+relative to the template first, then from the application's shared `assets`
+directory; an `assets/` prefix is stripped for the shared lookup.
 
 ## Text Rendering
 
@@ -336,5 +336,6 @@ cargo run -p encode-wav -- --callsign N0CALL template.kdl background.png robot36
 ```
 
 It cover-resizes and center-crops the background, supplies that prepared image
-to every `rximage` layer, defines `${mycall}` from the normalized callsign, and
+to every `rximage` layer, defines `${station.callsign}` from the normalized
+callsign, and
 resolves template image assets relative to the template file.

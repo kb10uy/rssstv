@@ -116,7 +116,7 @@ The complete offline transmit integration is the `encode-wav` path:
 ```text
 background BMP/JPEG/PNG
   -> cover resize and center crop to mode dimensions
-KDL template + ${mycall} + background as rximage
+KDL template + ${station.callsign} + background as rximage
   -> RGBA overlay and RGB composition
   -> rssstv-sstv::TransmissionEncoder
   -> VOX + VIS + raster + footer + FSKID + trailing silence
@@ -423,7 +423,7 @@ that refinement; enabling it after reception has started cannot reconstruct the
 missing unstaged prefix and therefore takes effect on the next reception.
 
 `encode-wav` prepares the background at the selected mode's transport size,
-renders the template with `${mycall}` and the background available as
+renders the template with `${station.callsign}` and the background available as
 `rximage`, and streams a complete framed transmission through
 `rssstv-modulator` into `hound::WavWriter`. It uses bounded 1024-sample PCM
 blocks rather than generating the complete waveform in memory.

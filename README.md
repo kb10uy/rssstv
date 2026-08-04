@@ -35,8 +35,8 @@ complete SSTV transmission as streaming 48 kHz mono 16-bit PCM:
 cargo run -p encode-wav -- [--callsign CALLSIGN] <TEMPLATE.kdl> <BACKGROUND_IMAGE> <MODE> <OUTPUT.wav>
 ```
 
-The callsign defaults to `N0CALL`, is uppercased, replaces `${mycall}` in the
-template, and is sent as the trailing FSKID. The prepared background is also
+The callsign defaults to `N0CALL`, is uppercased, replaces `${station.callsign}`
+in the template, and is sent as the trailing FSKID. The prepared background is also
 available to `rximage` layers. Backgrounds are resized to cover the selected
 mode and center-cropped. Template image assets are resolved relative to the
 template file.

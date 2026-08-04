@@ -275,7 +275,6 @@ fn cover_image(source: &image::RgbImage, width: u32, height: u32) -> image::RgbI
 fn variables(request: &ComposeRequest) -> Variables {
     let mut variables = Variables::new();
     for (name, value) in [
-        ("mycall", &request.station_callsign),
         ("station.callsign", &request.station_callsign),
         ("station.qth", &request.station_qth),
         ("station.grid", &request.station_grid),

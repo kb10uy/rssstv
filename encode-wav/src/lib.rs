@@ -192,7 +192,7 @@ fn render_frame(
 
 fn template_variables(callsign: &str) -> Variables {
     let mut variables = Variables::new();
-    variables.insert("mycall", VariableValue::Text(callsign.to_owned()));
+    variables.insert("station.callsign", VariableValue::Text(callsign.to_owned()));
     variables
 }
 
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn supplies_callsign_template_variable() {
         assert_eq!(
-            template_variables("N0CALL").get("mycall"),
+            template_variables("N0CALL").get("station.callsign"),
             Some(&VariableValue::Text("N0CALL".to_owned()))
         );
     }

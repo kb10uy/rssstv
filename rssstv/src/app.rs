@@ -166,6 +166,10 @@ pub struct App {
     pub history_format: crate::storage::history::HistoryFormat,
     pub qso: Qso,
     pub station_callsign: String,
+    pub station_qth: String,
+    pub station_grid: String,
+    /// Set while the station dialog is open in front of the interface.
+    pub station_open: bool,
     pub templates: Vec<Entry>,
     pub template: Option<usize>,
     pub stocks: Vec<Entry>,
@@ -297,6 +301,9 @@ impl App {
             history_format: settings.history_format,
             qso: Qso::default(),
             station_callsign: settings.station_callsign.trim().to_ascii_uppercase(),
+            station_qth: settings.station_qth.clone(),
+            station_grid: settings.station_grid.clone(),
+            station_open: false,
             templates: Vec::new(),
             template: None,
             stocks: Vec::new(),
@@ -353,6 +360,8 @@ impl App {
                 .as_ref()
                 .map(|device| device.name().to_owned()),
             station_callsign: self.station_callsign.clone(),
+            station_qth: self.station_qth.clone(),
+            station_grid: self.station_grid.clone(),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
             rx_mode: self.rx_mode,
@@ -488,6 +497,11 @@ impl App {
         if normalized != self.station_callsign {
             self.station_callsign = normalized;
         }
+        self.request_composition();
+    }
+
+    /// Composes again after an edit to what the station says about itself.
+    pub fn station_changed(&mut self) {
         self.request_composition();
     }
 
@@ -757,6 +771,8 @@ impl App {
             mode: self.tx_mode,
             received_image: self.received_image.clone(),
             station_callsign: self.station_callsign.clone(),
+            station_qth: self.station_qth.clone(),
+            station_grid: self.station_grid.clone(),
             contact_callsign: self.qso.call.clone(),
             report: self.qso.rsv.clone(),
             number: self.qso.number.clone(),
@@ -831,20 +847,21 @@ impl App {
     }
 
     pub fn transmit_problem(&self) -> Option<String> {
+        // Reported first, and required whether or not the identifier is sent:
+        // a transmission is made by a station, and this is the only thing that
+        // names it. The rest is about this transmission; this is about being
+        // allowed to make one at all.
+        if let Err(error) = FskId::new(self.station_callsign.trim()) {
+            return Some(self.i18n.text_with(
+                "error-invalid-station-call",
+                &[("error", error.to_string().into())],
+            ));
+        }
         if self.prepared_frame.is_none() {
             return Some(self.i18n.text("error-no-transmit-frame"));
         }
         if self.audio.output_device.is_none() {
             return Some(self.i18n.text("error-no-output-device"));
-        }
-        // The callsign only has to be sendable as an identifier when one is
-        // being sent. With the identifier off it is a template variable like
-        // any other, and nothing about it can stop a transmission.
-        if let Err(error) = self.station_id().transpose() {
-            return Some(self.i18n.text_with(
-                "error-invalid-station-call",
-                &[("error", error.to_string().into())],
-            ));
         }
         None
     }
@@ -1420,19 +1437,48 @@ mod tests {
         assert!(!app.audio.vis_restart());
     }
 
-    /// The callsign only has to be sendable as an identifier while one is being
-    /// sent, so turning the identifier off stops it from blocking transmission.
+    /// The setting decides whether the identifier is sent, not whether the
+    /// station needs a callsign: a transmission is made by a station either
+    /// way, and nothing else names it.
     #[test]
-    fn the_identifier_setting_decides_whether_the_callsign_must_be_sendable() {
+    fn the_identifier_setting_decides_only_whether_the_callsign_is_sent() {
         let mut app = App::headless();
         app.station_callsign = "!".to_owned();
-
         assert!(app.send_fskid);
         assert!(matches!(app.station_id(), Some(Err(_))));
 
         app.send_fskid = false;
 
+        // Nothing is sent now, but the station still has to be named: the
+        // callsign is reported before anything else a transmission needs.
         assert!(app.station_id().is_none());
+        let problem = app.transmit_problem().expect("an unusable callsign");
+        assert_ne!(problem, app.i18n.text("error-no-transmit-frame"));
+
+        app.station_callsign = "JA1ABC".to_owned();
+
+        assert_eq!(
+            app.transmit_problem(),
+            Some(app.i18n.text("error-no-transmit-frame"))
+        );
+    }
+
+    /// The station dialog writes the same fields the composition reads, and a
+    /// callsign typed into it reaches the transmit check uppercased.
+    #[test]
+    fn station_details_are_kept_and_normalized() {
+        let mut app = App::headless();
+
+        app.station_callsign = " ja1abc ".to_owned();
+        app.normalize_station_callsign();
+        app.station_qth = "Chiyoda, Tokyo".to_owned();
+        app.station_grid = "PM95uq".to_owned();
+
+        assert_eq!(app.station_callsign, "JA1ABC");
+        let settings = app.settings();
+        assert_eq!(settings.station_callsign, "JA1ABC");
+        assert_eq!(settings.station_qth, "Chiyoda, Tokyo");
+        assert_eq!(settings.station_grid, "PM95uq");
     }
 
     #[test]

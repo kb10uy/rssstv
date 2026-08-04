@@ -15,6 +15,7 @@ menu-open-assets = Open Assets Folder
 menu-open-config = Open Config Folder
 menu-quit = Quit
 menu-language = Language
+menu-station = Station…
 menu-transmit = Transmit
 menu-receive = Reception
 menu-history = Received Images
@@ -40,8 +41,13 @@ dsp-lms = LMS
 dsp-slant = Slant
 
 section-qso = QSO
+station-title = Station
+station-callsign = Callsign
+station-qth = QTH
+station-grid = Grid
+station-callsign-required = A callsign is required to transmit.
+station-close = Close
 qso-call = Call
-qso-station-call = My call
 qso-rsv-nr = RSV/NR
 qso-clear = Clear
 

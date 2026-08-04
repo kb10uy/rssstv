@@ -15,6 +15,7 @@ menu-open-assets = アセットフォルダーを開く
 menu-open-config = 設定フォルダーを開く
 menu-quit = 終了
 menu-language = 言語
+menu-station = 自局情報…
 menu-transmit = 送信
 menu-receive = 受信
 menu-history = 受信画像
@@ -40,8 +41,13 @@ dsp-lms = LMS
 dsp-slant = 傾き補正
 
 section-qso = QSO
+station-title = 自局情報
+station-callsign = コールサイン
+station-qth = 運用地
+station-grid = グリッド
+station-callsign-required = 送信にはコールサインが必要です。
+station-close = 閉じる
 qso-call = コール
-qso-station-call = 自局コール
 qso-rsv-nr = RSV/NR
 qso-clear = クリア
 

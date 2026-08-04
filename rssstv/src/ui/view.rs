@@ -55,8 +55,64 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
         .size_range(112.0..=640.0)
         .show(ui, |ui| library(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
+    station_dialog(ui, app);
     device_fault_modal(ui, app);
     action
+}
+
+/// Edits what the station says about itself.
+///
+/// Kept out of the QSO panel and behind the Settings menu because none of it
+/// belongs to the contact being worked: it is set once for the operator and
+/// then left alone, while the panel beside the image is for the station on the
+/// air right now.
+fn station_dialog(ui: &mut Ui, app: &mut App) {
+    if !app.station_open {
+        return;
+    }
+
+    let title = app.i18n.text("station-title");
+    let note = app.i18n.text("station-callsign-required");
+    let close = app.i18n.text("station-close");
+    let labels = ["station-callsign", "station-qth", "station-grid"].map(|key| app.i18n.text(key));
+
+    let mut callsign_edited = false;
+    let mut edited = false;
+    let mut done = false;
+    let response = egui::Modal::new(Id::new("station")).show(ui.ctx(), |ui| {
+        ui.set_max_width(360.0);
+        ui.heading(title);
+        ui.add_space(8.0);
+        let width = ui.available_width() - FIELD_LABEL_WIDTH - ui.spacing().item_spacing.x;
+        callsign_edited = station_field(ui, &labels[0], &mut app.station_callsign, width);
+        edited = station_field(ui, &labels[1], &mut app.station_qth, width);
+        edited |= station_field(ui, &labels[2], &mut app.station_grid, width);
+        ui.add_space(4.0);
+        ui.label(RichText::new(note).size(LABEL).weak());
+        ui.add_space(16.0);
+        done = ui.button(close).clicked();
+    });
+
+    // Normalizing the callsign composes again on its own, and does it with the
+    // uppercased text rather than what was typed.
+    if callsign_edited {
+        app.normalize_station_callsign();
+    } else if edited {
+        app.station_changed();
+    }
+    if done || response.should_close() {
+        app.station_open = false;
+    }
+}
+
+/// One labelled field of the station dialog, returning whether it was edited.
+fn station_field(ui: &mut Ui, label: &str, text: &mut String, width: f32) -> bool {
+    ui.horizontal(|ui| {
+        field_label(ui, label);
+        ui.add(egui::TextEdit::singleline(text).desired_width(width))
+            .changed()
+    })
+    .inner
 }
 
 /// Reports a device that stopped, and offers to open it again.
@@ -415,16 +471,8 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     let full = ui.available_width();
     let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
-    let station_label = app.i18n.text("qso-station-call");
     let report_label = app.i18n.text("qso-rsv-nr");
 
-    ui.horizontal(|ui| {
-        field_label(ui, &station_label);
-        let edit = egui::TextEdit::singleline(&mut app.station_callsign).desired_width(fields);
-        if ui.add(edit).changed() {
-            app.normalize_station_callsign();
-        }
-    });
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
         let edit = egui::TextEdit::singleline(&mut app.qso.call).desired_width(fields);
@@ -882,6 +930,30 @@ mod tests {
         }
 
         assert!(used <= 80.0, "the library insisted on {used} points");
+    }
+
+    /// The station details are edited in front of the interface and dismissed
+    /// from the dialog itself, so opening it must not be a state the operator
+    /// is left in.
+    #[test]
+    fn the_station_dialog_closes_from_its_own_button() {
+        let mut app = App::headless();
+        app.station_open = true;
+        let title = app.i18n.text("station-title");
+        let close = app.i18n.text("station-close");
+
+        {
+            let mut harness = Harness::new_ui(|ui| {
+                let model = menu::model(&app);
+                view(ui, &mut app, &model);
+            });
+            harness.run();
+            harness.get_by_label(&title);
+            harness.get_by_label(&close).click();
+            harness.run();
+        }
+
+        assert!(!app.station_open);
     }
 
     #[test]

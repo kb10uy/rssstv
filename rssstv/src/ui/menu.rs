@@ -30,6 +30,7 @@ pub enum Action {
     SelectDevice(String),
     SelectOutputDevice(String),
     SelectLocale(Locale),
+    ShowStation,
     ToggleSendFskid,
     ToggleVisRestart,
     ToggleAutoHistory,
@@ -104,6 +105,11 @@ pub fn model(app: &App) -> Vec<Menu> {
         Menu {
             label: text("menu-settings"),
             items: vec![
+                Item::Command {
+                    label: text("menu-station"),
+                    action: Action::ShowStation,
+                },
+                Item::Separator,
                 Item::Submenu {
                     label: text("input-device"),
                     items: device_items(app),
@@ -245,6 +251,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::SelectDevice(name) => app.select_device_named(&name),
         Action::SelectOutputDevice(name) => app.select_output_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
+        Action::ShowStation => app.station_open = true,
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,

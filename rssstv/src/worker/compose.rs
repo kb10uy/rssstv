@@ -29,6 +29,8 @@ pub struct ComposeRequest {
     /// The image `rximage` layers show.
     pub received_image: Arc<RgbImage>,
     pub station_callsign: String,
+    pub station_qth: String,
+    pub station_grid: String,
     pub contact_callsign: String,
     pub report: String,
     pub number: String,
@@ -275,6 +277,8 @@ fn variables(request: &ComposeRequest) -> Variables {
     for (name, value) in [
         ("mycall", &request.station_callsign),
         ("station.callsign", &request.station_callsign),
+        ("station.qth", &request.station_qth),
+        ("station.grid", &request.station_grid),
         ("contact.callsign", &request.contact_callsign),
         ("report.sent", &request.report),
         ("report.number", &request.number),
@@ -339,6 +343,8 @@ mod tests {
                 Rgb8::default(),
             )),
             station_callsign: "JA1ABC".to_owned(),
+            station_qth: "Chiyoda, Tokyo".to_owned(),
+            station_grid: "PM95uq".to_owned(),
             contact_callsign: "N0CALL".to_owned(),
             report: "595".to_owned(),
             number: "001".to_owned(),
@@ -351,6 +357,10 @@ mod tests {
         assert_eq!(
             variables.get("contact.callsign"),
             Some(&VariableValue::Text("N0CALL".to_owned()))
+        );
+        assert_eq!(
+            variables.get("station.grid"),
+            Some(&VariableValue::Text("PM95uq".to_owned()))
         );
     }
 

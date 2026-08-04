@@ -201,7 +201,7 @@ text "To ${contact.callsign} from ${station.callsign}"
 Variables belong to named domains rather than a flat table of single-character
 macros. Anticipated values include:
 
-- `station.callsign`, `station.name`, and `station.qth`
+- `station.callsign`, `station.qth`, `station.grid`, and `station.name`
 - `contact.callsign`, `contact.name`, and `contact.qth`
 - `report.sent` and `report.received`
 - `radio.frequency` and `radio.band`
@@ -219,10 +219,10 @@ preformatted text for values such as dates and times. A missing variable is a
 render error. Variable names consist of dot-separated ASCII identifier segments.
 `$${name}` produces the literal text `${name}`.
 
-The desktop composition worker currently supplies `${mycall}` and
-`${station.callsign}` from My call, `${contact.callsign}` from the QSO call
-field, `${report.sent}` from RSV, and `${report.number}` from the serial-number
-field. `${mycall}` is retained for compatibility with `encode-wav`. Image
+The desktop composition worker currently supplies `${mycall}`,
+`${station.callsign}`, `${station.qth}`, and `${station.grid}` from the station
+dialog, `${contact.callsign}` from the QSO call field, `${report.sent}` from
+RSV, and `${report.number}` from the serial-number field. `${mycall}` is retained for compatibility with `encode-wav`. Image
 assets are resolved relative to the template first, then from the application's
 shared `assets` directory; an `assets/` prefix is stripped for the shared lookup.
 

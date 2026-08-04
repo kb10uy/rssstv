@@ -391,7 +391,8 @@ marked shared are built once and reused across tabs.
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Receive | Three toggle buttons |
 | Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
-| QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
+| QSO panel | Shared | `text_input` for the contact call, RSV, and serial number |
+| Station dialog | Modal | `text_input` for the callsign, QTH, and grid locator |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
 | Status bar | Shared | Text row: devices, decoded callsigns, and faults |
@@ -400,6 +401,14 @@ Only controls that do something are built. A feature that has not arrived yet
 is absent rather than shown disabled: a dead button occupies the place its
 working version will take and says nothing the operator can act on. The menu is
 the exception, where a disabled entry names a whole area still to be filled in.
+
+What the station says about itself — its callsign, where it is operating from,
+and its grid locator — is edited in a dialog opened from the Settings menu, not
+in the QSO panel. None of it belongs to the contact being worked: it is set once
+for the operator, while the panel beside the image is for the station on the air
+right now. The callsign is required to transmit whether or not the identifier is
+being sent, because it is the only thing that names the station making the
+transmission, and it is the first thing the transmit check reports.
 
 Settings that are chosen once and then left alone live in the menu rather than
 beside the image: whether a transmission ends with the station identifier,

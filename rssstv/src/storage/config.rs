@@ -39,6 +39,10 @@ pub struct Settings {
     pub input_device: Option<String>,
     pub output_device: Option<String>,
     pub station_callsign: String,
+    /// Where the station is operating from, in plain words.
+    pub station_qth: String,
+    /// The station's Maidenhead grid locator.
+    pub station_grid: String,
     pub template: Option<String>,
     pub stock: Option<String>,
     pub rx_mode: Mode,
@@ -60,6 +64,8 @@ impl Default for Settings {
             input_device: None,
             output_device: None,
             station_callsign: String::new(),
+            station_qth: String::new(),
+            station_grid: String::new(),
             template: None,
             stock: None,
             rx_mode: DEFAULT_RX_MODE,
@@ -140,7 +146,14 @@ impl Config {
                 .unwrap_or(defaults.locale),
             input_device: owned(&self.document, Some("audio"), "input-device"),
             output_device: owned(&self.document, Some("audio"), "output-device"),
-            station_callsign: owned(&self.document, None, "callsign").unwrap_or_default(),
+            // The callsign used to sit at the top level, before the station
+            // had anything else to say about itself. A file written by that
+            // version is still read.
+            station_callsign: owned(&self.document, Some("station"), "callsign")
+                .or_else(|| owned(&self.document, None, "callsign"))
+                .unwrap_or_default(),
+            station_qth: owned(&self.document, Some("station"), "qth").unwrap_or_default(),
+            station_grid: owned(&self.document, Some("station"), "grid").unwrap_or_default(),
             template: owned(&self.document, Some("library"), "template"),
             stock: owned(&self.document, Some("library"), "stock"),
             rx_mode: string(&self.document, Some("receive"), "mode")
@@ -209,12 +222,19 @@ impl Config {
             "output-device",
             settings.output_device.as_deref().map(value),
         );
-        set(
-            document,
-            None,
-            "callsign",
-            (!settings.station_callsign.is_empty()).then(|| value(&settings.station_callsign)),
-        );
+        set(document, None, "callsign", None);
+        for (key, text) in [
+            ("callsign", &settings.station_callsign),
+            ("qth", &settings.station_qth),
+            ("grid", &settings.station_grid),
+        ] {
+            set(
+                document,
+                Some("station"),
+                key,
+                (!text.is_empty()).then(|| value(text)),
+            );
+        }
         set(
             document,
             Some("library"),
@@ -411,6 +431,8 @@ mod tests {
             input_device: Some("Line In (Interface)".to_owned()),
             output_device: Some("Speakers (Interface)".to_owned()),
             station_callsign: "JA1ABC".to_owned(),
+            station_qth: "Chiyoda, Tokyo".to_owned(),
+            station_grid: "PM95uq".to_owned(),
             template: Some("field-day.kdl".to_owned()),
             stock: Some("antenna.png".to_owned()),
             rx_mode: Mode::Robot36,

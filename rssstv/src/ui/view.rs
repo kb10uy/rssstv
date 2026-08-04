@@ -135,76 +135,56 @@ fn tab_selector(ui: &mut Ui, app: &mut App) {
 }
 
 fn main_pane(ui: &mut Ui, app: &mut App) {
-    let badge = badge(app);
+    let state = state(app);
     let geometry = geometry_label(app);
     let fraction = app.decoded_fraction();
 
     // The bar is claimed first so it takes the height its text needs and the
     // canvas fills exactly what is left. Reserving a fixed height for it
     // instead left whatever it did not use as a gap under the image.
-    Panel::bottom(Id::new("action-bar")).show(ui, |ui| action_bar(ui, &geometry));
-    let area = canvas::image_view(ui, app.active_raster_mut(), fraction);
-    ui.painter().text(
-        area.min + egui::vec2(12.0, 12.0),
-        egui::Align2::LEFT_TOP,
-        badge,
-        egui::FontId::proportional(LABEL),
-        Color32::from_rgb(200, 200, 210),
-    );
+    Panel::bottom(Id::new("action-bar")).show(ui, |ui| action_bar(ui, &geometry, &state));
+    canvas::image_view(ui, app.active_raster_mut(), fraction);
 }
 
-fn badge(app: &App) -> String {
-    let name = app.active_mode().spec().name();
-    let mode = arg(name);
+/// What the tab in front is doing, for the line under the image.
+///
+/// It names no mode, because the line it goes on already does: this is the
+/// state alone.
+fn state(app: &App) -> String {
     match app.tab {
         Tab::Transmit => match app.tx_snapshot.phase {
-            TxPhase::Priming => app
-                .i18n
-                .text_with("badge-transmit-preparing", &[("mode", mode)]),
+            TxPhase::Priming => app.i18n.text("state-transmit-preparing"),
             TxPhase::Producing | TxPhase::Draining => match app.tx_progress() {
                 TxProgress::Scanning { rows, total } => app.i18n.text_with(
-                    "badge-transmitting",
+                    "state-transmitting",
                     &[
-                        ("mode", mode),
                         ("row", number(rows as u32)),
                         ("total", number(total as u32)),
                     ],
                 ),
-                TxProgress::Identifying => app
-                    .i18n
-                    .text_with("badge-transmit-identifying", &[("mode", mode)]),
-                _ => app
-                    .i18n
-                    .text_with("badge-transmit-leader", &[("mode", mode)]),
+                TxProgress::Identifying => app.i18n.text("state-transmit-identifying"),
+                _ => app.i18n.text("state-transmit-leader"),
             },
-            TxPhase::Complete => app
-                .i18n
-                .text_with("badge-transmit-complete", &[("mode", mode)]),
-            _ if app.can_transmit() => app
-                .i18n
-                .text_with("badge-transmit-ready", &[("mode", mode)]),
-            _ => app
-                .i18n
-                .text_with("badge-transmit-not-ready", &[("mode", mode)]),
+            TxPhase::Complete => app.i18n.text("state-transmit-complete"),
+            _ if app.can_transmit() => app.i18n.text("state-transmit-ready"),
+            _ => app.i18n.text("state-transmit-not-ready"),
         },
         Tab::Receive => {
             let progress = app.audio.snapshot().progress;
             // A stopped reception leaves a partial image on the canvas, so it
             // has to read differently from having nothing at all.
             if progress == Progress::Stopped {
-                return app.i18n.text_with("badge-stopped", &[("mode", mode)]);
+                return app.i18n.text("state-stopped");
             }
             if !progress.is_active() && progress != Progress::Complete {
-                return app.i18n.text("badge-waiting");
+                return app.i18n.text("state-waiting");
             }
             if progress == Progress::Complete {
-                app.i18n.text_with("badge-complete", &[("mode", mode)])
+                app.i18n.text("state-complete")
             } else {
                 let percent = (progress.fraction() * 100.0).round();
-                app.i18n.text_with(
-                    "badge-receiving",
-                    &[("mode", mode), ("percent", number(percent))],
-                )
+                app.i18n
+                    .text_with("state-receiving", &[("percent", number(percent))])
             }
         }
     }
@@ -225,10 +205,15 @@ fn geometry_label(app: &App) -> String {
     )
 }
 
-fn action_bar(ui: &mut Ui, geometry: &str) {
+/// The line under the image: what is being shown, and what is happening to it.
+///
+/// The state used to be painted over the picture itself, which put text on top
+/// of the one thing on the tab worth looking at.
+fn action_bar(ui: &mut Ui, geometry: &str, state: &str) {
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new(geometry).size(SMALL));
+            ui.label(RichText::new(state).size(SMALL));
+            ui.label(RichText::new(geometry).size(SMALL).weak());
         });
     });
 }

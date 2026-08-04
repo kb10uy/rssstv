@@ -202,8 +202,8 @@ so matching it again mid-reception would restart continuously.
 A reception whose signal stops arriving returns to signal search without
 discarding its partial image. The worker watches for progress that has not
 moved for the stall window, captures the decoder image, and starts a fresh
-receive session. The captured frame stays on the canvas while the badge reads
-as waiting for the next signal. When at least 65 percent of the rows were
+receive session. The captured frame stays on the canvas while the state line
+under it reads as waiting for the next signal. When at least 65 percent of the rows were
 decoded, the frame is also offered to automatic history; with automatic
 history enabled it is stored in the received-image directory. Earlier
 interruptions remain visible but are not retained in history. This is a normal
@@ -386,7 +386,7 @@ marked shared are built once and reused across tabs.
 | Tab selector | Shared | Two selectable buttons above the first side-panel box |
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
-| Action bar | Shared | Mode and size text |
+| State line | Shared | Mode, size, and what the tab is doing, under the image |
 | Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Receive | Three toggle buttons |
@@ -442,8 +442,10 @@ expressed by a plain image view:
 
 - The undecoded region below the current scan position, and the boundary line
   marking that position.
-- The status badge, progress indicator, and any diagnostic overlay, composited
-  in the same pass and in the same coordinate space as the raster.
+- The progress indicator and any diagnostic overlay, composited in the same
+  pass and in the same coordinate space as the raster. The state is not among
+  them: it reads on the line under the image rather than over the one thing on
+  the tab worth looking at.
 - Letterboxing of the mode's aspect ratio inside a resizable area, without
   distorting the raster.
 
@@ -529,8 +531,8 @@ publishes the sample window the image raster occupies within the transmission,
 and the interface maps the samples consumed by the device callback onto a row
 within that window. The callback is the clock rather than the worker's
 generated count, because the worker runs ahead to keep the queue full. The
-leader and the station identifier fall outside the window and are named in the
-badge and status bar instead of being reported as a row. Playback
+leader and the station identifier fall outside the window and are named on the
+state line and status bar instead of being reported as a row. Playback
 underrun is reported as a transmission error, and Stop TX closes playback and
 cancels the worker. TX remains actionable while prerequisites are missing; its
 hover text and the status bar report the missing frame, output device, or valid

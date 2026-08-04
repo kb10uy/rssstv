@@ -22,12 +22,19 @@ what a station running more than one program is doing anyway.
 
 `rssstv-rig` speaks the `rigctld` text protocol on a plain TCP socket.
 
-Every command is sent in the protocol's extended form, prefixed with `+`. That
-form answers with a terminating `RPRT <status>` line whatever the command was,
-which is the only way to know where one answer ends. The operator's own
-commands are exactly the ones this crate cannot know the shape of, so a
-terminator that does not depend on the command is a requirement rather than a
-convenience.
+Every command is sent in the protocol's extended form, prefixed with `+`.
+Without it, a `rigctld` that succeeds at a `get` command answers with the value
+alone and no terminator, so how many lines an answer runs to is a fact about
+the particular command. The operator's commands are exactly the ones this crate
+has no such fact about. The extended form answers with a terminating
+`RPRT <status>` line whatever the command was and whether or not it succeeded,
+which makes the end of an answer readable without knowing what was asked. That
+it also labels its values, so nothing has to be read by position, is a
+convenience on top.
+
+Commands are sent one at a time and each answer is read to its terminator
+before the next command is written. Nothing is pipelined, so a sequence of
+commands is a sequence of round trips.
 
 On connecting, the session asks `\chk_vfo` to find out whether `rigctld` was
 started with `--vfo` and therefore wants every command addressed to a VFO. The
@@ -39,6 +46,29 @@ argument either, so a refusal settles as no VFO rather than as a failure.
 
 A command the rig refuses is reported with Hamlib's own status number and
 leaves the connection open. A transport that fails ends the session.
+
+### One Command per Line
+
+A command must be one command. Whitespace is normalized when a script is read
+and a newline is whitespace, so a command can never carry one and each is
+written to the socket as exactly one line — that much holds by construction.
+What does not hold by construction is the other direction: two commands' worth
+of words on a single line, such as `T 1 T 0`.
+
+That reaches `rigctld` as one line and one answer is read back, but the far end
+may find a second command in the words left over and answer twice. The extra
+`RPRT` then stays in the stream and every later answer is read one behind. The
+damage is bounded — a read that never terminates hits the command timeout and
+ends the session, and the interface reports a failed rig rather than
+transmitting — but an answer read one behind can also be a stale `RPRT 0`,
+which is a keying failure mistaken for success. Write one command per line and
+the question does not arise.
+
+This is the shape of the risk rather than an observed failure: exactly how
+`rigctld` treats the words left over on a line has not been measured here, and
+the tests in this crate answer from a stand-in rather than from Hamlib. Nothing
+detects the desynchronization if it happens; draining the socket before each
+command would, and is not implemented.
 
 ## Configuration
 
@@ -86,7 +116,8 @@ An event holds one string: the commands to send, one per line, written exactly
 as they would be typed at `rigctl`. Both the short forms and the long
 `\set_level` forms work, because neither is interpreted here — the line is
 passed through, and `rigctld` splits it on whitespace itself. A blank line is
-spacing rather than a command.
+spacing rather than a command, and a line is one command rather than several,
+for the reason given under [One Command per Line](#one-command-per-line).
 
 A single command needs no ceremony:
 
@@ -101,6 +132,17 @@ containing a backslash, which is every Hamlib command written in full:
 transmit = '''
 \set_mode PKTUSB 3000
 \set_ptt 1'''
+```
+
+Each line is its own round trip, in the order it was written:
+
+```text
+-> +\set_mode PKTUSB 3000
+<- set_mode:
+<- RPRT 0
+-> +\set_ptt 1
+<- set_ptt:
+<- RPRT 0
 ```
 
 The commands attached to an event run in the order they are written and stop at

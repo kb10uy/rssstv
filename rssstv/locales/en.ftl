@@ -67,6 +67,19 @@ action-transmit = TX
 action-stop-transmit = Stop TX
 action-open-folder = Open folder
 action-refresh = Refresh
+action-rig-connect = Connect to rigctld
+action-rig-retry = Reconnect
+
+rig-address = { $address }
+rig-state-disconnected = Not connected
+rig-state-connecting = Connecting…
+rig-state-receiving = Connected
+rig-state-transmitting = Keyed
+rig-state-failed = Failed
+rig-frequency = { $frequency } MHz · { $band }
+rig-frequency-out-of-band = { $frequency } MHz
+rig-frequency-unknown = Frequency not read
+rig-commands-note = Commands are edited in config.toml.
 
 section-templates = Templates
 section-stocks = Stock images
@@ -95,6 +108,7 @@ status-afc = AFC { $offset } Hz
 error-no-transmit-frame = No transmit image has been composed yet
 error-no-output-device = Select an output device first
 error-invalid-station-call = Invalid station callsign: { $error }
+error-rig-unavailable = Rig control is not ready: { $error }
 
 geometry = { $mode } · { $width }×{ $height }
 

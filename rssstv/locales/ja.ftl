@@ -67,6 +67,19 @@ action-transmit = TX
 action-stop-transmit = TX停止
 action-open-folder = フォルダーを開く
 action-refresh = 再読み込み
+action-rig-connect = rigctld に接続
+action-rig-retry = 接続し直す
+
+rig-address = { $address }
+rig-state-disconnected = 未接続
+rig-state-connecting = 接続中…
+rig-state-receiving = 接続済み
+rig-state-transmitting = 送信中
+rig-state-failed = 接続失敗
+rig-frequency = { $frequency } MHz · { $band }
+rig-frequency-out-of-band = { $frequency } MHz
+rig-frequency-unknown = 周波数未取得
+rig-commands-note = コマンドは config.toml で編集します。
 
 section-templates = テンプレート
 section-stocks = ストック画像
@@ -95,6 +108,7 @@ status-afc = AFC { $offset } Hz
 error-no-transmit-frame = 送信画像がまだ合成されていません
 error-no-output-device = 出力デバイスを選択してください
 error-invalid-station-call = 自局コールが不正です: { $error }
+error-rig-unavailable = リグコントロールが使用できません: { $error }
 
 geometry = { $mode } · { $width }×{ $height }
 

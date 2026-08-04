@@ -28,6 +28,7 @@ use crate::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
         receive::{Frame, Progress},
+        rig::{RigSnapshot, RigState, RigWorker},
         transmit::{TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
@@ -212,6 +213,8 @@ pub struct App {
     /// what a rig needs is a station's own business rather than something a
     /// menu could offer a list of.
     pub rig: RigSettings,
+    /// What rig control last reported, read once per frame.
+    pub rig_snapshot: RigSnapshot,
     paths: AppPaths,
     config: Config,
     /// The settings as last written to disk.
@@ -255,6 +258,12 @@ pub struct App {
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
+    rig_worker: Option<RigWorker>,
+    /// Set while a transmission has asked for the rig to be keyed.
+    ///
+    /// A transmission that keyed the rig owes it an unkeying however it ends,
+    /// so this outlives the reason the transmission stopped.
+    rig_keyed: bool,
     /// How many decoded station identifiers have reached the QSO panel.
     ///
     /// The worker republishes every identifier it has decoded on each
@@ -354,6 +363,7 @@ impl App {
             device_fault: None,
             ui_scale: settings.ui_scale,
             rig: settings.rig.clone(),
+            rig_snapshot: RigSnapshot::default(),
             paths,
             config,
             saved: settings.clone(),
@@ -368,6 +378,8 @@ impl App {
             playback: None,
             tx_worker: None,
             playback_started: false,
+            rig_worker: None,
+            rig_keyed: false,
             adopted_callsigns: 0,
             platform,
             activity: Activity::default(),
@@ -651,9 +663,56 @@ impl App {
         {
             self.select_rx_mode(mode);
         }
+        self.poll_rig();
         self.poll_transmit();
         self.refresh_timed_composition();
         self.report_activity();
+    }
+
+    /// Starts, stops, and reads rig control.
+    ///
+    /// The switch in the menu is the whole of the decision, so it is acted on
+    /// here rather than through a path of its own: a worker exists exactly
+    /// while the operator has asked for one.
+    fn poll_rig(&mut self) {
+        match (self.rig.enabled, self.rig_worker.is_some()) {
+            (true, false) => {
+                self.rig_worker = Some(RigWorker::spawn(&self.rig));
+                self.rig_snapshot = RigSnapshot::default();
+            }
+            (false, true) => {
+                // A rig switched off mid-transmission is still a keyed rig,
+                // and the request has to go before the channel closes for the
+                // worker to see it at all.
+                self.unkey_rig();
+                self.rig_worker = None;
+                self.rig_snapshot = RigSnapshot::default();
+            }
+            _ => {}
+        }
+        if let Some(worker) = self.rig_worker.as_ref() {
+            self.rig_snapshot = worker.latest();
+        }
+    }
+
+    /// Gives back the keying a transmission asked for, if it asked for any.
+    fn unkey_rig(&mut self) {
+        if !self.rig_keyed {
+            return;
+        }
+        self.rig_keyed = false;
+        if let Some(worker) = self.rig_worker.as_ref() {
+            worker.receive();
+        }
+    }
+
+    /// Whether the audio may start.
+    ///
+    /// A transmission that keyed the rig waits for the rig to say it is
+    /// transmitting, because the lead-in the rig needs to switch over is time
+    /// anything sent into it is simply lost.
+    const fn rig_ready_to_send(&self) -> bool {
+        !self.rig_keyed || matches!(self.rig_snapshot.state, RigState::Transmitting)
     }
 
     /// Chooses which modes a reception may start in without a VIS header.
@@ -899,7 +958,17 @@ impl App {
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
+        // A rig that refused one of the operator's commands has not been keyed,
+        // so the transmission it was keyed for cannot go out.
+        if self.rig_keyed
+            && let Some(error) = self.rig_snapshot.error.clone()
+        {
+            self.tx_error = Some(error);
+            self.stop_transmit_with(TxPhase::Failed);
+            return;
+        }
         let should_start = !self.playback_started
+            && self.rig_ready_to_send()
             && matches!(
                 self.tx_snapshot.phase,
                 TxPhase::Producing | TxPhase::Draining
@@ -957,7 +1026,28 @@ impl App {
         if self.audio.output_device.is_none() {
             return Some(self.i18n.text("error-no-output-device"));
         }
-        None
+        // Reported last, because it is the only problem here the operator can
+        // decide not to have: switching rig control off transmits anyway.
+        self.rig_problem()
+    }
+
+    /// Reports why the rig could not be handed a transmission, if it could not.
+    ///
+    /// A rig that was asked to key and did not leaves a transmission nobody
+    /// hears, so it stops one rather than being let through quietly.
+    fn rig_problem(&self) -> Option<String> {
+        if !self.rig.enabled || self.rig_snapshot.state.is_ready() {
+            return None;
+        }
+        let detail = self
+            .rig_snapshot
+            .error
+            .clone()
+            .unwrap_or_else(|| self.i18n.text(self.rig_snapshot.state.label_key()));
+        Some(
+            self.i18n
+                .text_with("error-rig-unavailable", &[("error", detail.into())]),
+        )
     }
 
     /// Returns the identifier a transmission would end with, if any.
@@ -996,6 +1086,12 @@ impl App {
         self.tx_error = None;
         self.playback = Some(playback);
         self.tx_gain.set_travel(self.tx_volume);
+        // Asked for before the audio is generated, so the lead-in the rig
+        // needs runs alongside filling the queue rather than after it.
+        if let Some(worker) = self.rig_worker.as_ref() {
+            worker.transmit();
+            self.rig_keyed = true;
+        }
         self.tx_worker = Some(TxWorker::spawn(
             writer,
             self.tx_mode,
@@ -1016,6 +1112,7 @@ impl App {
         self.playback = None;
         self.tx_worker = None;
         self.playback_started = false;
+        self.unkey_rig();
         self.tx_snapshot.phase = phase;
         // Whatever was chosen while the transmission was running takes effect
         // now that nothing is being sent.
@@ -1386,6 +1483,76 @@ mod tests {
         app.poll_audio();
 
         assert_eq!(app.qso.call, "JA1ABC");
+    }
+
+    /// The switch in the menu is the whole of the decision, so a worker has to
+    /// come and go with it rather than needing anything else to be asked.
+    #[test]
+    fn a_rig_worker_exists_exactly_while_rig_control_is_switched_on() {
+        let mut app = App::headless();
+        assert!(app.rig_worker.is_none());
+
+        app.rig.enabled = true;
+        app.poll_rig();
+        assert!(app.rig_worker.is_some());
+
+        app.rig.enabled = false;
+        app.poll_rig();
+        assert!(app.rig_worker.is_none());
+        assert_eq!(app.rig_snapshot.state, RigState::Disconnected);
+    }
+
+    /// The lead-in is time anything sent into the rig is lost, so a keyed
+    /// transmission has to wait out the rig before any audio leaves.
+    #[rstest]
+    #[case::nothing_was_keyed(false, RigState::Receiving, true)]
+    #[case::still_switching_over(true, RigState::Receiving, false)]
+    #[case::keyed_and_settled(true, RigState::Transmitting, true)]
+    fn audio_waits_until_the_rig_says_it_is_transmitting(
+        #[case] keyed: bool,
+        #[case] state: RigState,
+        #[case] expected: bool,
+    ) {
+        let mut app = App::headless();
+        app.rig_keyed = keyed;
+        app.rig_snapshot.state = state;
+
+        assert_eq!(app.rig_ready_to_send(), expected);
+    }
+
+    /// Transmitting into a rig that was asked to key and did not is a
+    /// transmission nobody hears, so it is refused rather than sent.
+    #[rstest]
+    #[case::not_connected_yet(true, RigState::Connecting, true)]
+    #[case::failed(true, RigState::Failed, true)]
+    #[case::ready(true, RigState::Receiving, false)]
+    #[case::keyed(true, RigState::Transmitting, false)]
+    // Nothing was asked of the rig, so nothing it says can stop a transmission.
+    #[case::switched_off(false, RigState::Failed, false)]
+    fn rig_control_that_is_not_ready_stops_a_transmission(
+        #[case] enabled: bool,
+        #[case] state: RigState,
+        #[case] blocked: bool,
+    ) {
+        let mut app = App::headless();
+        app.rig.enabled = enabled;
+        app.rig_snapshot.state = state;
+
+        assert_eq!(app.rig_problem().is_some(), blocked);
+    }
+
+    /// What the rig said is more use than the state it ended up in, so the
+    /// failure is what the operator is shown when there is one.
+    #[test]
+    fn a_rig_failure_is_reported_in_the_rig_s_own_words() {
+        let mut app = App::headless();
+        app.rig.enabled = true;
+        app.rig_snapshot.state = RigState::Failed;
+        app.rig_snapshot.error = Some("connection refused".to_owned());
+
+        let problem = app.rig_problem().unwrap();
+
+        assert!(problem.contains("connection refused"), "{problem}");
     }
 
     /// A platform that records what the interface asked it for.

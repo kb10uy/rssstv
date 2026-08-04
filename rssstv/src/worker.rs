@@ -7,4 +7,5 @@
 pub mod audio;
 pub mod compose;
 pub mod receive;
+pub mod rig;
 pub mod transmit;

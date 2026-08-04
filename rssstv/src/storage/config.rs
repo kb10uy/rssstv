@@ -10,9 +10,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rssstv_rig::{Band, Command, DEFAULT_ADDRESS, Event, Script};
 use rssstv_sstv::mode::Mode;
 use rssstv_template::valid_variable_name;
-use toml_edit::{DocumentMut, Item, Table, value};
+use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
 
 use crate::{app::DspFlags, i18n::Locale, storage::history::HistoryFormat};
 
@@ -29,6 +30,25 @@ pub const DEFAULT_TX_VOLUME: f32 = 1.0;
 /// A stored value is clamped to this, so a hand-edited file cannot shrink the
 /// interface past the point where the setting could be changed back.
 pub const UI_SCALE_RANGE: core::ops::RangeInclusive<f32> = 0.5..=3.0;
+/// How often the rig is asked what it is tuned to, in seconds.
+pub const DEFAULT_POLL_SECONDS: f32 = 1.0;
+/// How long the rig is given to settle between keying and the first sample.
+///
+/// A rig switching to transmit takes a moment its own audio does not wait for,
+/// and anything sent inside it is simply lost. A fifth of a second covers the
+/// relays in a station that has them; a rig that switches faster only wastes
+/// it.
+pub const DEFAULT_LEAD_IN_SECONDS: f32 = 0.2;
+/// How long the carrier is held after the last sample has been played.
+pub const DEFAULT_TAIL_SECONDS: f32 = 0.05;
+/// The longest either side of a transmission may be padded by, in seconds.
+pub const KEYING_SECONDS_RANGE: core::ops::RangeInclusive<f32> = 0.0..=5.0;
+/// How far apart polls may be asked to be, in seconds.
+///
+/// Zero is a value rather than a floor: it turns polling off, which is what an
+/// operator wants who keys through rig control but reads the frequency off the
+/// front panel.
+pub const POLL_SECONDS_RANGE: core::ops::RangeInclusive<f32> = 0.0..=60.0;
 
 /// Everything the application restores on the next start.
 ///
@@ -62,6 +82,44 @@ pub struct Settings {
     pub auto_history: bool,
     pub history_format: HistoryFormat,
     pub ui_scale: f32,
+    pub rig: RigSettings,
+}
+
+/// How the station's rig is reached, and what it is told.
+///
+/// The commands are the operator's own. What a rig wants around a
+/// transmission is a property of that rig and of the station around it — a
+/// data mode, a monitor level, an amplifier on a second port — so the
+/// application supplies the moments and the operator supplies the commands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RigSettings {
+    /// Whether the application connects at all.
+    pub enabled: bool,
+    /// Where `rigctld` is listening.
+    pub address: String,
+    /// How often the frequency is read, in seconds; zero never reads it.
+    pub poll_seconds: f32,
+    /// How long after keying the first sample is sent, in seconds.
+    pub lead_in_seconds: f32,
+    /// How long after the last sample the rig is unkeyed, in seconds.
+    pub tail_seconds: f32,
+    pub script: Script,
+}
+
+impl Default for RigSettings {
+    fn default() -> Self {
+        Self {
+            // A station with no rigctld running is the state every first run
+            // is in, and trying to reach one would only produce an error the
+            // operator did not ask for.
+            enabled: false,
+            address: DEFAULT_ADDRESS.to_owned(),
+            poll_seconds: DEFAULT_POLL_SECONDS,
+            lead_in_seconds: DEFAULT_LEAD_IN_SECONDS,
+            tail_seconds: DEFAULT_TAIL_SECONDS,
+            script: Script::default(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -86,6 +144,7 @@ impl Default for Settings {
             auto_history: true,
             history_format: HistoryFormat::default(),
             ui_scale: DEFAULT_UI_SCALE,
+            rig: RigSettings::default(),
         }
     }
 }
@@ -194,6 +253,7 @@ impl Config {
             ui_scale: float(&self.document, None, "ui-scale")
                 .map(|scale| scale.clamp(*UI_SCALE_RANGE.start(), *UI_SCALE_RANGE.end()))
                 .unwrap_or(defaults.ui_scale),
+            rig: rig_settings(&self.document),
         }
     }
 
@@ -325,6 +385,7 @@ impl Config {
             "mode",
             Some(value(settings.tx_mode.spec().name())),
         );
+        store_rig(document, &settings.rig);
         self.error = self.write().err().map(|error| error.to_string());
     }
 
@@ -366,6 +427,150 @@ fn store_custom_variables(document: &mut DocumentMut, variables: &BTreeMap<Strin
     for (name, text) in variables {
         table[name.as_str()] = value(text);
     }
+}
+
+/// Reads how the rig is reached and what it is told.
+fn rig_settings(document: &DocumentMut) -> RigSettings {
+    let defaults = RigSettings::default();
+    RigSettings {
+        enabled: boolean(document, Some("rig"), "enabled").unwrap_or(defaults.enabled),
+        address: owned(document, Some("rig"), "address").unwrap_or(defaults.address),
+        poll_seconds: seconds(
+            document,
+            "poll-interval",
+            &POLL_SECONDS_RANGE,
+            defaults.poll_seconds,
+        ),
+        lead_in_seconds: seconds(
+            document,
+            "lead-in",
+            &KEYING_SECONDS_RANGE,
+            defaults.lead_in_seconds,
+        ),
+        tail_seconds: seconds(
+            document,
+            "tail",
+            &KEYING_SECONDS_RANGE,
+            defaults.tail_seconds,
+        ),
+        script: rig_script(document),
+    }
+}
+
+/// Reads a rig duration, held within what the application can act on.
+fn seconds(
+    document: &DocumentMut,
+    key: &str,
+    range: &core::ops::RangeInclusive<f32>,
+    default: f32,
+) -> f32 {
+    float(document, Some("rig"), key)
+        .map(|seconds| seconds.clamp(*range.start(), *range.end()))
+        .unwrap_or(default)
+}
+
+/// Reads the commands the operator attached to each event and band.
+///
+/// A key that is absent leaves the default in place, and one that is present
+/// replaces it outright, including with nothing: an operator whose rig is
+/// keyed by VOX writes `transmit = []` and means it.
+fn rig_script(document: &DocumentMut) -> Script {
+    let mut script = Script::default();
+    if let Some(table) = subtable(document, "rig", "commands") {
+        for event in Event::ALL {
+            if let Some(commands) = table.get(event.config_name()).and_then(command_list) {
+                script.set(event, commands);
+            }
+        }
+    }
+    if let Some(table) = subtable(document, "rig", "bands") {
+        for (name, item) in table {
+            if let Some(band) = Band::from_name(name)
+                && let Some(commands) = command_list(item)
+            {
+                script.set_band(band, commands);
+            }
+        }
+    }
+    script
+}
+
+/// Reads a list of commands, each written as the words it is sent as.
+///
+/// An entry that is not a list of words is dropped rather than refused, which
+/// is how every other unusable value in this file is treated. What is left is
+/// still what the operator meant by the rest of the list.
+fn command_list(item: &Item) -> Option<Vec<Command>> {
+    Some(
+        item.as_array()?
+            .iter()
+            .filter_map(|entry| {
+                Command::new(entry.as_array()?.iter().filter_map(Value::as_str)).ok()
+            })
+            .collect(),
+    )
+}
+
+/// Writes the rig section back, commands and all.
+///
+/// The commands are written even when they are the defaults, because the
+/// configuration file is where they are edited: an operator who has to add
+/// the keys before changing them has no way to learn the keys exist.
+fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
+    set(document, Some("rig"), "enabled", Some(value(rig.enabled)));
+    set(
+        document,
+        Some("rig"),
+        "address",
+        Some(value(rig.address.as_str())),
+    );
+    for (key, seconds) in [
+        ("poll-interval", rig.poll_seconds),
+        ("lead-in", rig.lead_in_seconds),
+        ("tail", rig.tail_seconds),
+    ] {
+        set(
+            document,
+            Some("rig"),
+            key,
+            // Rounded to the millisecond on the way out, so a widened f32 does
+            // not write 0.20000000298023224 into a file meant to be read.
+            Some(value((f64::from(seconds) * 1_000.0).round() / 1_000.0)),
+        );
+    }
+    let commands = subtable_mut(document, "rig", "commands");
+    for event in Event::ALL {
+        commands[event.config_name()] = value(command_array(rig.script.commands(event)));
+    }
+    store_rig_bands(document, &rig.script);
+}
+
+/// Writes the per-band commands, leaving the bands that survived in place.
+fn store_rig_bands(document: &mut DocumentMut, script: &Script) {
+    if script.bands().next().is_none() {
+        if let Some(rig) = document.get_mut("rig").and_then(Item::as_table_mut) {
+            rig.remove("bands");
+        }
+        return;
+    }
+    let named: Vec<&str> = script.bands().map(|(band, _)| band.name()).collect();
+    let table = subtable_mut(document, "rig", "bands");
+    table.retain(|name, _| named.contains(&name));
+    for (band, commands) in script.bands() {
+        table[band.name()] = value(command_array(commands));
+    }
+}
+
+fn command_array(commands: &[Command]) -> Value {
+    let mut array = Array::new();
+    for command in commands {
+        let mut words = Array::new();
+        for word in command.words() {
+            words.push(word.as_str());
+        }
+        array.push(words);
+    }
+    Value::Array(array)
 }
 
 /// Resolves a stored mode name, tolerating a hand-edited difference in case.
@@ -424,6 +629,21 @@ fn set(document: &mut DocumentMut, table: Option<&str>, key: &str, item: Option<
         Some(name) => table_mut(document, name),
     };
     target[key] = item;
+}
+
+fn subtable<'a>(document: &'a DocumentMut, parent: &str, name: &str) -> Option<&'a Table> {
+    document.get(parent)?.as_table()?.get(name)?.as_table()
+}
+
+/// Returns `parent.name` as a table, replacing anything else stored under it.
+fn subtable_mut<'a>(document: &'a mut DocumentMut, parent: &str, name: &str) -> &'a mut Table {
+    let entry = table_mut(document, parent)
+        .entry(name)
+        .or_insert(Item::Table(Table::new()));
+    if !entry.is_table() {
+        *entry = Item::Table(Table::new());
+    }
+    entry.as_table_mut().expect("the entry holds a table")
 }
 
 /// Returns `name` as a table, replacing anything else stored under it.
@@ -495,6 +715,28 @@ mod tests {
             auto_history: false,
             history_format: HistoryFormat::Jpeg,
             ui_scale: 1.5,
+            rig: RigSettings {
+                enabled: true,
+                address: "192.168.0.8:4532".to_owned(),
+                poll_seconds: 2.5,
+                lead_in_seconds: 0.3,
+                tail_seconds: 0.1,
+                script: {
+                    let mut script = Script::default();
+                    script.set(
+                        Event::Transmit,
+                        vec![
+                            Command::new(["M", "PKTUSB", "0"]).unwrap(),
+                            Command::new(["T", "1"]).unwrap(),
+                        ],
+                    );
+                    script.set_band(
+                        Band::from_name("40m").unwrap(),
+                        vec![Command::new(["\\set_ant", "1", "0"]).unwrap()],
+                    );
+                    script
+                },
+            },
         }
     }
 
@@ -612,6 +854,134 @@ mod tests {
             stored.contains("ui-scale = 1.3"),
             "the scale was written as {stored}"
         );
+    }
+
+    /// The commands are what the operator edits, so they have to be in the
+    /// file before they are changed rather than only after.
+    #[test]
+    fn the_rig_commands_are_written_out_even_at_their_defaults() {
+        let root = TestDirectory::new();
+        let mut config = Config::load(&root.config());
+        config.store(&Settings::default());
+
+        let stored = fs::read_to_string(root.config()).unwrap();
+        assert!(stored.contains("[rig.commands]"), "{stored}");
+        assert!(stored.contains(r#"transmit = [["T", "1"]]"#), "{stored}");
+        assert!(stored.contains(r#"receive = [["T", "0"]]"#), "{stored}");
+        assert!(stored.contains("open = []"), "{stored}");
+        // Nothing was attached to a band, so no band table was invented.
+        assert!(!stored.contains("[rig.bands]"), "{stored}");
+    }
+
+    #[test]
+    fn a_hand_written_command_list_replaces_the_default() {
+        let root = TestDirectory::new();
+        fs::write(
+            root.config(),
+            concat!(
+                "[rig.commands]\n",
+                "transmit = [[\"L\", \"MONITOR_GAIN\", \"0.15\"], [\"T\", \"1\"]]\n",
+                "[rig.bands]\n",
+                "\"20m\" = [[\"\\\\set_ant\", \"2\", \"0\"]]\n",
+            ),
+        )
+        .unwrap();
+
+        let script = Config::load(&root.config()).settings().rig.script;
+
+        assert_eq!(
+            script.commands(Event::Transmit),
+            [
+                Command::new(["L", "MONITOR_GAIN", "0.15"]).unwrap(),
+                Command::new(["T", "1"]).unwrap(),
+            ]
+        );
+        // Untouched keys keep the default that makes keying work at all.
+        assert_eq!(
+            script.commands(Event::Receive),
+            [Command::new(["T", "0"]).unwrap()]
+        );
+        assert_eq!(
+            script.band_commands(Band::from_name("20m").unwrap()),
+            [Command::new(["\\set_ant", "2", "0"]).unwrap()]
+        );
+    }
+
+    /// A station keyed by VOX wants no keying command at all, which the
+    /// default would otherwise send anyway.
+    #[test]
+    fn an_empty_command_list_means_nothing_is_sent() {
+        let root = TestDirectory::new();
+        fs::write(root.config(), "[rig.commands]\ntransmit = []\n").unwrap();
+
+        let script = Config::load(&root.config()).settings().rig.script;
+
+        assert!(script.commands(Event::Transmit).is_empty());
+    }
+
+    /// A key that is not a list at all says nothing about the event and leaves
+    /// the default alone. A list whose entries are unusable is still a list,
+    /// and what the operator wrote is an empty one.
+    #[rstest]
+    #[case::not_a_list("transmit = \"T 1\"", &[&["T", "1"] as &[&str]])]
+    #[case::words_not_split("transmit = [\"T 1\"]", &[])]
+    #[case::a_command_naming_nothing("transmit = [[]]", &[])]
+    #[case::one_usable_command(
+        "transmit = [\"T 1\", [\"T\", \"1\"]]",
+        &[&["T", "1"] as &[&str]]
+    )]
+    fn a_command_that_is_not_a_list_of_words_is_dropped(
+        #[case] written: &str,
+        #[case] expected: &[&[&str]],
+    ) {
+        let root = TestDirectory::new();
+        fs::write(root.config(), format!("[rig.commands]\n{written}\n")).unwrap();
+
+        let script = Config::load(&root.config()).settings().rig.script;
+
+        let expected: Vec<Command> = expected
+            .iter()
+            .map(|words| Command::new(words.iter().copied()).unwrap())
+            .collect();
+        assert_eq!(script.commands(Event::Transmit), expected);
+    }
+
+    #[test]
+    fn an_unknown_band_name_is_left_out_rather_than_carried_around() {
+        let root = TestDirectory::new();
+        fs::write(
+            root.config(),
+            "[rig.bands]\n\"11m\" = [[\"\\\\set_ant\", \"1\", \"0\"]]\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load(&root.config());
+        let settings = config.settings();
+        assert!(!settings.rig.script.has_band_commands());
+
+        config.store(&settings);
+        let stored = fs::read_to_string(root.config()).unwrap();
+        assert!(!stored.contains("11m"), "{stored}");
+    }
+
+    #[rstest]
+    #[case("poll-interval = 2.5\n", 2.5, DEFAULT_LEAD_IN_SECONDS)]
+    #[case("poll-interval = -4\n", 0.0, DEFAULT_LEAD_IN_SECONDS)]
+    #[case("poll-interval = 600\n", 60.0, DEFAULT_LEAD_IN_SECONDS)]
+    #[case("lead-in = 99\n", DEFAULT_POLL_SECONDS, 5.0)]
+    #[case("lead-in = \"soon\"\n", DEFAULT_POLL_SECONDS, DEFAULT_LEAD_IN_SECONDS)]
+    fn rig_timings_are_read_within_range(
+        #[case] written: &str,
+        #[case] expected_poll: f32,
+        #[case] expected_lead_in: f32,
+    ) {
+        let root = TestDirectory::new();
+        fs::write(root.config(), format!("[rig]\n{written}")).unwrap();
+
+        let rig = Config::load(&root.config()).settings().rig;
+
+        assert_eq!(rig.poll_seconds, expected_poll);
+        assert_eq!(rig.lead_in_seconds, expected_lead_in);
     }
 
     #[test]

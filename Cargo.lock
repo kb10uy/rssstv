@@ -3477,6 +3477,7 @@ dependencies = [
  "rssstv-demodulator",
  "rssstv-fskid",
  "rssstv-modulator",
+ "rssstv-rig",
  "rssstv-sstv",
  "rssstv-template",
  "rstest",

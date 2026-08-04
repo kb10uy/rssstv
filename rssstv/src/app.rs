@@ -20,7 +20,7 @@ use crate::{
     i18n::{I18n, Locale},
     platform::{self, Activity, Platform},
     storage::{
-        config::{Config, Settings, UI_SCALE_RANGE},
+        config::{Config, RigSettings, Settings, UI_SCALE_RANGE},
         paths::{AppPaths, Folder},
     },
     ui::raster::{Raster, test_pattern_image},
@@ -205,6 +205,13 @@ pub struct App {
     /// Held here rather than read from egui because it has to be restored
     /// before the first frame is laid out.
     pub ui_scale: f32,
+    /// How the rig is reached and what it is told.
+    ///
+    /// Only whether to connect is the interface's to change; the address, the
+    /// timings, and the commands are edited in the configuration file, because
+    /// what a rig needs is a station's own business rather than something a
+    /// menu could offer a list of.
+    pub rig: RigSettings,
     paths: AppPaths,
     config: Config,
     /// The settings as last written to disk.
@@ -346,6 +353,7 @@ impl App {
             tx_error: None,
             device_fault: None,
             ui_scale: settings.ui_scale,
+            rig: settings.rig.clone(),
             paths,
             config,
             saved: settings.clone(),
@@ -409,6 +417,7 @@ impl App {
             auto_history: self.auto_history,
             history_format: self.history_format,
             ui_scale: self.ui_scale,
+            rig: self.rig.clone(),
         }
     }
 

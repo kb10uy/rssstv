@@ -20,6 +20,7 @@ rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
 rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-modulator = { path = "../rssstv-modulator" }
+rssstv-rig = { path = "../rssstv-rig" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 rssstv-template = { path = "../rssstv-template" }
 png.workspace = true

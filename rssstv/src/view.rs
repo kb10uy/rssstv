@@ -9,7 +9,7 @@ use crate::{
     i18n::{number, text as arg},
     menu,
     receive::Progress,
-    transmit::TxPhase,
+    transmit::{TxPhase, TxProgress},
 };
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
@@ -145,13 +145,22 @@ fn badge(app: &App) -> String {
             TxPhase::Priming => app
                 .i18n
                 .text_with("badge-transmit-preparing", &[("mode", mode)]),
-            TxPhase::Producing | TxPhase::Draining => {
-                let percent = (app.tx_progress() * 100.0).round();
-                app.i18n.text_with(
+            TxPhase::Producing | TxPhase::Draining => match app.tx_progress() {
+                TxProgress::Scanning { rows, total } => app.i18n.text_with(
                     "badge-transmitting",
-                    &[("mode", mode), ("percent", number(percent))],
-                )
-            }
+                    &[
+                        ("mode", mode),
+                        ("row", number(rows as u32)),
+                        ("total", number(total as u32)),
+                    ],
+                ),
+                TxProgress::Identifying => app
+                    .i18n
+                    .text_with("badge-transmit-identifying", &[("mode", mode)]),
+                _ => app
+                    .i18n
+                    .text_with("badge-transmit-leader", &[("mode", mode)]),
+            },
             TxPhase::Complete => app
                 .i18n
                 .text_with("badge-transmit-complete", &[("mode", mode)]),
@@ -562,9 +571,14 @@ fn composite(ui: &mut Ui, app: &mut App) {
 fn status_bar(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
     let status = if app.tx_snapshot.phase.is_active() {
-        let percent = (app.tx_progress() * 100.0).round();
-        app.i18n
-            .text_with("status-transmitting", &[("percent", number(percent))])
+        match app.tx_progress() {
+            TxProgress::Scanning { rows, total } => app.i18n.text_with(
+                "status-transmitting",
+                &[("row", number(rows as u32)), ("total", number(total as u32))],
+            ),
+            TxProgress::Identifying => app.i18n.text("status-transmit-identifying"),
+            _ => app.i18n.text("status-transmit-leader"),
+        }
     } else if snapshot.progress.is_active() {
         let percent = (snapshot.progress.fraction() * 100.0).round();
         app.i18n

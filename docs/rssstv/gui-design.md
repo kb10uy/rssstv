@@ -413,7 +413,13 @@ mode.
 Transmit is implemented end to end. Template and stock changes enqueue a
 latest-wins composite request. Set for transmit freezes the completed preview,
 and TX opens the selected output device, primes a bounded queue, and starts
-playback. Progress follows samples consumed by the device callback. Playback
+playback. Progress is reported by the row being transmitted: the worker
+publishes the sample window the image raster occupies within the transmission,
+and the interface maps the samples consumed by the device callback onto a row
+within that window. The callback is the clock rather than the worker's
+generated count, because the worker runs ahead to keep the queue full. The
+leader and the station identifier fall outside the window and are named in the
+badge and status bar instead of being reported as a row. Playback
 underrun is reported as a transmission error, and Stop TX closes playback and
 cancels the worker. TX remains actionable while prerequisites are missing; its
 hover text and the status bar report the missing frame, output device, or valid

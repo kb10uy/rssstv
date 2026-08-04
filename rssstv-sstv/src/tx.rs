@@ -232,34 +232,53 @@ impl TransmissionEncoder {
 
     /// Returns the exact duration of this complete transmission.
     pub fn duration(&self) -> SstvDuration {
-        let spec = self.image.mode.spec();
-        let scan = self.image.mode.scan();
-        let units = usize::from(spec.active_rows() / u16::from(spec.rows_per_raster_unit()));
-        let leading = scan
-            .leading()
-            .iter()
-            .map(|segment| segment.duration().as_picos())
-            .sum::<u64>();
-        let raster = (0..units)
-            .map(|unit| {
-                scan.duration(unit)
-                    .expect("supported transmit modes have raster segments")
-                    .as_picos()
-            })
-            .sum::<u64>();
         let fsk = self
             .fsk
             .clone()
             .map(|event| u64::from(event.duration_micros()) * 1_000_000)
             .sum::<u64>();
         SstvDuration::from_picos(
-            VOX_DURATION_PS
-                + VIS_END_PS
-                + leading
-                + raster
+            self.raster_start().as_picos()
+                + self.raster_duration().as_picos()
                 + 300 * PS_PER_MS
                 + fsk
                 + 500 * PS_PER_MS,
+        )
+    }
+
+    /// Returns the offset at which the first scanned row begins.
+    ///
+    /// The VOX sequence, conventional VIS framing, and the mode's leading
+    /// segments precede the raster and carry no image rows.
+    pub fn raster_start(&self) -> SstvDuration {
+        let leading = self
+            .image
+            .mode
+            .scan()
+            .leading()
+            .iter()
+            .map(|segment| segment.duration().as_picos())
+            .sum::<u64>();
+        SstvDuration::from_picos(VOX_DURATION_PS + VIS_END_PS + leading)
+    }
+
+    /// Returns the duration of the image raster alone.
+    ///
+    /// The raster spans [`crate::mode::ModeSpec::active_rows`] rows at a
+    /// uniform rate, so an offset into it maps linearly onto the row being
+    /// transmitted.
+    pub fn raster_duration(&self) -> SstvDuration {
+        let spec = self.image.mode.spec();
+        let scan = self.image.mode.scan();
+        let units = usize::from(spec.active_rows() / u16::from(spec.rows_per_raster_unit()));
+        SstvDuration::from_picos(
+            (0..units)
+                .map(|unit| {
+                    scan.duration(unit)
+                        .expect("supported transmit modes have raster segments")
+                        .as_picos()
+                })
+                .sum::<u64>(),
         )
     }
 
@@ -695,5 +714,38 @@ mod tests {
         );
         assert_eq!(duration.as_picos(), silence.until().as_picos());
         assert_eq!(transmission.next(), None);
+    }
+
+    /// Progress reported by row needs the raster's exact place in the stream:
+    /// the leader before it and the identifier after it carry no image rows.
+    #[rstest]
+    #[case(Mode::Martin1, 0)]
+    #[case(Mode::Scottie1, 9_000_000_000)]
+    #[case(Mode::Robot36, 0)]
+    #[case(Mode::Pd290, 0)]
+    fn the_raster_window_brackets_exactly_the_scanned_rows(
+        #[case] mode: Mode,
+        #[case] leading_ps: u64,
+    ) {
+        let station_id = FskId::new("N0CALL").unwrap();
+        let mut transmission =
+            TransmissionEncoder::new(mode, image(mode, Rgb8::default()), station_id).unwrap();
+        let start = transmission.raster_start().as_picos();
+        assert_eq!(start, VOX_DURATION_PS + VIS_END_PS + leading_ps);
+
+        let units =
+            u64::from(mode.spec().active_rows() / u16::from(mode.spec().rows_per_raster_unit()));
+        assert_eq!(
+            transmission.raster_duration().as_picos(),
+            units * mode.spec().period().as_picos()
+        );
+
+        // The image stage ends where the raster does, so the footer that opens
+        // the trailing framing is the first tone past the window.
+        let end = start + transmission.raster_duration().as_picos();
+        let footer = transmission
+            .find(|tone| tone.component() == TxComponent::Footer)
+            .unwrap();
+        assert_eq!(footer.until().as_picos(), end + 300 * PS_PER_MS);
     }
 }

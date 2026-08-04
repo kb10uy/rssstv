@@ -19,7 +19,7 @@ use crate::{
     platform::{self, Activity, Platform, reveal_directory},
     raster::Raster,
     receive::Progress,
-    transmit::{ComposeRequest, Composer, TxPhase, TxSnapshot, TxWorker},
+    transmit::{ComposeRequest, Composer, TxPhase, TxProgress, TxSnapshot, TxWorker},
 };
 
 const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
@@ -573,7 +573,7 @@ impl App {
             Tab::Receive => self.audio.snapshot().progress.fraction(),
             Tab::Transmit => {
                 if self.tx_snapshot.phase.is_active() {
-                    self.tx_progress()
+                    self.tx_progress().fraction()
                 } else {
                     1.0
                 }
@@ -766,22 +766,21 @@ impl App {
         self.tx_snapshot.phase = phase;
     }
 
-    pub fn tx_progress(&self) -> f32 {
-        if self.tx_snapshot.total_samples == 0 {
-            return 0.0;
+    /// Reports which image row the transmission is currently on.
+    ///
+    /// The clock is the sample count the device callback has consumed, not the
+    /// worker's generated count: the worker runs ahead to keep the queue full,
+    /// so only the callback knows what is actually being heard. That position
+    /// maps onto a row because the raster scans at a uniform rate.
+    pub fn tx_progress(&self) -> TxProgress {
+        if self.tx_snapshot.phase == TxPhase::Complete {
+            return TxProgress::Complete;
         }
-        let played = self
-            .playback
-            .as_ref()
-            .map(Playback::played_samples)
-            .unwrap_or_else(|| {
-                if self.tx_snapshot.phase == TxPhase::Complete {
-                    self.tx_snapshot.total_samples
-                } else {
-                    0
-                }
-            });
-        (played as f64 / self.tx_snapshot.total_samples as f64).clamp(0.0, 1.0) as f32
+        if !self.tx_snapshot.phase.is_active() {
+            return TxProgress::Idle;
+        }
+        let played = self.playback.as_ref().map_or(0, Playback::played_samples);
+        self.tx_snapshot.raster.progress_at(played)
     }
 
     pub fn output_sample_rate_hz(&self) -> Option<u32> {

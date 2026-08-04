@@ -9,6 +9,7 @@ members = [
   "rssstv-dsp",
   "rssstv-fskid",
   "rssstv-modulator",
+  "rssstv-rig",
   "rssstv-sstv",
   "rssstv-template",
 ]

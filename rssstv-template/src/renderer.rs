@@ -14,7 +14,7 @@ use crate::{
 
 mod asset;
 mod svg;
-mod variable;
+pub(crate) mod variable;
 
 /// PNG bytes returned by an [`AssetProvider`].
 #[derive(Clone, Debug)]

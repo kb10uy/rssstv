@@ -1,5 +1,9 @@
 use std::{collections::BTreeMap, fmt};
 
+use jiff::Zoned;
+
+use crate::renderer::variable::{DEFAULT_TIMESTAMP_FORMAT, references};
+
 /// A parsed template whose layers retain document order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Template {
@@ -10,6 +14,23 @@ impl Template {
     /// Returns the top-level layers in back-to-front order.
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    /// Whether any text layer reads a timestamp out of `variables`.
+    ///
+    /// A composition that shows the time stops being true a minute after it
+    /// was made, so a caller that keeps a rendered overlay around asks this to
+    /// find out whether it has to render again as the clock moves.
+    pub fn uses_timestamps(&self, variables: &Variables) -> bool {
+        fn any(layers: &[Layer], variables: &Variables) -> bool {
+            layers.iter().any(|layer| match layer {
+                Layer::Text(text) => references(&text.text)
+                    .any(|name| matches!(variables.get(name), Some(VariableValue::Timestamp(_)))),
+                Layer::Group(group) => any(&group.layers, variables),
+                _ => false,
+            })
+        }
+        any(&self.layers, variables)
     }
 }
 
@@ -203,6 +224,8 @@ pub enum VariableValue {
     Decimal(f64),
     /// A boolean rendered as `true` or `false`.
     Boolean(bool),
+    /// An instant in a named time zone, rendered through a format expression.
+    Timestamp(Zoned),
 }
 
 impl fmt::Display for VariableValue {
@@ -212,6 +235,7 @@ impl fmt::Display for VariableValue {
             Self::Integer(value) => value.fmt(formatter),
             Self::Decimal(value) => value.fmt(formatter),
             Self::Boolean(value) => value.fmt(formatter),
+            Self::Timestamp(value) => value.strftime(DEFAULT_TIMESTAMP_FORMAT).fmt(formatter),
         }
     }
 }
@@ -242,5 +266,44 @@ impl Variables {
     /// Returns a named value.
     pub fn get(&self, name: &str) -> Option<&VariableValue> {
         self.values.get(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jiff::civil::date;
+
+    use super::*;
+
+    fn variables() -> Variables {
+        let mut variables = Variables::new();
+        variables.insert("station.callsign", VariableValue::Text("JA1ABC".into()));
+        variables.insert(
+            "tx.timestamp.utc",
+            VariableValue::Timestamp(
+                date(2026, 8, 4)
+                    .at(9, 5, 0, 0)
+                    .in_tz("UTC")
+                    .expect("UTC is a known time zone"),
+            ),
+        );
+        variables
+    }
+
+    fn text_template(text: &str) -> Template {
+        Template::parse(&format!(
+            "group {{ text {text:?} {{ position x=(fw)0 y=(fh)0; font family=\"Noto Sans\" size=(fh)9 weight=400; fill color=\"#ffffff\"; }} }}"
+        ))
+        .expect("the template is well formed")
+    }
+
+    /// The clock only has to be watched for a template that shows it, and a
+    /// nested layer counts the same as a top-level one.
+    #[test]
+    fn a_timestamp_in_a_group_is_still_found() {
+        let variables = variables();
+        assert!(text_template("${tx.timestamp.utc:%H:%M}").uses_timestamps(&variables));
+        assert!(!text_template("${station.callsign}").uses_timestamps(&variables));
+        assert!(!text_template("plain").uses_timestamps(&variables));
     }
 }

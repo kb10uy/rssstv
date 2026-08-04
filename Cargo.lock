@@ -3547,6 +3547,7 @@ name = "rssstv-template"
 version = "0.1.0"
 dependencies = [
  "image",
+ "jiff",
  "kdl",
  "proptest",
  "resvg",

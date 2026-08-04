@@ -202,22 +202,54 @@ Variables belong to named domains rather than a flat table of single-character
 macros. Anticipated values include:
 
 - `station.callsign`, `station.qth`, `station.grid`, and `station.name`
-- `contact.callsign`, `contact.name`, and `contact.qth`
-- `report.sent` and `report.received`
+- `contact.callsign`
+- `report.sent`, `report.number`, and `report.received`
 - `radio.frequency` and `radio.band`
-- `tx.timestamp` and `rx.timestamp`
+- `tx.timestamp.utc`, `tx.timestamp.local`, `rx.timestamp.utc`, and
+  `rx.timestamp.local`
+- `custom.*`, whose names the operator chooses
 - `application.version`
+
+Contact detail beyond the callsign is deliberately absent. RSSSTV does not set
+out to keep a QSO log, so a field that exists only to be typed into a template
+is not worth the entry it would need.
 
 The evaluation context supplies typed values, including the image used by an
 `rximage` layer. Text interpolation converts only values used in text; images
 and other resources should be referenced as typed properties rather than
 converted through strings.
 
-The initial implementation accepts text, signed integer, floating-point, and
-boolean variable values. It applies no formatting expressions; callers provide
-preformatted text for values such as dates and times. A missing variable is a
-render error. Variable names consist of dot-separated ASCII identifier segments.
-`$${name}` produces the literal text `${name}`.
+The implementation accepts text, signed integer, floating-point, boolean, and
+timestamp variable values. A missing variable is a render error. Variable names
+consist of dot-separated ASCII identifier segments. `$${name}` produces the
+literal text `${name}`.
+
+### Timestamp Formats
+
+A timestamp variable carries an instant in a named time zone rather than
+preformatted text, and a text expression says how to write it:
+
+```kdl
+text "${tx.timestamp.utc:%d %b %Y %H:%MZ}"
+```
+
+The format follows the first colon and runs to the closing brace, so a format
+containing colons needs no escaping. It is a `jiff` `strtime` format string,
+the same `%`-directive vocabulary as `strftime`; `jiff` is already the
+application's date library, so templates and the rest of RSSSTV describe time
+the same way. A directive the formatter rejects is a render error, reported
+like any other template error. A timestamp written without a format uses
+`%Y-%m-%d %H:%M`, and a format applied to any other kind of value is an error.
+
+Each timestamp is supplied in two zones rather than being converted by the
+template: `.utc` for the on-air convention and `.local` for the operator's own
+clock.
+
+Because such a template stops being true as the clock moves,
+`Template::uses_timestamps` reports whether any text reads a timestamp out of a
+given variable set. A caller that holds a rendered overlay uses it to decide
+whether that overlay has to be rendered again; the finest unit the default
+format shows is a minute, so refreshing as the minute changes is enough.
 
 The desktop composition worker currently supplies `${station.callsign}`,
 `${station.qth}`, and `${station.grid}` from the station dialog,

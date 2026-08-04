@@ -10,6 +10,7 @@ use crate::{
     app::App,
     i18n::Locale,
     storage::{history::HistoryFormat, paths::Folder},
+    worker::rig::RigState,
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -34,6 +35,8 @@ pub enum Action {
     ShowCustomVariables,
     ToggleSendFskid,
     ToggleVisRestart,
+    ToggleRig,
+    RetryRig,
     ToggleAutoHistory,
     SelectHistoryFormat(HistoryFormat),
     ZoomIn,
@@ -58,10 +61,12 @@ pub enum Item {
         label: String,
         action: Action,
     },
-    /// An entry whose behavior arrives with a later feature.
+    /// An entry there is nothing to activate on.
     ///
-    /// It is shown disabled rather than wired to a placeholder action, so the
-    /// menu is reviewable without implying working commands.
+    /// Either a behavior that arrives with a later feature, or something the
+    /// menu only has to say: an address, a state, a device list that is empty.
+    /// Shown disabled rather than wired to a placeholder action, so the menu is
+    /// reviewable without implying working commands.
     Pending(String),
     Separator,
 }
@@ -152,7 +157,7 @@ pub fn model(app: &App) -> Vec<Menu> {
         },
         Menu {
             label: text("menu-rig"),
-            items: vec![Item::Pending(text("menu-rig"))],
+            items: rig_items(app),
         },
         Menu {
             label: text("menu-help"),
@@ -248,6 +253,67 @@ fn output_device_items(app: &App) -> Vec<Item> {
         .collect()
 }
 
+/// Rig control: whether to connect, and what the connection is doing.
+///
+/// Only the switch is offered. The address, the timings, and the commands are
+/// the operator's, and they live in the configuration file: a menu could not
+/// offer a list of what a rig wants around a transmission, and a dialog for
+/// editing command lines would be a worse text editor than the one the
+/// operator already has.
+fn rig_items(app: &App) -> Vec<Item> {
+    let mut items = vec![Item::Check {
+        label: app.i18n.text("action-rig-connect"),
+        checked: app.rig.enabled,
+        action: Action::ToggleRig,
+    }];
+    if !app.rig.enabled {
+        return items;
+    }
+    items.push(Item::Separator);
+    items.push(Item::Pending(app.rig.address.clone()));
+    // What the rig said is more use than the state it left behind, so the
+    // failure takes the place of the state rather than sitting beside it.
+    items.push(Item::Pending(
+        app.rig_snapshot
+            .error
+            .clone()
+            .unwrap_or_else(|| app.i18n.text(app.rig_snapshot.state.label_key())),
+    ));
+    items.push(Item::Pending(rig_frequency(app)));
+    if app.rig_snapshot.state == RigState::Failed {
+        items.push(Item::Command {
+            label: app.i18n.text("action-rig-retry"),
+            action: Action::RetryRig,
+        });
+    }
+    items.push(Item::Separator);
+    items.push(Item::Pending(app.i18n.text("rig-commands-note")));
+    items
+}
+
+/// What the rig is tuned to, as the menu says it.
+fn rig_frequency(app: &App) -> String {
+    let Some(reading) = app.rig_snapshot.reading else {
+        return app.i18n.text("rig-frequency-unknown");
+    };
+    // Formatted here rather than by the message, because the message would
+    // group the digits by locale and a frequency is read as one number.
+    let megahertz = format!("{:.3}", reading.frequency_hz as f64 / 1_000_000.0);
+    match reading.band {
+        Some(band) => app.i18n.text_with(
+            "rig-frequency",
+            &[
+                ("frequency", crate::i18n::text(&megahertz)),
+                ("band", crate::i18n::text(band.name())),
+            ],
+        ),
+        None => app.i18n.text_with(
+            "rig-frequency-out-of-band",
+            &[("frequency", crate::i18n::text(&megahertz))],
+        ),
+    }
+}
+
 /// Applies `action` to the application.
 ///
 /// Returns whether the application was asked to close.
@@ -260,6 +326,8 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ShowCustomVariables => app.open_custom_variables(),
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
+        Action::ToggleRig => app.rig.enabled = !app.rig.enabled,
+        Action::RetryRig => app.retry_rig(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
         Action::SelectHistoryFormat(format) => app.history_format = format,
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
@@ -415,6 +483,58 @@ mod tests {
         assert!(matches!(flat[1], Item::Submenu { .. }));
         assert!(matches!(flat[2], Item::Pending(label) if label == "inner"));
         assert!(matches!(flat[3], Item::Pending(label) if label == "after"));
+    }
+
+    /// Nothing about a connection is worth showing until one is asked for, so
+    /// the menu is only the switch until it is turned on.
+    #[test]
+    fn the_rig_menu_shows_a_connection_only_once_one_is_asked_for() {
+        let mut app = App::headless();
+
+        assert_eq!(rig_items(&app).len(), 1);
+
+        app.rig.enabled = true;
+        let items = rig_items(&app);
+        assert!(items.len() > 1);
+        assert!(
+            items.contains(&Item::Pending(app.rig.address.clone())),
+            "{items:?}"
+        );
+    }
+
+    /// A connection that failed is one the operator can do something about,
+    /// and reconnecting is offered exactly then.
+    #[test]
+    fn reconnecting_is_offered_only_after_a_failure() {
+        let mut app = App::headless();
+        app.rig.enabled = true;
+        let retry = Item::Command {
+            label: app.i18n.text("action-rig-retry"),
+            action: Action::RetryRig,
+        };
+
+        app.rig_snapshot.state = RigState::Receiving;
+        assert!(!rig_items(&app).contains(&retry));
+
+        app.rig_snapshot.state = RigState::Failed;
+        assert!(rig_items(&app).contains(&retry));
+    }
+
+    /// The frequency is one number, so it must not be grouped the way a locale
+    /// would group a count.
+    #[test]
+    fn the_frequency_is_shown_with_its_band() {
+        let mut app = App::headless();
+        app.rig.enabled = true;
+        assert_eq!(rig_frequency(&app), app.i18n.text("rig-frequency-unknown"));
+
+        app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
+            frequency_hz: 14_230_000,
+            band: rssstv_rig::Band::for_frequency(14_230_000),
+        });
+        let shown = rig_frequency(&app);
+        assert!(shown.contains("14.230"), "{shown}");
+        assert!(shown.contains("20m"), "{shown}");
     }
 
     /// Every directory the application keeps is reachable from one menu, or a

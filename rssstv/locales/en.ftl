@@ -70,7 +70,6 @@ action-refresh = Refresh
 action-rig-connect = Connect to rigctld
 action-rig-retry = Reconnect
 
-rig-address = { $address }
 rig-state-disconnected = Not connected
 rig-state-connecting = Connecting…
 rig-state-receiving = Connected

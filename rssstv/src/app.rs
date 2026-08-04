@@ -706,6 +706,16 @@ impl App {
         }
     }
 
+    /// Makes the connection again after it failed.
+    ///
+    /// Giving up the worker is the whole of it: while rig control is switched
+    /// on, the next frame is what starts one.
+    pub fn retry_rig(&mut self) {
+        self.unkey_rig();
+        self.rig_worker = None;
+        self.rig_snapshot = RigSnapshot::default();
+    }
+
     /// Gives back the keying a transmission asked for, if it asked for any.
     fn unkey_rig(&mut self) {
         if !self.rig_keyed {

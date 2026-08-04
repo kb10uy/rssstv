@@ -70,7 +70,6 @@ action-refresh = 再読み込み
 action-rig-connect = rigctld に接続
 action-rig-retry = 接続し直す
 
-rig-address = { $address }
 rig-state-disconnected = 未接続
 rig-state-connecting = 接続中…
 rig-state-receiving = 接続済み

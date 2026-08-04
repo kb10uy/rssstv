@@ -86,7 +86,7 @@ fn load_face(database: &fontdb::Database, family: &str) -> Option<(Vec<u8>, u32)
 }
 
 /// The window size the interface is laid out for, in points.
-const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 880.0];
+const DEFAULT_WINDOW_SIZE: [f32; 2] = [1024.0, 768.0];
 
 /// How much of the monitor the window may take up when it first opens.
 ///

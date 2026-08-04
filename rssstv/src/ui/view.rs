@@ -596,6 +596,10 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
     let row_height = ui.spacing().interact_size.y;
     TableBuilder::new(ui)
         .id_salt(&labels.title)
+        // A table insists on 200 points of scrolling area by default, which
+        // would hold the whole library panel open at that height however far
+        // down its divider is dragged.
+        .min_scrolled_height(0.0)
         .striped(true)
         .sense(egui::Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
@@ -878,6 +882,30 @@ mod tests {
         assert_eq!(decibels(1.0), "0.0");
         assert_eq!(decibels(0.5), "-12.0");
         assert_eq!(decibels(0.0), "-\u{221e}");
+    }
+
+    /// A table asks for 200 points of scrolling area unless it is told
+    /// otherwise, which held the library panel open at that height however far
+    /// down its divider was dragged.
+    #[test]
+    fn the_library_fits_the_height_it_is_given() {
+        let mut app = App::headless();
+        app.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
+        app.stocks = vec![crate::app::Entry::sample("antenna.png", "320x256")];
+        let mut used = 0.0;
+
+        {
+            let mut harness = Harness::new_ui(|ui| {
+                used = ui
+                    .allocate_ui(egui::vec2(560.0, 80.0), |ui| library(ui, &mut app))
+                    .response
+                    .rect
+                    .height();
+            });
+            harness.run();
+        }
+
+        assert!(used <= 80.0, "the library insisted on {used} points");
     }
 
     #[test]

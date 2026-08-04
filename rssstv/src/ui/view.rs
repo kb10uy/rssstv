@@ -76,41 +76,46 @@ fn station_dialog(ui: &mut Ui, app: &mut App) {
     let close = app.i18n.text("station-close");
     let labels = ["station-callsign", "station-qth", "station-grid"].map(|key| app.i18n.text(key));
 
-    let mut callsign_edited = false;
-    let mut edited = false;
+    let mut finished = false;
     let mut done = false;
     let response = egui::Modal::new(Id::new("station")).show(ui.ctx(), |ui| {
         ui.set_max_width(360.0);
         ui.heading(title);
         ui.add_space(8.0);
         let width = ui.available_width() - FIELD_LABEL_WIDTH - ui.spacing().item_spacing.x;
-        callsign_edited = station_field(ui, &labels[0], &mut app.station_callsign, width);
-        edited = station_field(ui, &labels[1], &mut app.station_qth, width);
-        edited |= station_field(ui, &labels[2], &mut app.station_grid, width);
+        finished = station_field(ui, &labels[0], &mut app.station_callsign, width);
+        finished |= station_field(ui, &labels[1], &mut app.station_qth, width);
+        finished |= station_field(ui, &labels[2], &mut app.station_grid, width);
         ui.add_space(4.0);
         ui.label(RichText::new(note).size(LABEL).weak());
         ui.add_space(16.0);
         done = ui.button(close).clicked();
     });
 
-    // Normalizing the callsign composes again on its own, and does it with the
-    // uppercased text rather than what was typed.
-    if callsign_edited {
+    // Taken up once the field is left rather than on every keystroke: half a
+    // callsign is not one, and uppercasing the text under the cursor while it
+    // is still being typed fights the operator. Closing counts as leaving,
+    // for a dialog dismissed without moving focus first.
+    let closing = done || response.should_close();
+    if finished || closing {
+        // Normalizing composes again on its own, and does it with the
+        // uppercased callsign rather than with what was typed.
         app.normalize_station_callsign();
-    } else if edited {
-        app.station_changed();
     }
-    if done || response.should_close() {
+    if closing {
         app.station_open = false;
     }
 }
 
-/// One labelled field of the station dialog, returning whether it was edited.
+/// One labelled field of the station dialog.
+///
+/// Returns whether the operator finished with it, which is losing focus to
+/// another field or to the button, or pressing Enter in it.
 fn station_field(ui: &mut Ui, label: &str, text: &mut String, width: f32) -> bool {
     ui.horizontal(|ui| {
         field_label(ui, label);
         ui.add(egui::TextEdit::singleline(text).desired_width(width))
-            .changed()
+            .lost_focus()
     })
     .inner
 }

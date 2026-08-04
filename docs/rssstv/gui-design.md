@@ -406,7 +406,9 @@ What the station says about itself — its callsign, where it is operating from,
 and its grid locator — is edited in a dialog opened from the Settings menu, not
 in the QSO panel. None of it belongs to the contact being worked: it is set once
 for the operator, while the panel beside the image is for the station on the air
-right now. The callsign is required to transmit whether or not the identifier is
+right now. Its fields are taken up when they are left rather than on every
+keystroke: half a callsign is not one, and uppercasing the text under the cursor
+while it is still being typed fights the operator. The callsign is required to transmit whether or not the identifier is
 being sent, because it is the only thing that names the station making the
 transmission, and it is the first thing the transmit check reports.
 

@@ -500,11 +500,6 @@ impl App {
         self.request_composition();
     }
 
-    /// Composes again after an edit to what the station says about itself.
-    pub fn station_changed(&mut self) {
-        self.request_composition();
-    }
-
     pub fn qso_changed(&mut self) {
         self.request_composition();
     }

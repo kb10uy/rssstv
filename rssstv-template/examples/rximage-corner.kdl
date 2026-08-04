@@ -1,0 +1,9 @@
+// The last received image in the lower-left corner of the frame.
+//
+// Only the width is given, so the height follows the received image's own
+// aspect ratio instead of the frame's, and the corner inset is expressed in
+// frame percentages so the layout holds in every mode.
+rximage {
+    position x=(fw)4 y=(fh)96 anchor="bottom-left"
+    size width=(fw)30
+}

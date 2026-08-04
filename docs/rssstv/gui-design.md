@@ -394,7 +394,7 @@ marked shared are built once and reused across tabs.
 | QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
-| Status bar | Shared | Text row |
+| Status bar | Shared | Text row: devices, decoded callsigns, and faults |
 
 Only controls that do something are built. A feature that has not arrived yet
 is absent rather than shown disabled: a dead button occupies the place its
@@ -532,11 +532,11 @@ and the interface maps the samples consumed by the device callback onto a row
 within that window. The callback is the clock rather than the worker's
 generated count, because the worker runs ahead to keep the queue full. The
 leader and the station identifier fall outside the window and are named on the
-state line and status bar instead of being reported as a row. Playback
+state line instead of being reported as a row. Playback
 underrun is reported as a transmission error, and Stop TX closes playback and
-cancels the worker. TX remains actionable while prerequisites are missing; its
-hover text and the status bar report the missing frame, output device, or valid
-station callsign instead of silently disabling the button.
+cancels the worker. TX is disabled while a prerequisite is missing; its
+disabled hover text reports the missing frame, output device, or valid
+station callsign, so the button is never dead without saying why.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.

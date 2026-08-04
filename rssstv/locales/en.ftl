@@ -72,11 +72,6 @@ state-transmitting = TRANSMITTING · { $row }/{ $total }
 state-transmit-identifying = TRANSMITTING · ID
 state-transmit-complete = TX COMPLETE
 
-status-receiving = Receiving ({ $percent }%)
-status-idle = Idle
-status-transmitting = Transmitting (line { $row }/{ $total })
-status-transmit-leader = Transmitting (leader)
-status-transmit-identifying = Transmitting (station ID)
 status-no-audio = No input device
 status-no-output = No output device
 status-output-ready = Output ready

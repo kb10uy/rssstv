@@ -72,11 +72,6 @@ state-transmitting = TRANSMITTING · { $row }/{ $total }
 state-transmit-identifying = TRANSMITTING · ID
 state-transmit-complete = TX COMPLETE
 
-status-receiving = 受信中 ({ $percent }%)
-status-idle = 待機中
-status-transmitting = 送信中 ({ $row }/{ $total } 行)
-status-transmit-leader = 送信中 (同期信号)
-status-transmit-identifying = 送信中 (識別信号)
 status-no-audio = 入力デバイスなし
 status-no-output = 出力デバイスなし
 status-output-ready = 出力準備完了

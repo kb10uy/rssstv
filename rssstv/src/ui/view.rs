@@ -230,12 +230,18 @@ fn transmit_button(ui: &mut Ui, app: &mut App) {
         "action-transmit"
     });
     let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
-    let mut response = ui.add_sized(
-        size,
-        egui::Button::new(RichText::new(label).size(SMALL)).fill(Color32::from_rgb(140, 40, 40)),
-    );
-    if !active && let Some(problem) = app.transmit_problem() {
-        response = response.on_hover_text(problem);
+    // Stopping stays available for as long as something is being sent.
+    // Starting does not: with anything missing the button is disabled and says
+    // what, rather than taking the press and reporting the same thing as an
+    // error afterwards.
+    let problem = (!active).then(|| app.transmit_problem()).flatten();
+    let button =
+        egui::Button::new(RichText::new(label).size(SMALL)).fill(Color32::from_rgb(140, 40, 40));
+    let mut response = ui
+        .add_enabled_ui(problem.is_none(), |ui| ui.add_sized(size, button))
+        .inner;
+    if let Some(problem) = problem {
+        response = response.on_disabled_hover_text(problem);
     }
     if response.clicked() {
         if active {
@@ -611,27 +617,13 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
         });
 }
 
+/// What is true of the session rather than of the picture.
+///
+/// What the tab is doing reads on the state line under the image, so it is not
+/// repeated here: this bar is the devices, what they have decoded, and anything
+/// that went wrong.
 fn status_bar(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
-    let status = if app.tx_snapshot.phase.is_active() {
-        match app.tx_progress() {
-            TxProgress::Scanning { rows, total } => app.i18n.text_with(
-                "status-transmitting",
-                &[
-                    ("row", number(rows as u32)),
-                    ("total", number(total as u32)),
-                ],
-            ),
-            TxProgress::Identifying => app.i18n.text("status-transmit-identifying"),
-            _ => app.i18n.text("status-transmit-leader"),
-        }
-    } else if snapshot.progress.is_active() {
-        let percent = (snapshot.progress.fraction() * 100.0).round();
-        app.i18n
-            .text_with("status-receiving", &[("percent", number(percent))])
-    } else {
-        app.i18n.text("status-idle")
-    };
     let audio = match app.audio.sample_rate_hz() {
         Some(rate) => app
             .i18n
@@ -647,7 +639,6 @@ fn status_bar(ui: &mut Ui, app: &App) {
     };
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new(status).size(LABEL));
         ui.label(RichText::new(audio).size(LABEL));
         ui.label(RichText::new(output).size(LABEL));
         if !snapshot.callsigns.is_empty() {
@@ -902,10 +893,15 @@ mod tests {
         }
     }
 
+    /// Pressing TX with nothing to send used to report the reason as an error.
+    /// The button now refuses the press instead, so the reason is read from the
+    /// state line and the button's own hover text.
     #[test]
-    fn tx_button_reports_why_transmission_cannot_start() {
+    fn the_tx_button_refuses_a_transmission_it_cannot_start() {
         let mut app = App::headless();
         app.tab = Tab::Transmit;
+        assert!(!app.can_transmit());
+
         {
             let mut harness = Harness::new_ui(|ui| {
                 let model = menu::model(&app);
@@ -915,9 +911,8 @@ mod tests {
             harness.get_by_label("TX").click();
             harness.run();
         }
-        assert_eq!(
-            app.tx_error.as_deref(),
-            Some(app.i18n.text("error-no-transmit-frame").as_str())
-        );
+
+        assert_eq!(app.tx_error, None);
+        assert_eq!(app.tx_snapshot.phase, TxPhase::Idle);
     }
 }

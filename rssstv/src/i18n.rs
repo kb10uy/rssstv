@@ -162,8 +162,8 @@ mod tests {
     #[test]
     fn arguments_are_substituted_without_isolation_marks() {
         let formatted =
-            I18n::new(Locale::En).text_with("status-receiving", &[("percent", number(94))]);
-        assert_eq!(formatted, "Receiving (94%)");
+            I18n::new(Locale::En).text_with("state-receiving", &[("percent", number(94))]);
+        assert_eq!(formatted, "RECEIVING \u{b7} 94%");
     }
 
     #[test]

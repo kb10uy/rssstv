@@ -410,6 +410,15 @@ decoded callsigns, and overrun counts all come from the worker. When no
 reception is in progress, the canvas shows a blank raster sized to the selected
 mode.
 
+A newly decoded FSKID takes the QSO panel's contact callsign field, which in
+turn recomposites the transmit preview through the `contact.callsign` template
+variable. The identifier names the station on the air, so it replaces whatever
+the field held rather than deferring to it. Only an arrival writes: the worker
+republishes every identifier it has decoded on each snapshot, so the interface
+follows the count of identifiers it has already adopted and leaves the field
+editable between receptions. That count is followed downwards as well, because
+reopening a device restarts the worker with an empty list.
+
 Transmit is implemented end to end. Template and stock changes enqueue a
 latest-wins composite request. Set for transmit freezes the completed preview,
 and TX opens the selected output device, primes a bounded queue, and starts

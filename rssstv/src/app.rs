@@ -187,6 +187,12 @@ pub struct App {
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
+    /// How many decoded station identifiers have reached the QSO panel.
+    ///
+    /// The worker republishes every identifier it has decoded on each
+    /// snapshot, so the count is what distinguishes a new arrival from the
+    /// same list observed again.
+    adopted_callsigns: usize,
     platform: Box<dyn Platform>,
     /// What the platform was last told the application is doing.
     ///
@@ -278,6 +284,7 @@ impl App {
             playback: None,
             tx_worker: None,
             playback_started: false,
+            adopted_callsigns: 0,
             platform,
             activity: Activity::default(),
         }
@@ -500,6 +507,7 @@ impl App {
         {
             self.rx_raster = raster;
         }
+        self.adopt_decoded_callsign();
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.
         if self.auto_mode
@@ -509,6 +517,44 @@ impl App {
         }
         self.poll_transmit();
         self.report_activity();
+    }
+
+    /// Puts a newly decoded station identifier in the QSO contact field.
+    ///
+    /// The identifier names the station on the air right now, so it takes the
+    /// field outright: an operator who has just heard a new station wants that
+    /// call, not the one left over from the previous contact. Only an arrival
+    /// writes, so the field stays editable between receptions.
+    fn adopt_decoded_callsign(&mut self) {
+        // The count is compared before anything is copied: this runs on every
+        // frame, and the list is the same one on almost all of them.
+        let decoded = self.audio.snapshot().callsigns.len();
+        // Reopening a device restarts the worker with an empty list, so the
+        // count is followed down as well as up.
+        if decoded < self.adopted_callsigns {
+            self.adopted_callsigns = 0;
+        }
+        if decoded == self.adopted_callsigns {
+            return;
+        }
+        self.adopted_callsigns = decoded;
+        // The FSKID alphabet has no lowercase, but it does have spaces, and an
+        // identifier that is nothing else says nothing about who is calling.
+        let Some(call) = self
+            .audio
+            .snapshot()
+            .callsigns
+            .last()
+            .map(|call| call.trim().to_owned())
+            .filter(|call| !call.is_empty())
+        else {
+            return;
+        };
+        if call == self.qso.call {
+            return;
+        }
+        self.qso.call = call;
+        self.qso_changed();
     }
 
     /// Picks up a device that stopped and puts it in front of the operator.
@@ -941,6 +987,81 @@ mod tests {
             progress: Progress::Decoding { rows, total },
             ..Snapshot::default()
         }
+    }
+
+    fn identified(calls: &[&str]) -> Snapshot {
+        Snapshot {
+            callsigns: calls.iter().map(|call| (*call).to_owned()).collect(),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn a_decoded_identifier_fills_the_qso_contact_field() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(identified(&["JA1ABC"]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.call, "JA1ABC");
+    }
+
+    /// The worker republishes every identifier it has decoded, so the same
+    /// list observed again must not undo an edit made in the meantime.
+    #[test]
+    fn an_unchanged_identifier_list_leaves_the_contact_field_alone() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(identified(&["JA1ABC"]));
+        app.poll_audio();
+        app.qso.call = "JA1XYZ".to_owned();
+        app.poll_audio();
+
+        assert_eq!(app.qso.call, "JA1XYZ");
+    }
+
+    /// The identifier names whoever is on the air now, so a new arrival takes
+    /// the field even when the operator had put something else there.
+    #[test]
+    fn a_newly_decoded_identifier_replaces_the_contact_field() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(identified(&["JA1ABC"]));
+        app.poll_audio();
+        app.qso.call = "TYPED".to_owned();
+        app.audio.set_snapshot(identified(&["JA1ABC", "JH1XYZ"]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.call, "JH1XYZ");
+    }
+
+    /// Reopening a device restarts the worker with an empty list; the next
+    /// identifier it decodes is a new arrival even though the count went down.
+    #[test]
+    fn an_identifier_after_a_restart_is_adopted_again() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(identified(&["JA1ABC", "JH1XYZ"]));
+        app.poll_audio();
+        app.audio.set_snapshot(Snapshot::default());
+        app.poll_audio();
+        app.audio.set_snapshot(identified(&["JA1ABC"]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.call, "JA1ABC");
+    }
+
+    /// The FSKID alphabet includes the space, and an identifier that is only
+    /// spaces names nobody.
+    #[test]
+    fn a_blank_identifier_does_not_reach_the_contact_field() {
+        let mut app = App::headless();
+        app.qso.call = "JA1ABC".to_owned();
+
+        app.audio.set_snapshot(identified(&["   "]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.call, "JA1ABC");
     }
 
     /// A platform that records what the interface asked it for.

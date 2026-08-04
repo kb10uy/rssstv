@@ -307,7 +307,9 @@ transmission starts, not inside the streaming loop.
 
 Composite preview rendering, which happens whenever the selected template or
 stock image changes, runs as a one-shot task rather than on the interface
-thread.
+thread. Keeping a reception is one of those changes: the receive side hands the
+composition worker the image `rximage` layers show, so a template built around
+the last reception recomposites as soon as one arrives.
 
 ## State Model
 

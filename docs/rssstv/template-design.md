@@ -182,6 +182,13 @@ If a template contains `rximage` and the caller does not provide an image,
 rendering fails. The renderer encodes the supplied RGB image as an in-memory PNG
 for the SVG backend; it does not persist that encoding or add it to the template.
 
+The application supplies the last reception it kept: one that completed, or one
+that was interrupted with at least 65 percent of its rows decoded, which is the
+same rule the received folder uses. The image is held in memory, so the layer
+follows the last reception whether or not receptions are being written to disk.
+Until a reception qualifies there is nothing to show, and the application
+supplies the prepared background in its place rather than failing the render.
+
 ## Variables
 
 Interpolation uses explicit names enclosed in `${...}`:

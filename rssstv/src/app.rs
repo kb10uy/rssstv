@@ -24,7 +24,7 @@ use crate::{
     worker::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
-        receive::Progress,
+        receive::{Frame, Progress},
         transmit::{TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
@@ -188,6 +188,12 @@ pub struct App {
     saved: Settings,
     composer: Composer,
     compose_generation: u64,
+    /// The last reception worth keeping, for `rximage` template layers.
+    ///
+    /// Held in memory rather than read back from the received folder: the
+    /// layer shows what was just received, which is true whether or not the
+    /// operator saves receptions at all.
+    received_image: Option<Arc<RgbImage>>,
     preview_frame: Option<Arc<RgbImage>>,
     prepared_frame: Option<Arc<RgbImage>>,
     playback: Option<Playback>,
@@ -286,6 +292,7 @@ impl App {
             saved: settings.clone(),
             composer: Composer::spawn(),
             compose_generation: 0,
+            received_image: None,
             preview_frame: None,
             prepared_frame: None,
             playback: None,
@@ -503,15 +510,17 @@ impl App {
         {
             self.rx_raster = raster;
         }
-        if let Some(candidate) = self.audio.take_history()
-            && self.auto_history
-            && let Err(error) = crate::storage::history::save(
-                self.paths.received_dir(),
-                candidate,
-                self.history_format,
-            )
-        {
-            crate::storage::log::note(&format!("failed to save receive history: {error}"));
+        if let Some(candidate) = self.audio.take_history() {
+            self.adopt_received_image(&candidate.frame);
+            if self.auto_history
+                && let Err(error) = crate::storage::history::save(
+                    self.paths.received_dir(),
+                    candidate,
+                    self.history_format,
+                )
+            {
+                crate::storage::log::note(&format!("failed to save receive history: {error}"));
+            }
         }
         self.adopt_decoded_callsign();
         self.audio.set_sync_start(self.sync_start());
@@ -578,6 +587,20 @@ impl App {
         }
         self.qso.call = call;
         self.qso_changed();
+    }
+
+    /// Keeps a finished reception as the image `rximage` layers show.
+    ///
+    /// The receive worker only offers a reception that completed, or that was
+    /// interrupted with enough of the raster decoded to be worth keeping, so
+    /// the layer follows the same rule as the received folder without being
+    /// tied to whether anything was written there.
+    fn adopt_received_image(&mut self, frame: &Frame) {
+        let Some(image) = frame.to_image() else {
+            return;
+        };
+        self.received_image = Some(Arc::new(image));
+        self.request_preview();
     }
 
     /// Picks up a device that stopped and puts it in front of the operator.
@@ -685,6 +708,7 @@ impl App {
             background_path: stock.path.clone(),
             assets_dir: self.paths.assets_dir().to_path_buf(),
             mode: self.tx_mode,
+            received_image: self.received_image.clone(),
             station_callsign: self.station_callsign.clone(),
             contact_callsign: self.qso.call.clone(),
             report: self.qso.rsv.clone(),
@@ -929,6 +953,7 @@ mod tests {
         time::{Duration, Instant},
     };
 
+    use rssstv_sstv::image::Rgb8;
     use rstest::rstest;
 
     use super::*;
@@ -1048,6 +1073,53 @@ mod tests {
         app.poll_audio();
 
         assert_eq!(fs::read_dir(received).unwrap().count(), expected_files);
+    }
+
+    /// The received image belongs to the template, not to the received folder,
+    /// so an operator who keeps nothing on disk still transmits over what was
+    /// just received.
+    #[rstest]
+    #[case(true)]
+    #[case(false)]
+    fn a_kept_reception_becomes_the_received_image(#[case] saving: bool) {
+        let root = TestDirectory::new();
+        let settings = Settings {
+            auto_history: saving,
+            ..Settings::default()
+        };
+        let mut app = disconnected(library(&root), &settings);
+        app.audio.set_snapshot(Snapshot {
+            history: Some(HistoryCandidate {
+                mode: Mode::Robot36,
+                frame: Frame {
+                    width: 2,
+                    height: 1,
+                    rgba: vec![10, 20, 30, 255, 40, 50, 60, 255],
+                },
+                received_at: "2026-08-04T12:34:56+09:00".to_owned(),
+                fsk_ids: Vec::new(),
+            }),
+            ..Snapshot::default()
+        });
+
+        app.poll_audio();
+
+        let image = app.received_image.expect("a received image");
+        assert_eq!(image.size().width(), 2);
+        assert_eq!(image.size().height(), 1);
+        assert_eq!(image.pixels().first(), Some(&Rgb8::new(10, 20, 30)));
+    }
+
+    /// A reception the worker never offered leaves the layer showing what it
+    /// showed before, so a lost signal does not blank a prepared transmission.
+    #[test]
+    fn a_reception_without_a_candidate_leaves_the_received_image_alone() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(decoding(10, 100));
+        app.poll_audio();
+
+        assert!(app.received_image.is_none());
     }
 
     #[test]
@@ -1481,5 +1553,55 @@ mod tests {
         app.qso_changed();
         assert!(!app.can_set_for_transmit());
         assert!(app.prepared_frame.is_some());
+    }
+
+    /// A kept reception both replaces what `rximage` shows and recomposites on
+    /// its own, so the operator does not have to touch the library to see it.
+    #[test]
+    fn a_kept_reception_reaches_the_composed_preview() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+        fs::write(
+            paths.templates_dir().join("alpha.kdl"),
+            r##"rximage {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)100 height=(fh)100 fit="stretch"
+}
+"##,
+        )
+        .unwrap();
+        let settings = Settings {
+            auto_history: false,
+            ..Settings::default()
+        };
+        let mut app = disconnected(paths, &settings);
+        app.refresh_library();
+        app.audio.set_snapshot(Snapshot {
+            history: Some(HistoryCandidate {
+                mode: Mode::Robot36,
+                frame: Frame {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![200, 10, 20, 255],
+                },
+                received_at: "2026-08-04T12:34:56+09:00".to_owned(),
+                fsk_ids: Vec::new(),
+            }),
+            ..Snapshot::default()
+        });
+
+        app.poll_audio();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !app.can_set_for_transmit() {
+            app.poll_audio();
+            assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        // The stock images the library holds are black, so a composite made of
+        // the received color could not have come from the background.
+        let frame = app.preview_frame.expect("a composed preview");
+        assert_eq!(frame.pixels().first(), Some(&Rgb8::new(200, 10, 20)));
     }
 }

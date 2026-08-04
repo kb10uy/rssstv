@@ -8,7 +8,10 @@ use std::{
 
 use rssstv_audio::CaptureReader;
 use rssstv_demodulator::SyncStart;
-use rssstv_sstv::{image::RgbImage, mode::Mode};
+use rssstv_sstv::{
+    image::{ImageSize, Rgb8, RgbImage},
+    mode::Mode,
+};
 
 use crate::worker::receive::session::run;
 
@@ -42,6 +45,21 @@ impl Frame {
             height: size.height() as u32,
             rgba,
         }
+    }
+
+    /// Rebuilds the image the frame was published from.
+    ///
+    /// The alpha channel carries nothing: every frame originates from an
+    /// [`RgbImage`] and is written fully opaque, so dropping it loses no
+    /// decoded pixel. A frame with no area has no image.
+    pub fn to_image(&self) -> Option<RgbImage> {
+        let size = ImageSize::new(self.width as usize, self.height as usize).ok()?;
+        let pixels = self
+            .rgba
+            .chunks_exact(4)
+            .map(|pixel| Rgb8::new(pixel[0], pixel[1], pixel[2]))
+            .collect();
+        RgbImage::from_pixels(size, pixels).ok()
     }
 }
 

@@ -25,6 +25,8 @@ pub struct ComposeRequest {
     pub background_path: PathBuf,
     pub assets_dir: PathBuf,
     pub mode: Mode,
+    /// The image `rximage` layers show, when a reception has produced one.
+    pub received_image: Option<Arc<RgbImage>>,
     pub station_callsign: String,
     pub contact_callsign: String,
     pub report: String,
@@ -145,7 +147,11 @@ fn compose_frame(request: &ComposeRequest, renderer: &mut Renderer) -> Result<Rg
     };
     let variables = variables(request);
     let mut context = RenderContext::new(&variables, &assets);
-    context.received_image = Some(&background);
+    // Before the first reception worth keeping there is no received image, and
+    // a template built around one would otherwise refuse to render at all. The
+    // prepared background stands in until a reception replaces it, so the
+    // preview shows the layout instead of an error.
+    context.received_image = Some(request.received_image.as_deref().unwrap_or(&background));
     let overlay = renderer
         .render(&template, size, &context)
         .map_err(|error| error.to_string())?;
@@ -266,6 +272,7 @@ mod tests {
             background_path: PathBuf::new(),
             assets_dir: PathBuf::new(),
             mode: Mode::Robot36,
+            received_image: None,
             station_callsign: "JA1ABC".to_owned(),
             contact_callsign: "N0CALL".to_owned(),
             report: "595".to_owned(),

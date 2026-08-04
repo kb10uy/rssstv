@@ -299,19 +299,28 @@ dBFS value or synchronization percentage.
 ### Transmit Worker
 
 The composition worker renders the selected template over the prepared
-background. Set for transmit freezes that immutable frame. The transmit worker
-then builds a `TransmissionEncoder` and streams PCM through `Modulator` into the
-playback queue, mirroring `encode-wav`.
+background. What it produces is the transmit image outright: there is no
+separate preview to confirm, so choosing a template or a stock changes what the
+transmit tab shows and what TX would send in one step. The transmit worker
+builds a `TransmissionEncoder` from that frame and streams PCM through
+`Modulator` into the playback queue, mirroring `encode-wav`.
 Template rendering through `resvg` is not real-time and runs before the
 transmission starts, not inside the streaming loop.
 
-Composite preview rendering, which happens whenever the selected template or
-stock image changes, runs as a one-shot task rather than on the interface
-thread. The worker keeps the background it last prepared, keyed by path, mode,
-and the file's modification time and length, so recomposing for a template,
-callsign, or reception does not decode and resize the picture again. Keeping a reception is one of those changes: the receive side hands the
-composition worker the image `rximage` layers show, so a template built around
-the last reception recomposites as soon as one arrives.
+A transmission holds the frame it started with, so the interface freezes the
+image to match: the template and stock lists are disabled while one runs, and a
+composition requested by anything else, such as a QSO field edit, is deferred
+and made once the transmission ends. What is on the tab is therefore always
+what is being sent.
+
+Composition, which happens whenever the selected template or stock image
+changes, runs as a one-shot task rather than on the interface thread. The
+worker keeps the background it last prepared, keyed by path, mode, and the
+file's modification time and length, so recomposing for a template, callsign,
+or reception does not decode and resize the picture again. Keeping a reception
+is one of those changes: the receive side hands the composition worker the
+image `rximage` layers show, so a template built around the last reception
+recomposes as soon as one arrives.
 
 ## State Model
 
@@ -324,7 +333,7 @@ App
   audio: AudioState              // device selection, capture status
   rx: RxState                    // live session, image handle, level, sync
   tx: TxState                    // selected mode, prepared frame, progress
-  library: LibraryState          // template list, stock list, preview
+  library: LibraryState          // template list, stock list
   qso: QsoState                  // callsign, RSV, serial number
   locale: Locale
 ```
@@ -374,7 +383,6 @@ marked shared are built once and reused across tabs.
 | QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
-| Composite preview | Shared | `image` plus edit and set-for-transmit actions |
 | Status bar | Shared | Text row |
 
 The input level meter, mode panel, and DSP controls share one bordered
@@ -405,8 +413,7 @@ performed per frame. Because the canvas already owns pointer input and view
 transforms, later additions such as zoom, pan, and slant preview extend it
 rather than replacing it.
 
-The composite preview and the list thumbnails have no overlays and remain plain
-`image` widgets.
+The list thumbnails have no overlays and remain plain `image` widgets.
 
 Two mock behaviors are deliberately reduced relative to the original MMSSTV
 interface, as recorded in the reference breakdown:
@@ -462,7 +469,7 @@ reception is in progress, the canvas shows a blank raster sized to the selected
 mode.
 
 A newly decoded FSKID takes the QSO panel's contact callsign field, which in
-turn recomposites the transmit preview through the `contact.callsign` template
+turn recomposes the transmit image through the `contact.callsign` template
 variable. The identifier names the station on the air, so it replaces whatever
 the field held rather than deferring to it. Only an arrival writes: the worker
 republishes every identifier it has decoded on each snapshot, so the interface
@@ -471,9 +478,8 @@ editable between receptions. That count is followed downwards as well, because
 reopening a device restarts the worker with an empty list.
 
 Transmit is implemented end to end. Template and stock changes enqueue a
-latest-wins composite request. Set for transmit freezes the completed preview,
-and TX opens the selected output device, primes a bounded queue, and starts
-playback. Progress is reported by the row being transmitted: the worker
+latest-wins composite request whose result becomes the transmit image, and TX
+opens the selected output device, primes a bounded queue, and starts playback. Progress is reported by the row being transmitted: the worker
 publishes the sample window the image raster occupies within the transmission,
 and the interface maps the samples consumed by the device callback onto a row
 within that window. The callback is the clock rather than the worker's

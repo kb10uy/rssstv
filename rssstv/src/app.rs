@@ -163,7 +163,6 @@ pub struct App {
     pub library_error: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
-    pub composite_raster: Raster,
     pub tx_snapshot: TxSnapshot,
     pub tx_error: Option<String>,
     /// The device fault waiting to be acknowledged, if one is.
@@ -196,8 +195,12 @@ pub struct App {
     /// template built around a reception composes before the first one
     /// arrives.
     received_image: Arc<RgbImage>,
-    preview_frame: Option<Arc<RgbImage>>,
+    /// The composed image the transmit tab shows, and the one a transmission
+    /// starting now would send.
     prepared_frame: Option<Arc<RgbImage>>,
+    /// Set when something changed the composition while a transmission was
+    /// running, so the change is made once the transmission ends.
+    composition_deferred: bool,
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
@@ -227,7 +230,7 @@ impl App {
         let mut app = Self::from_parts(audio, paths, config, &settings, platform::host());
         app.refresh_library();
         app.restore_selection(&settings);
-        app.request_preview();
+        app.request_composition();
         app.saved = app.settings();
         app
     }
@@ -284,7 +287,6 @@ impl App {
             library_error: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
-            composite_raster: Raster::test_pattern(settings.tx_mode),
             tx_snapshot: TxSnapshot::default(),
             tx_error: None,
             device_fault: None,
@@ -295,8 +297,8 @@ impl App {
             composer: Composer::spawn(),
             compose_generation: 0,
             received_image: Arc::new(test_pattern_image(settings.rx_mode)),
-            preview_frame: None,
             prepared_frame: None,
+            composition_deferred: false,
             playback: None,
             tx_worker: None,
             playback_started: false,
@@ -422,10 +424,8 @@ impl App {
         if mode != self.tx_mode {
             self.tx_mode = mode;
             self.tx_raster = Raster::test_pattern(mode);
-            self.composite_raster = Raster::test_pattern(mode);
-            self.preview_frame = None;
             self.prepared_frame = None;
-            self.request_preview();
+            self.request_composition();
         }
     }
 
@@ -459,16 +459,16 @@ impl App {
         if normalized != self.station_callsign {
             self.station_callsign = normalized;
         }
-        self.request_preview();
+        self.request_composition();
     }
 
     pub fn qso_changed(&mut self) {
-        self.request_preview();
+        self.request_composition();
     }
 
     pub fn clear_qso(&mut self) {
         self.qso = Qso::default();
-        self.request_preview();
+        self.request_composition();
     }
 
     fn refresh_library(&mut self) {
@@ -484,12 +484,12 @@ impl App {
 
     pub fn refresh_templates(&mut self) {
         self.library_error = self.load_templates().err().map(|error| error.to_string());
-        self.request_preview();
+        self.request_composition();
     }
 
     pub fn refresh_stocks(&mut self) {
         self.library_error = self.load_stocks().err().map(|error| error.to_string());
-        self.request_preview();
+        self.request_composition();
     }
 
     fn load_templates(&mut self) -> io::Result<()> {
@@ -602,7 +602,7 @@ impl App {
             return;
         };
         self.received_image = Arc::new(image);
-        self.request_preview();
+        self.request_composition();
     }
 
     /// Picks up a device that stopped and puts it in front of the operator.
@@ -689,20 +689,34 @@ impl App {
         }
     }
 
-    pub fn preview_changed(&mut self) {
-        self.request_preview();
+    /// Composes again after something the transmit image is built from
+    /// changed.
+    pub fn composition_changed(&mut self) {
+        self.request_composition();
     }
 
-    fn request_preview(&mut self) {
+    /// Asks the worker for the image the transmit tab should be showing.
+    ///
+    /// The result replaces the transmit image outright: what is on the tab is
+    /// what a transmission would send, so there is nothing to confirm between
+    /// choosing a template and keying up.
+    fn request_composition(&mut self) {
+        // A transmission is sending the frame currently on the tab. Replacing
+        // it would show something that is not going out, so the change waits
+        // until the transmission is over.
+        if self.tx_snapshot.phase.is_active() {
+            self.composition_deferred = true;
+            return;
+        }
         let (Some(template), Some(stock)) = (
             self.template.and_then(|index| self.templates.get(index)),
             self.stock.and_then(|index| self.stocks.get(index)),
         ) else {
-            self.preview_frame = None;
+            self.prepared_frame = None;
             return;
         };
         self.compose_generation = self.compose_generation.wrapping_add(1);
-        self.preview_frame = None;
+        self.prepared_frame = None;
         self.tx_error = None;
         self.composer.request(ComposeRequest {
             generation: self.compose_generation,
@@ -724,12 +738,12 @@ impl App {
         {
             match result.frame {
                 Ok(frame) => {
-                    self.composite_raster = Raster::from_image(&frame);
-                    self.preview_frame = Some(frame);
+                    self.tx_raster = Raster::from_image(&frame);
+                    self.prepared_frame = Some(frame);
                     self.tx_error = None;
                 }
                 Err(error) => {
-                    self.preview_frame = None;
+                    self.prepared_frame = None;
                     self.tx_error = Some(error);
                 }
             }
@@ -779,19 +793,6 @@ impl App {
         {
             self.stop_transmit_with(TxPhase::Complete);
         }
-    }
-
-    pub fn set_for_transmit(&mut self) {
-        let Some(frame) = self.preview_frame.clone() else {
-            return;
-        };
-        self.tx_raster = Raster::from_image(&frame);
-        self.prepared_frame = Some(frame);
-        self.tx_error = None;
-    }
-
-    pub fn can_set_for_transmit(&self) -> bool {
-        self.preview_frame.is_some() && !self.tx_snapshot.phase.is_active()
     }
 
     pub fn can_transmit(&self) -> bool {
@@ -858,6 +859,12 @@ impl App {
         self.tx_worker = None;
         self.playback_started = false;
         self.tx_snapshot.phase = phase;
+        // Whatever was chosen while the transmission was running takes effect
+        // now that nothing is being sent.
+        if self.composition_deferred {
+            self.composition_deferred = false;
+            self.request_composition();
+        }
     }
 
     /// Reports which image row the transmission is currently on.
@@ -1514,8 +1521,28 @@ mod tests {
         );
     }
 
+    /// Polls until the composition worker has delivered the transmit image.
+    fn composed(app: &mut App) -> Arc<RgbImage> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            app.poll_audio();
+            assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
+            assert!(Instant::now() < deadline, "no composition arrived");
+            if let Some(frame) = app.prepared_frame.clone() {
+                return frame;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// A pixel from the middle of the frame, away from any resampled edge.
+    fn center(frame: &RgbImage) -> Rgb8 {
+        let size = frame.size();
+        frame.row(size.height() / 2).expect("a middle row")[size.width() / 2]
+    }
+
     #[test]
-    fn composed_preview_can_be_frozen_for_transmit() {
+    fn a_composed_image_becomes_the_transmit_image() {
         let root = TestDirectory::new();
         let paths = library(&root);
         fs::write(
@@ -1533,18 +1560,10 @@ mod tests {
         };
         let mut app = disconnected(paths, &settings);
         app.refresh_library();
-        app.request_preview();
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !app.can_set_for_transmit() {
-            app.poll_audio();
-            assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
-        }
+        app.request_composition();
 
-        app.set_for_transmit();
+        composed(&mut app);
 
-        assert!(app.prepared_frame.is_some());
         assert_eq!(
             app.tx_raster.size().width(),
             app.tx_mode.spec().width() as usize
@@ -1553,16 +1572,13 @@ mod tests {
             app.tx_raster.size().height(),
             app.tx_mode.spec().height() as usize
         );
-        app.qso.call = "N0CALL".to_owned();
-        app.qso_changed();
-        assert!(!app.can_set_for_transmit());
-        assert!(app.prepared_frame.is_some());
+        assert!(app.transmit_problem().is_none() || app.audio.output_device.is_none());
     }
 
-    /// A kept reception both replaces what `rximage` shows and recomposites on
-    /// its own, so the operator does not have to touch the library to see it.
+    /// A kept reception reaches the transmit image on its own, so the operator
+    /// does not have to touch the library to send what was just received.
     #[test]
-    fn a_kept_reception_reaches_the_composed_preview() {
+    fn a_kept_reception_reaches_the_transmit_image() {
         let root = TestDirectory::new();
         let paths = library(&root);
         fs::write(
@@ -1596,16 +1612,40 @@ mod tests {
 
         app.poll_audio();
 
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !app.can_set_for_transmit() {
-            app.poll_audio();
-            assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
-            assert!(Instant::now() < deadline);
-            std::thread::yield_now();
-        }
-        // The stock images the library holds are black, so a composite made of
-        // the received color could not have come from the background.
-        let frame = app.preview_frame.expect("a composed preview");
+        // The stock images the library holds are black, so a composition made
+        // of the received color could not have come from the background.
+        let frame = composed(&mut app);
         assert_eq!(frame.pixels().first(), Some(&Rgb8::new(200, 10, 20)));
+    }
+
+    /// The transmit image is what a transmission is sending, so a stock chosen
+    /// while one runs must not replace it until the transmission is over.
+    #[test]
+    fn a_selection_during_a_transmission_takes_effect_when_it_ends() {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+        image::RgbImage::from_pixel(8, 6, image::Rgb([200, 30, 30]))
+            .save(paths.stocks_dir().join("first.png"))
+            .unwrap();
+        image::RgbImage::from_pixel(8, 6, image::Rgb([30, 200, 30]))
+            .save(paths.stocks_dir().join("second.png"))
+            .unwrap();
+        let mut app = disconnected(paths, &Settings::default());
+        app.refresh_library();
+        app.request_composition();
+        let first = composed(&mut app);
+        assert!(center(&first).r > center(&first).g);
+
+        app.tx_snapshot.phase = TxPhase::Producing;
+        app.stock = Some(1);
+        app.composition_changed();
+
+        app.poll_audio();
+        assert_eq!(app.prepared_frame.as_deref(), Some(first.as_ref()));
+
+        app.stop_transmit();
+
+        let second = composed(&mut app);
+        assert!(center(&second).g > center(&second).r);
     }
 }

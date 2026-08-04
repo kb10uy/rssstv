@@ -54,7 +54,6 @@ action-copy = Copy
 action-zoom = Zoom
 action-paste = Paste
 action-edit = Edit
-action-set-transmit = Set for transmit
 action-transmit = TX
 action-stop-transmit = Stop TX
 action-tone = 1750
@@ -65,7 +64,6 @@ action-refresh = Refresh
 
 section-templates = Templates
 section-stocks = Stock images
-section-composite = Composite preview
 library-empty = No files
 
 badge-waiting = WAITING FOR SIGNAL
@@ -93,7 +91,7 @@ status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
 status-afc = AFC { $offset } Hz
 
-error-no-transmit-frame = Set a composite image for transmit first
+error-no-transmit-frame = No transmit image has been composed yet
 error-no-output-device = Select an output device first
 error-invalid-station-call = Invalid station callsign: { $error }
 

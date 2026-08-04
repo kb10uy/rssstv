@@ -253,6 +253,7 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                         app.start_transmit();
                     }
                 }
+                pending(ui, app, "action-edit");
                 pending(ui, app, "action-tone");
                 pending(ui, app, "action-cw");
                 pending(ui, app, "action-fskid");
@@ -433,35 +434,51 @@ fn field_label(ui: &mut Ui, label: &str) {
     );
 }
 
+/// The template and stock lists, which together decide the transmit image.
+///
+/// A transmission is sending the image these lists produced, so they are
+/// disabled while one is running rather than letting the operator choose
+/// something that could not take effect until it ends.
 fn library(ui: &mut Ui, app: &mut App) {
     ui.add_space(2.0);
-    ui.horizontal_top(|ui| {
-        let height = ui.available_height();
+    let transmitting = app.tx_snapshot.phase.is_active();
+    ui.add_enabled_ui(!transmitting, |ui| {
+        ui.horizontal_top(|ui| {
+            let height = ui.available_height();
+            // The two lists divide the panel between them, so widening the
+            // window widens the file names rather than the empty space beside
+            // them.
+            let size = egui::vec2(list_width(ui), height);
 
-        let labels = ListLabels::new(app, "section-templates");
-        let previous_template = app.template;
-        match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
-            Some(ListAction::Reveal) => app.reveal(Folder::Templates),
-            Some(ListAction::Refresh) => app.refresh_templates(),
-            None => {}
-        }
-        if app.template != previous_template {
-            app.preview_changed();
-        }
+            let labels = ListLabels::new(app, "section-templates");
+            let previous_template = app.template;
+            match entry_list(ui, &labels, size, &app.templates, &mut app.template) {
+                Some(ListAction::Reveal) => app.reveal(Folder::Templates),
+                Some(ListAction::Refresh) => app.refresh_templates(),
+                None => {}
+            }
+            if app.template != previous_template {
+                app.composition_changed();
+            }
 
-        let labels = ListLabels::new(app, "section-stocks");
-        let previous_stock = app.stock;
-        match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
-            Some(ListAction::Reveal) => app.reveal(Folder::Stocks),
-            Some(ListAction::Refresh) => app.refresh_stocks(),
-            None => {}
-        }
-        if app.stock != previous_stock {
-            app.preview_changed();
-        }
-
-        composite(ui, app);
+            let labels = ListLabels::new(app, "section-stocks");
+            let previous_stock = app.stock;
+            match entry_list(ui, &labels, size, &app.stocks, &mut app.stock) {
+                Some(ListAction::Reveal) => app.reveal(Folder::Stocks),
+                Some(ListAction::Refresh) => app.refresh_stocks(),
+                None => {}
+            }
+            if app.stock != previous_stock {
+                app.composition_changed();
+            }
+        });
     });
+}
+
+/// Half of the panel, or the minimum width a list is readable at.
+fn list_width(ui: &Ui) -> f32 {
+    let available = ui.available_width() - ui.spacing().item_spacing.x;
+    (available / 2.0).max(LIST_WIDTH)
 }
 
 enum ListAction {
@@ -491,14 +508,14 @@ impl ListLabels {
 fn entry_list(
     ui: &mut Ui,
     labels: &ListLabels,
-    height: f32,
+    size: egui::Vec2,
     entries: &[Entry],
     selected: &mut Option<usize>,
 ) -> Option<ListAction> {
     let mut action = None;
     // The enclosing layout runs left to right, so the header and the list are
     // wrapped in a vertical Ui; without it they end up side by side.
-    ui.allocate_ui(egui::vec2(LIST_WIDTH, height), |ui| {
+    ui.allocate_ui(size, |ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 heading(ui, &labels.title);
@@ -557,28 +574,6 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
                 }
             });
         });
-}
-
-fn composite(ui: &mut Ui, app: &mut App) {
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            heading(ui, &app.i18n.text("section-composite"));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let label = app.i18n.text("action-set-transmit");
-                if ui
-                    .add_enabled(
-                        app.can_set_for_transmit(),
-                        egui::Button::new(RichText::new(label).size(SMALL)),
-                    )
-                    .clicked()
-                {
-                    app.set_for_transmit();
-                }
-                pending(ui, app, "action-edit");
-            });
-        });
-        canvas::image_view(ui, &mut app.composite_raster, 1.0);
-    });
 }
 
 fn status_bar(ui: &mut Ui, app: &App) {
@@ -803,6 +798,31 @@ mod tests {
         }
 
         assert_eq!(app.stock, Some(1));
+    }
+
+    /// The lists decide the image a transmission is sending, so clicking one
+    /// while it runs must not change the selection under it.
+    #[test]
+    fn a_transmission_locks_the_library_lists() {
+        let mut app = App::headless();
+        app.tx_snapshot.phase = TxPhase::Producing;
+        app.stocks = vec![
+            crate::app::Entry::sample("antenna.png", "640x496"),
+            crate::app::Entry::sample("shack.png", "320x256"),
+        ];
+        app.stock = Some(0);
+
+        {
+            let mut harness = Harness::new_ui(|ui| {
+                let model = menu::model(&app);
+                view(ui, &mut app, &model);
+            });
+            harness.run();
+            harness.get_by_label("shack.png").click();
+            harness.run();
+        }
+
+        assert_eq!(app.stock, Some(0));
     }
 
     #[test]

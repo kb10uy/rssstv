@@ -54,7 +54,6 @@ action-copy = コピー
 action-zoom = 拡大
 action-paste = 貼付
 action-edit = 編集
-action-set-transmit = 送信にセット
 action-transmit = TX
 action-stop-transmit = TX停止
 action-tone = 1750
@@ -65,7 +64,6 @@ action-refresh = 再読み込み
 
 section-templates = テンプレート
 section-stocks = ストック画像
-section-composite = 合成プレビュー
 library-empty = ファイルなし
 
 badge-waiting = 信号待ち
@@ -93,7 +91,7 @@ status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル
 status-afc = AFC { $offset } Hz
 
-error-no-transmit-frame = 先に合成画像を送信にセットしてください
+error-no-transmit-frame = 送信画像がまだ合成されていません
 error-no-output-device = 出力デバイスを選択してください
 error-invalid-station-call = 自局コールが不正です: { $error }
 

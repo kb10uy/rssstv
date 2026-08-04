@@ -18,10 +18,10 @@ const SIDE_PANEL_WIDTH: f32 = 320.0;
 /// Default height of the library row; the operator can drag it.
 const LIBRARY_HEIGHT: f32 = 260.0;
 const LIST_WIDTH: f32 = 260.0;
-/// Width of a DSP toggle, which the transmit button matches.
+/// Narrowest a DSP toggle may be drawn.
 ///
-/// The toggles divide the side panel three ways, so this is what one of them
-/// measures at the panel's default width.
+/// The toggles divide the panel three ways, which is what one of them measures
+/// at the panel's default width.
 const TOGGLE_WIDTH: f32 = 96.0;
 const FIELD_LABEL_WIDTH: f32 = 64.0;
 
@@ -43,12 +43,11 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
             action = menu::bar(ui, model);
         });
     }
-    Panel::top(Id::new("toolbar")).show(ui, |ui| toolbar(ui, app));
     Panel::bottom(Id::new("status-bar")).show(ui, |ui| status_bar(ui, app));
     // The side panel is claimed before the library so it runs the full height
-    // between the toolbar and the status bar: its sections are read while
-    // working in either half of the window, and the library only needs the
-    // width the lists are laid out in.
+    // above the status bar: its sections are read while working in either half
+    // of the window, and the library only needs the width the lists are laid
+    // out in.
     Panel::right(Id::new("side-panel"))
         .resizable(true)
         .default_size(SIDE_PANEL_WIDTH)
@@ -120,11 +119,21 @@ fn device_fault_modal(ui: &mut Ui, app: &mut App) {
     }
 }
 
-fn toolbar(ui: &mut Ui, app: &mut App) {
+/// Chooses which half of the application the panel below is showing.
+///
+/// It sits on top of that box in place of a title, because the tab it selects
+/// is what the box would have been titled after.
+fn tab_selector(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
+        let gaps = ui.spacing().item_spacing.x * (Tab::ALL.len() - 1) as f32;
+        let width = (ui.available_width() - gaps) / Tab::ALL.len() as f32;
+        let height = ui.spacing().interact_size.y;
         for tab in Tab::ALL {
-            let label = app.i18n.text(tab.label_key());
-            ui.selectable_value(&mut app.tab, tab, label);
+            let label = RichText::new(app.i18n.text(tab.label_key())).size(SMALL);
+            let entry = egui::Button::selectable(app.tab == tab, label);
+            if ui.add_sized([width, height], entry).clicked() {
+                app.tab = tab;
+            }
         }
     });
 }
@@ -134,18 +143,18 @@ fn main_pane(ui: &mut Ui, app: &mut App) {
     let geometry = geometry_label(app);
     let fraction = app.decoded_fraction();
 
-    let available = ui.available_height();
-    ui.allocate_ui(egui::vec2(ui.available_width(), available - 32.0), |ui| {
-        let area = canvas::image_view(ui, app.active_raster_mut(), fraction);
-        ui.painter().text(
-            area.min + egui::vec2(12.0, 12.0),
-            egui::Align2::LEFT_TOP,
-            badge,
-            egui::FontId::proportional(LABEL),
-            Color32::from_rgb(200, 200, 210),
-        );
-    });
-    action_bar(ui, &geometry);
+    // The bar is claimed first so it takes the height its text needs and the
+    // canvas fills exactly what is left. Reserving a fixed height for it
+    // instead left whatever it did not use as a gap under the image.
+    Panel::bottom(Id::new("action-bar")).show(ui, |ui| action_bar(ui, &geometry));
+    let area = canvas::image_view(ui, app.active_raster_mut(), fraction);
+    ui.painter().text(
+        area.min + egui::vec2(12.0, 12.0),
+        egui::Align2::LEFT_TOP,
+        badge,
+        egui::FontId::proportional(LABEL),
+        Color32::from_rgb(200, 200, 210),
+    );
 }
 
 fn badge(app: &App) -> String {
@@ -239,10 +248,10 @@ fn transmit_button(ui: &mut Ui, app: &mut App) {
     } else {
         "action-transmit"
     });
-    let mut response = ui.add(
-        egui::Button::new(RichText::new(label).size(SMALL))
-            .min_size(egui::vec2(TOGGLE_WIDTH, 0.0))
-            .fill(Color32::from_rgb(140, 40, 40)),
+    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    let mut response = ui.add_sized(
+        size,
+        egui::Button::new(RichText::new(label).size(SMALL)).fill(Color32::from_rgb(140, 40, 40)),
     );
     if !active && let Some(problem) = app.transmit_problem() {
         response = response.on_hover_text(problem);
@@ -261,11 +270,11 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
     // a large font scale; scroll rather than silently clipping the bottom.
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(4.0);
-        let title = app.i18n.text(match app.tab {
-            Tab::Receive => "section-rx-status",
-            Tab::Transmit => "section-tx-control",
+        tab_selector(ui, app);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            tab_controls(ui, app);
         });
-        section(ui, &title, |ui| tab_controls(ui, app));
         ui.add_space(16.0);
         let qso_title = app.i18n.text("section-qso");
         section(ui, &qso_title, |ui| qso_panel(ui, app));
@@ -387,12 +396,13 @@ fn dsp_panel(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
         let gaps = ui.spacing().item_spacing.x * (Dsp::ALL.len() - 1) as f32;
         let width = ((ui.available_width() - gaps) / Dsp::ALL.len() as f32).max(TOGGLE_WIDTH);
+        let height = ui.spacing().interact_size.y;
         for dsp in Dsp::ALL {
             let label = RichText::new(app.i18n.text(dsp.label_key())).size(SMALL);
-            let button = egui::Button::new(label)
-                .min_size(egui::vec2(width, 0.0))
-                .selected(app.dsp.get(dsp));
-            if ui.add(button).clicked() {
+            let button = egui::Button::new(label).selected(app.dsp.get(dsp));
+            // Sized rather than given a minimum, because a button wider than
+            // its label leaves the text against its left edge otherwise.
+            if ui.add_sized([width, height], button).clicked() {
                 toggled = Some(dsp);
             }
         }

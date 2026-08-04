@@ -26,8 +26,6 @@ tab-transmit = Transmit
 input-device = Input device
 output-device = Output device
 
-section-rx-status = Receive status
-section-tx-control = Transmit control
 tx-volume = Transmit level { $percent }% ({ $decibels } dB)
 
 section-mode = Mode

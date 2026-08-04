@@ -383,14 +383,14 @@ marked shared are built once and reused across tabs.
 | Area | Scope | Construction |
 | --- | --- | --- |
 | Menu bar | Shared | `muda` native menu or an egui in-window menu |
-| Tab selector | Shared | Button row with the active tab styled differently |
+| Tab selector | Shared | Two selectable buttons above the first side-panel box |
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
 | Action bar | Shared | Mode and size text |
 | Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Receive | Three toggle buttons |
-| Transmit trigger | Transmit | One button, where the DSP toggles sit |
+| Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
 | QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
@@ -407,7 +407,12 @@ whether a VIS header may start a reception over, whether receptions are kept,
 and in what format. Each is a check entry under Settings, grouped by what it
 affects.
 
-The side panel's first section follows the tab and keeps one shape across
+The tab selector sits on top of the side panel's first box rather than in a bar
+of its own, and that box carries no title: the tab it selects is what the title
+would have named. The window therefore opens straight onto the image, with no
+strip above it.
+
+That first box follows the tab and keeps one shape across
 both: a level bar, the mode, and the controls that act on the signal. Receiving,
 that is the input meter, which fills green while a raster is being acquired or
 decoded, and the DSP toggles. Transmitting, it is the output level and the

@@ -26,8 +26,6 @@ tab-transmit = 送信
 input-device = 入力デバイス
 output-device = 出力デバイス
 
-section-rx-status = 受信ステータス
-section-tx-control = 送信コントロール
 tx-volume = 送信レベル { $percent }% ({ $decibels } dB)
 
 section-mode = モード

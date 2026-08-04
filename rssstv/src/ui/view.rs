@@ -855,6 +855,25 @@ mod tests {
         harness.get_by_label(&receive);
     }
 
+    /// Every row of the variable dialog carries the same three widgets, which
+    /// is exactly the shape egui panics over if they are not given ids of
+    /// their own.
+    #[test]
+    fn the_variable_dialog_renders_a_row_for_every_name() {
+        let mut app = App::headless();
+        app.custom_variables = std::collections::BTreeMap::from([
+            ("club".to_owned(), "JARL".to_owned()),
+            ("rig".to_owned(), "FT-991A".to_owned()),
+        ]);
+        app.open_custom_variables();
+        assert_eq!(app.custom_draft.len(), 2);
+        let title = app.i18n.text("custom-title");
+
+        let harness = render(&mut app);
+
+        harness.get_by_label(&title);
+    }
+
     #[test]
     fn the_in_window_menu_bar_renders_on_every_platform() {
         // muda is not compiled on Linux, so this renderer is the only menu

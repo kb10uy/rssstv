@@ -10,10 +10,9 @@ use std::{
 };
 
 use rssstv_dsp::{
-    fir::{Fir, FirDesign, FirKind, HilbertTransformer},
+    filter::{Fir, FirDesign, FirKind, IirFilter, IirLowPassDesign, IirResponse, Resonator},
     frequency::ZeroCrossingFrequency,
-    iir::{IirFilter, IirLowPassDesign, IirResponse},
-    resonator::Resonator,
+    transform::HilbertTransformer,
 };
 use rssstv_fskid::{FskDecoder, FskId, FskTone};
 use rssstv_sstv::{

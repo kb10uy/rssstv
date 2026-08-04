@@ -11,19 +11,15 @@ extern crate alloc;
 
 /// Errors reported while validating DSP configurations.
 pub mod error;
-/// Discrete Fourier transforms and windowed spectra.
-pub mod fft;
-/// Finite impulse response filters and Hilbert transforms.
-pub mod fir;
-/// Frequency measurement primitives.
+/// Finite and infinite impulse response filters, and narrow-band resonators.
+pub mod filter;
+/// Zero-crossing and phase-locked frequency measurement.
 pub mod frequency;
-/// Infinite impulse response filter design and processing.
-pub mod iir;
 /// Oscillators and voltage-controlled oscillators.
 pub mod oscillator;
-/// Phase-locked frequency discrimination.
-pub mod pll;
-/// Narrow-band resonators.
-pub mod resonator;
+/// Discrete Fourier and Hilbert transforms.
+pub mod transform;
+
+mod validate;
 
 pub use error::DspError;

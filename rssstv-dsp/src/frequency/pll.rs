@@ -1,6 +1,6 @@
 use crate::{
     DspError,
-    iir::{IirFilter, IirLowPassDesign, IirResponse},
+    filter::{IirFilter, IirLowPassDesign, IirResponse},
     oscillator::Vco,
 };
 

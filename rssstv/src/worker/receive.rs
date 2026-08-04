@@ -489,6 +489,32 @@ mod pipeline_tests {
         );
     }
 
+    /// A station that notices a mistake stops and sends again a few seconds
+    /// later. Its new header arrives while the abandoned picture is still being
+    /// decoded, so the reception only starts over if the header is still being
+    /// listened for.
+    #[test]
+    fn a_station_sending_again_is_received_from_its_new_header() {
+        let mode = Mode::Scottie1;
+        let expected = source_image(mode);
+        let abandoned = transmission(mode, expected.clone(), 0.0);
+        let mut pcm = abandoned[..abandoned.len() * 3 / 4].to_vec();
+        pcm.extend(core::iter::repeat_n(0.0, RATE as usize * 3));
+        pcm.extend(transmission(mode, expected.clone(), 0.0));
+
+        let (snapshot, frame) = receive(&pcm, RATE as usize * 3);
+
+        assert_eq!(snapshot.progress, Progress::Complete, "{snapshot:?}");
+        let frame = frame.expect("a decoded frame");
+        assert!(
+            mean_abs_error(&frame, &expected) < 40.0,
+            "the second transmission decoded poorly: {}",
+            mean_abs_error(&frame, &expected)
+        );
+        let history = snapshot.history.expect("the abandoned reception is kept");
+        assert_eq!(history.mode, mode);
+    }
+
     fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (Snapshot, f64) {
         let pcm = transmission(mode, expected.clone(), offset_ppm);
         let (snapshot, frame) = receive(&pcm, RATE as usize * 3);

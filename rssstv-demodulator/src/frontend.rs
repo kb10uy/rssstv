@@ -22,10 +22,19 @@ const DETECTORS: [(f64, f64); 5] = [
 ];
 const FSK_MINIMUM_CONTRAST: f64 = 0.125;
 
+/// What identified the mode of a reception.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Detection {
+    /// A conventional VIS header, which names the mode outright.
+    Header,
+    /// The spacing of the raster's own sync pulses, with no header to read.
+    SyncSpacing,
+}
+
 pub(crate) struct FrontEndOutput {
     pub(crate) frequency_hz: f64,
     pub(crate) sync_strength: f64,
-    pub(crate) mode: Option<Mode>,
+    pub(crate) mode: Option<(Mode, Detection)>,
     pub(crate) fsk_id: Option<FskId>,
 }
 
@@ -100,10 +109,15 @@ impl FrontEnd {
         let sync_strength = (envelopes[1] / (envelopes[1] + competing)).clamp(0.0, 1.0);
         // A header identifies the mode outright, so it is preferred over an
         // inference drawn from the raster's timing.
-        let mode = self.vis.process(envelopes).or_else(|| {
-            self.sync_intervals
-                .process(self.sample_rate_hz, sync_strength)
-        });
+        let mode = self
+            .vis
+            .process(envelopes)
+            .map(|mode| (mode, Detection::Header))
+            .or_else(|| {
+                self.sync_intervals
+                    .process(self.sample_rate_hz, sync_strength)
+                    .map(|mode| (mode, Detection::SyncSpacing))
+            });
         let difference = (envelopes[3] - envelopes[4]).abs();
         let fsk_tone = if difference < FSK_MINIMUM_CONTRAST {
             FskTone::Ambiguous

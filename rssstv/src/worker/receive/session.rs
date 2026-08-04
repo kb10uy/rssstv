@@ -105,6 +105,8 @@ struct Session {
     refine_limit_len: usize,
     received_at: Option<String>,
     fsk_ids: Vec<String>,
+    /// The reception a new header started over, waiting to be published.
+    superseded: Option<HistoryCandidate>,
 }
 
 impl Session {
@@ -112,6 +114,10 @@ impl Session {
         let mut demodulator =
             Demodulator::new(sample_rate_hz).map_err(|error| error.to_string())?;
         demodulator.set_sync_start(sync_start);
+        // A live receiver has to hear a station starting over, which it cannot
+        // do if the header that starts the new picture is spent on the one
+        // being abandoned.
+        demodulator.set_header_restart(true);
         Ok(Self {
             demodulator,
             decoder: None,
@@ -124,6 +130,7 @@ impl Session {
             refine_limit_len: 0,
             received_at: None,
             fsk_ids: Vec::new(),
+            superseded: None,
         })
     }
 
@@ -244,6 +251,14 @@ impl Session {
     /// Feeds one demodulated chunk into the raster decoder.
     fn decode(&mut self, chunk: &DemodulatedChunk, slant: bool) -> Result<(), String> {
         if let Some(mode) = chunk.detected_mode() {
+            // A header during a reception is the station sending again, so the
+            // picture it interrupts is closed out before the decoder is handed
+            // over. It is kept on the same terms as any other reception: only
+            // one far enough along to be worth looking at.
+            if let Some(previous) = self.decoder.as_ref() {
+                self.superseded =
+                    Self::history_candidate(previous, &self.received_at, &self.fsk_ids);
+            }
             self.decoder = Some(
                 RxDecoder::with_config(
                     mode,
@@ -435,6 +450,16 @@ pub(super) fn run(
             }
         }
 
+        // A reception the new header started over is published straight away:
+        // the identifier it was waiting for cannot arrive now that the station
+        // is sending again.
+        let superseded = session.superseded.take();
+        if superseded.is_some() {
+            history_deadline = None;
+            last_progress = Progress::Idle;
+            progress_changed_at = Instant::now();
+        }
+
         let mut interrupted = None;
         let mut progress = session.progress();
         if let Some(fraction) = session.display_fraction() {
@@ -465,9 +490,10 @@ pub(super) fn run(
             progress_changed_at = Instant::now();
         }
         let reception_finished = session.reception_finished();
-        let (interrupted_frame, mut history) = interrupted
+        let (interrupted_frame, interrupted_history) = interrupted
             .map(|(frame, history)| (Some(frame), history))
             .unwrap_or_default();
+        let mut history = superseded.or(interrupted_history);
         let history_ready = if reception_finished {
             let deadline =
                 *history_deadline.get_or_insert_with(|| Instant::now() + FSK_HISTORY_WAIT);

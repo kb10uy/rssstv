@@ -188,6 +188,17 @@ operator's choice instead of overriding it. The scope is pushed to the worker
 whenever it changes and is reapplied to every demodulator the worker builds,
 including after a restarted search.
 
+A station that notices a mistake stops and sends again a few seconds later, and
+its new header arrives while the abandoned picture is still being decoded. The
+worker therefore keeps listening for a header during a reception, and one that
+arrives starts the reception over: the abandoned picture is closed out under the
+same 65-percent rule as any other interruption, and the new picture takes the
+decoder from the header that named it. Waiting for the abandoned reception to
+stop first would consume the header and leave nothing but sync spacing to start
+from. MMSSTV restarts on a header the same way, and does so by default. Only a
+header restarts a reception; sync spacing is present throughout every picture,
+so matching it again mid-reception would restart continuously.
+
 A reception whose signal stops arriving returns to signal search without
 discarding its partial image. The worker watches for progress that has not
 moved for the stall window, captures the decoder image, and starts a fresh

@@ -381,8 +381,13 @@ path; that path uses a Hilbert phase-difference discriminator.
 
 `rssstv-demodulator` provides a stateful `Demodulator` that accepts contiguous
 normalized mono PCM packets and emits owned demodulated chunks with absolute
-sample positions, a one-shot VIS mode event, and completed FSK identifiers. The
-existing `demodulate` batch function is a convenience wrapper over that API. The
+sample positions, a VIS mode event, and completed FSK identifiers. The mode is
+identified once and kept, which is what an offline decode of one transmission
+wants; `set_header_restart` opts into the live receiver's behavior instead,
+where a header arriving mid-reception starts the reception over. Only a header
+does so, because sync spacing is present throughout every picture. The existing
+`demodulate` batch function is a convenience wrapper over that API and keeps the
+offline behavior. The
 front end performs band-pass filtering, level normalization, VIS/FSK tone
 detection, conventional VIS decoding, zero-crossing AFC measurement, and
 Hilbert frequency discrimination. Its synchronization envelope is causal, with

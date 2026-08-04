@@ -254,6 +254,57 @@ mod tests {
         assert_eq!(output.mode(), Mode::Scottie2);
     }
 
+    /// A station that starts over sends a second header while the picture it
+    /// abandoned is still being decoded. Reading it is the only way the new
+    /// mode is known outright, so the front end has to keep listening for one.
+    #[test]
+    fn a_header_starts_the_reception_over_when_restarts_are_enabled() {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Robot36, rate, 0.0);
+        let mut phase = 0.0;
+        tone(&mut samples, rate, 1_500.0, 0.5, &mut phase);
+        let restart = samples.len();
+        samples.extend(vis_signal(Mode::Scottie2, rate, 0.0));
+
+        let mut demodulator = Demodulator::new(rate).unwrap();
+        demodulator.set_header_restart(true);
+        let mut detected = Vec::new();
+        let mut first_sample = 0;
+        for packet in samples.chunks(1_024) {
+            let output = demodulator.process(packet).unwrap();
+            if let Some(mode) = output.detected_mode() {
+                detected.push(mode);
+                first_sample = output.first_sample();
+            }
+        }
+
+        assert_eq!(detected, [Mode::Robot36, Mode::Scottie2]);
+        assert_eq!(demodulator.mode(), Some(Mode::Scottie2));
+        assert!(
+            first_sample as usize > restart,
+            "the second reception must start after the header that named it"
+        );
+    }
+
+    /// An offline decode of one transmission keeps the mode it identified, so
+    /// the restart cannot be something a caller gets without asking.
+    #[test]
+    fn a_second_header_is_ignored_by_default() {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Robot36, rate, 0.0);
+        let mut phase = 0.0;
+        tone(&mut samples, rate, 1_500.0, 0.5, &mut phase);
+        samples.extend(vis_signal(Mode::Scottie2, rate, 0.0));
+
+        let mut demodulator = Demodulator::new(rate).unwrap();
+        let mut detected = Vec::new();
+        for packet in samples.chunks(1_024) {
+            detected.extend(demodulator.process(packet).unwrap().detected_mode());
+        }
+
+        assert_eq!(detected, [Mode::Robot36]);
+    }
+
     #[test]
     fn synchronization_envelope_is_causal_at_end_of_input() {
         let rate = 8_000;

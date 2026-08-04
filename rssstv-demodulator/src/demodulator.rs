@@ -1,7 +1,12 @@
 use rssstv_fskid::FskId;
 use rssstv_sstv::{mode::Mode, time::SstvDuration};
 
-use crate::{DemodulatorError, frontend::FrontEnd, sync::SyncStart, sync_detector_delay};
+use crate::{
+    DemodulatorError,
+    frontend::{Detection, FrontEnd},
+    sync::SyncStart,
+    sync_detector_delay,
+};
 
 /// Owned output produced from one incremental PCM input packet.
 #[derive(Clone, Debug)]
@@ -14,8 +19,12 @@ pub struct DemodulatedChunk {
 }
 
 impl DemodulatedChunk {
-    /// Returns a mode when one was first identified in this packet, by a
-    /// conventional VIS header or by [`SyncStart`] interval matching.
+    /// Returns a mode when one was identified in this packet, by a conventional
+    /// VIS header or by [`SyncStart`] interval matching.
+    ///
+    /// With [`Demodulator::set_header_restart`] on, a header arriving during a
+    /// reception is reported the same way, and the packet's output samples then
+    /// begin after that header rather than at the packet's first sample.
     pub const fn detected_mode(&self) -> Option<Mode> {
         self.detected_mode
     }
@@ -47,6 +56,7 @@ pub struct Demodulator {
     sample_rate_hz: u32,
     next_sample: u64,
     mode: Option<Mode>,
+    header_restart: bool,
     finished: bool,
 }
 
@@ -61,6 +71,7 @@ impl Demodulator {
             sample_rate_hz,
             next_sample: 0,
             mode: None,
+            header_restart: false,
             finished: false,
         })
     }
@@ -97,11 +108,17 @@ impl Demodulator {
             if let Some(id) = output.fsk_id {
                 fsk_ids.push(id);
             }
-            if self.mode.is_none()
-                && let Some(mode) = output.mode
+            if let Some((mode, detection)) = output.mode
+                && (self.mode.is_none() || self.restarts_on(detection))
             {
                 self.mode = Some(mode);
                 detected_mode = Some(mode);
+                // Anything demodulated earlier in this packet belongs to the
+                // reception the header just replaced. It is dropped rather
+                // than handed on, so the caller's new decoder is not fed the
+                // tail of the old picture.
+                frequency_hz.clear();
+                sync_strength.clear();
                 first_sample = self.next_sample;
                 self.front_end.enable_afc();
                 continue;
@@ -142,6 +159,26 @@ impl Demodulator {
     /// Returns the detected mode, if available.
     pub const fn mode(&self) -> Option<Mode> {
         self.mode
+    }
+
+    /// Chooses whether a VIS header may start a reception over.
+    ///
+    /// A mode is normally identified once and kept, which is what an offline
+    /// decode of one transmission wants. A live receiver wants the opposite: a
+    /// station that notices a mistake stops and sends again, and its new header
+    /// arrives while the abandoned picture is still being decoded. Waiting for
+    /// that picture to stop first would consume the header, leaving nothing but
+    /// sync spacing to start from. MMSSTV makes the same choice, and has done
+    /// so by default since it offered the option at all.
+    ///
+    /// Only a header restarts. Sync spacing is present throughout every
+    /// picture, so matching it again mid-reception would restart continuously.
+    pub const fn set_header_restart(&mut self, enabled: bool) {
+        self.header_restart = enabled;
+    }
+
+    const fn restarts_on(&self, detection: Detection) -> bool {
+        self.header_restart && matches!(detection, Detection::Header)
     }
 
     /// Chooses whether a reception may start without a VIS header, and in

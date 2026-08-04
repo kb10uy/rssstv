@@ -9,13 +9,13 @@ menu-zoom-in = 拡大
 menu-zoom-out = 縮小
 menu-zoom-reset = 等倍に戻す ({ $percent }%)
 menu-open-config = 設定フォルダーを開く
+menu-open-history = 履歴フォルダーを開く
 menu-quit = 終了
 menu-language = 言語
 menu-help = ヘルプ
 
 tab-receive = 受信
 tab-transmit = 送信
-tab-history = 履歴
 
 input-device = 入力デバイス
 output-device = 出力デバイス
@@ -75,7 +75,6 @@ badge-transmit-leader = TRANSMITTING · { $mode } · LEADER
 badge-transmitting = TRANSMITTING · { $mode } · { $row }/{ $total }
 badge-transmit-identifying = TRANSMITTING · { $mode } · ID
 badge-transmit-complete = TX COMPLETE · { $mode }
-badge-history = HISTORY · { $mode }
 
 status-receiving = 受信中 ({ $percent }%)
 status-idle = 待機中

@@ -171,7 +171,6 @@ fn badge(app: &App) -> String {
                 .i18n
                 .text_with("badge-transmit-not-ready", &[("mode", mode)]),
         },
-        Tab::History => app.i18n.text_with("badge-history", &[("mode", mode)]),
         Tab::Receive => {
             let progress = app.audio.snapshot().progress;
             // A stopped reception leaves a partial image on the canvas, so it
@@ -198,7 +197,7 @@ fn badge(app: &App) -> String {
 fn geometry_label(app: &App) -> String {
     let size = match app.tab {
         Tab::Transmit => app.tx_raster.size(),
-        Tab::Receive | Tab::History => app.rx_raster.size(),
+        Tab::Receive => app.rx_raster.size(),
     };
     app.i18n.text_with(
         "geometry",
@@ -256,17 +255,12 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                 pending(ui, app, "action-cw");
                 pending(ui, app, "action-fskid");
             }
-            Tab::History => {
-                pending(ui, app, "action-save");
-                pending(ui, app, "action-copy");
-            }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             pending(ui, app, "action-zoom");
             match app.tab {
                 Tab::Receive => pending(ui, app, "action-save"),
                 Tab::Transmit => pending(ui, app, "action-paste"),
-                Tab::History => {}
             }
             ui.label(RichText::new(geometry).size(SMALL));
         });
@@ -334,7 +328,7 @@ fn mode_panel(ui: &mut Ui, app: &mut App) {
     }
     let (selected, options) = match app.tab {
         Tab::Transmit => (app.tx_mode, app.tx_modes.clone()),
-        Tab::Receive | Tab::History => (app.rx_mode, app.rx_modes.clone()),
+        Tab::Receive => (app.rx_mode, app.rx_modes.clone()),
     };
     let mut chosen = selected;
     ComboBox::from_id_salt("mode")
@@ -348,7 +342,7 @@ fn mode_panel(ui: &mut Ui, app: &mut App) {
     if chosen != selected {
         match app.tab {
             Tab::Transmit => app.select_tx_mode(chosen),
-            Tab::Receive | Tab::History => app.select_rx_mode(chosen),
+            Tab::Receive => app.select_rx_mode(chosen),
         }
     }
 }
@@ -678,7 +672,6 @@ mod tests {
     #[rstest]
     #[case(Tab::Receive)]
     #[case(Tab::Transmit)]
-    #[case(Tab::History)]
     fn every_tab_renders(#[case] tab: Tab) {
         let mut app = App::headless();
         app.tab = tab;

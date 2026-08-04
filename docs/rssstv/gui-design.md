@@ -299,11 +299,10 @@ groups.
 
 ```text
 App
-  tab: Tab                       // Receive | Transmit | History
+  tab: Tab                       // Receive | Transmit
   audio: AudioState              // device selection, capture status
   rx: RxState                    // live session, image handle, level, sync
   tx: TxState                    // selected mode, prepared frame, progress
-  history: HistoryState          // stored receptions and current selection
   library: LibraryState          // template list, stock list, preview
   qso: QsoState                  // callsign, RSV, serial number
   locale: Locale
@@ -348,7 +347,6 @@ marked shared are built once and reused across tabs.
 | Main image view | Per tab | `canvas`; see below |
 | Receive action bar | Receive | Buttons, `checkbox`, mode and size text |
 | Transmit action bar | Transmit | Buttons including the transmit trigger |
-| History action bar | History | Navigation buttons and record metadata |
 | Input level meter | Shared | Signal-colored `progress_bar` |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Shared | Three toggle buttons |
@@ -472,8 +470,11 @@ exactly the modes the core can encode or decode.
 ## Prerequisites
 
 Automatic history retains completed receptions and interrupted receptions that
-reached at least 65 percent. History browsing and the receive controls that act
-on stored entries remain to be implemented.
+reached at least 65 percent. The application does not browse them itself: the
+files sit in the operator's own pictures directory, where the file manager
+already shows them with thumbnails, sorting, and everything else a browser of
+its own would have to reimplement. The File menu opens that directory, and the
+receive controls that act on stored entries remain to be implemented.
 
 The application storage directories and an empty default configuration file
 are initialized at startup as described in [architecture.md](architecture.md).

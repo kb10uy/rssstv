@@ -31,17 +31,15 @@ pub enum Tab {
     #[default]
     Receive,
     Transmit,
-    History,
 }
 
 impl Tab {
-    pub const ALL: [Self; 3] = [Self::Receive, Self::Transmit, Self::History];
+    pub const ALL: [Self; 2] = [Self::Receive, Self::Transmit];
 
     pub const fn label_key(self) -> &'static str {
         match self {
             Self::Receive => "tab-receive",
             Self::Transmit => "tab-transmit",
-            Self::History => "tab-history",
         }
     }
 }
@@ -441,6 +439,17 @@ impl App {
             .map(|error| error.to_string());
     }
 
+    /// Opens the directory automatic history writes received images into.
+    ///
+    /// The images live under the operator's pictures directory rather than in
+    /// a session of the application's own, so browsing them is the file
+    /// manager's job and the interface only has to point at the folder.
+    pub fn reveal_history(&mut self) {
+        self.library_error = reveal_directory(self.paths.received_dir())
+            .err()
+            .map(|error| error.to_string());
+    }
+
     pub fn reveal_stocks(&mut self) {
         self.library_error = reveal_directory(self.paths.stocks_dir())
             .err()
@@ -653,21 +662,20 @@ impl App {
                     1.0
                 }
             }
-            Tab::History => 1.0,
         }
     }
 
     pub const fn active_mode(&self) -> Mode {
         match self.tab {
             Tab::Transmit => self.tx_mode,
-            Tab::Receive | Tab::History => self.rx_mode,
+            Tab::Receive => self.rx_mode,
         }
     }
 
     pub const fn active_raster_mut(&mut self) -> &mut Raster {
         match self.tab {
             Tab::Transmit => &mut self.tx_raster,
-            Tab::Receive | Tab::History => &mut self.rx_raster,
+            Tab::Receive => &mut self.rx_raster,
         }
     }
 
@@ -1223,10 +1231,10 @@ mod tests {
     }
 
     #[test]
-    fn completed_tabs_draw_a_full_raster() {
+    fn an_idle_transmit_tab_draws_a_full_raster() {
         let mut app = App::headless();
         app.audio.set_snapshot(decoding(40, 100));
-        app.tab = Tab::History;
+        app.tab = Tab::Transmit;
         assert_eq!(app.decoded_fraction(), 1.0);
     }
 

@@ -24,6 +24,7 @@ pub enum Action {
     ZoomOut,
     ZoomReset,
     RevealConfig,
+    RevealHistory,
     Quit,
 }
 
@@ -67,6 +68,11 @@ pub fn model(app: &App) -> Vec<Menu> {
             label: text("menu-file"),
             items: vec![
                 Item::Pending(text("action-save")),
+                Item::Separator,
+                Item::Command {
+                    label: text("menu-open-history"),
+                    action: Action::RevealHistory,
+                },
                 Item::Separator,
                 Item::Command {
                     label: text("menu-quit"),
@@ -193,6 +199,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
         Action::ZoomReset => app.set_ui_scale(crate::config::DEFAULT_UI_SCALE),
         Action::RevealConfig => app.reveal_config(),
+        Action::RevealHistory => app.reveal_history(),
         Action::Quit => return true,
     }
     false

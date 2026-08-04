@@ -454,7 +454,10 @@ The GUI template list is populated from regular `.kdl` files directly inside
 `templates`. The stock list is populated from regular files directly inside
 `Stocks` when the configured `image` crate decoders can read their dimensions.
 Both lists can be refreshed independently and provide an action that opens the
-corresponding directory in Explorer, Finder, or the desktop file manager.
+corresponding directory in Explorer, Finder, or the desktop file manager. The
+File menu opens `Received` the same way: received images are the operator's
+files in the operator's pictures directory, so browsing them belongs to the
+file manager rather than to a session the application would have to keep.
 
 ## Planned Gaps
 
@@ -464,7 +467,7 @@ implementations:
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
-- PTT, CAT, history browsing, and template editing.
+- PTT, CAT, and template editing.
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

@@ -9,13 +9,13 @@ menu-zoom-in = Zoom In
 menu-zoom-out = Zoom Out
 menu-zoom-reset = Reset Zoom ({ $percent }%)
 menu-open-config = Open Config Folder
+menu-open-history = Open History Folder
 menu-quit = Quit
 menu-language = Language
 menu-help = Help
 
 tab-receive = Receive
 tab-transmit = Transmit
-tab-history = History
 
 input-device = Input device
 output-device = Output device
@@ -75,7 +75,6 @@ badge-transmit-leader = TRANSMITTING · { $mode } · LEADER
 badge-transmitting = TRANSMITTING · { $mode } · { $row }/{ $total }
 badge-transmit-identifying = TRANSMITTING · { $mode } · ID
 badge-transmit-complete = TX COMPLETE · { $mode }
-badge-history = HISTORY · { $mode }
 
 status-receiving = Receiving ({ $percent }%)
 status-idle = Idle

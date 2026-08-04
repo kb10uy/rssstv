@@ -4,9 +4,9 @@ This document describes the overall structure of the original MMSSTV
 application in `original/mmsstv`. Signal-processing details and supported SSTV
 formats are documented separately:
 
-- [MMSSTV DSP Implementation](mmsstv-dsp.md)
-- [SSTV Formats Supported by MMSSTV](sstv-formats.md)
-- [MMSSTV Rust Porting Notes](mmsstv-porting.md)
+- [MMSSTV DSP Implementation](dsp.md)
+- [SSTV Formats Supported by MMSSTV](../sstv/modes.md)
+- [MMSSTV Rust Porting Notes](porting.md)
 
 ## Overview
 

@@ -2,8 +2,8 @@
 
 This document describes the signal-processing implementation in the original
 MMSSTV source. The overall application structure is covered in
-[mmsstv.md](mmsstv.md), and protocol formats are covered in
-[sstv-formats.md](sstv-formats.md).
+[architecture.md](architecture.md), and protocol formats are covered in
+[sstv/modes.md](../sstv/modes.md).
 
 ## Source Map
 
@@ -252,7 +252,7 @@ decodes callsign records and the N-VIS identifiers used by narrow modes
 sequence.
 
 Exact identifiers and per-mode timing are listed in
-[sstv-formats.md](sstv-formats.md).
+[sstv/modes.md](../sstv/modes.md).
 
 ## Raster Synchronization and Live Correction
 

@@ -7,7 +7,7 @@ existing core crates.
 It refines the `application` layer left unspecified in
 [architecture.md](architecture.md). The core contracts described there are
 assumed and are not restated here. Mode and timing data comes from
-[sstv-formats.md](sstv-formats.md); the transmit overlay format is described in
+[sstv/modes.md](../sstv/modes.md); the transmit overlay format is described in
 [template-design.md](template-design.md).
 
 ## Framework
@@ -191,7 +191,7 @@ lines accumulate, redrawing the rows already decoded from the retained samples.
 As in MMSSTV, the average covers however many estimates have been collected, so
 a gross rate error is corrected from the first estimate rather than after the
 window has filled. This mirrors MMSSTV's `AutoStopJob()` real-time adjustment;
-see [mmsstv-dsp.md](mmsstv-dsp.md). Because it redraws, it requires
+see [mmsstv/dsp.md](../mmsstv/dsp.md). Because it redraws, it requires
 `Staging::Memory`.
 
 A refit that runs faster than the previous estimate places the decoded units

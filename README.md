@@ -2,6 +2,9 @@
 
 Rust SSTV protocol, DSP, template-rendering, and WAV integration components.
 
+Documentation is in [docs/](docs/README.md), divided into the SSTV protocols
+themselves, the behavior of the original MMSSTV, and this project.
+
 ## Application
 
 `rssstv` is the desktop interface, built with egui and eframe:
@@ -20,7 +23,7 @@ template and stock image, and choose Set for transmit after the composite
 preview is ready. TX streams the complete VOX, VIS, raster, footer, FSKID, and
 trailing-silence sequence to the selected device. The same button stops an
 active transmission. PTT and CAT control are not implemented, and completed
-receptions are not stored. See [docs/gui-design.md](docs/gui-design.md) for the
+receptions are not stored. See [docs/rssstv/gui-design.md](docs/rssstv/gui-design.md) for the
 design and remaining work.
 
 ## Encode WAV

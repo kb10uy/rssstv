@@ -11,13 +11,18 @@ The repository contains:
 - `rssstv/`: the Rust application and workspace crate.
 - `original/mmsstv/`: the original MMSSTV source code, included as a Git
   submodule and used as the behavioral reference.
-- `docs/mmsstv.md`: architecture analysis of the original MMSSTV application.
-- `docs/mmsstv-dsp.md`: analysis of the original signal-processing
-  implementation.
-- `docs/sstv-formats.md`: supported SSTV modes, identifiers, and timing.
-- `docs/architecture.md`: target Rust architecture and current implementation
-  mapping.
-- `docs/mmsstv-porting.md`: proposed boundaries and guidance for the Rust port.
+- `docs/`: documentation, divided by subject. `docs/README.md` indexes it.
+  - `docs/sstv/`: the protocols themselves — modes, timing, VIS, and FSKID —
+    independent of any one implementation.
+  - `docs/mmsstv/`: the behavior of the original application, including its DSP
+    implementation and where it departs from published descriptions.
+  - `docs/rssstv/`: this project — target architecture, the desktop
+    application, and the transmit overlay format.
+
+Put a new document under the directory matching what it is about. A protocol
+description answers to the on-air signal, a description of MMSSTV answers to
+its source, and a description of RSSSTV answers to this repository's code; a
+document that would answer to two of those belongs in two documents.
 
 Treat `original/mmsstv/` as reference material. Do not modify the submodule
 unless the task explicitly requires changes to the original source.

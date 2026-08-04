@@ -5,10 +5,10 @@ maps the current codebase onto that design. It is both a guide for new work and
 a record of which architectural pieces already exist.
 
 The architecture of the original MMSSTV application is described in
-[mmsstv.md](mmsstv.md). See [mmsstv-porting.md](mmsstv-porting.md) for the
+[mmsstv/architecture.md](../mmsstv/architecture.md). See [mmsstv/porting.md](../mmsstv/porting.md) for the
 mapping from the original implementation to the proposed Rust boundaries,
-[mmsstv-dsp.md](mmsstv-dsp.md) for original DSP details, and
-[sstv-formats.md](sstv-formats.md) for mode and timing data. The portable
+[mmsstv/dsp.md](../mmsstv/dsp.md) for original DSP details, and
+[sstv/modes.md](../sstv/modes.md) for mode and timing data. The portable
 transmit overlay format is described in [template-design.md](template-design.md).
 The desktop application layer, its audio boundary, and its user interface are
 described in [gui-design.md](gui-design.md).
@@ -241,7 +241,7 @@ returns validated `FskId` values. The receive front end owns the 1900/2100 Hz
 detectors and supplies those classifications.
 
 Callsign records are implemented. Contest records, N-VIS events, and FSKID
-transmission remain future work. See [mmsstv-fskid.md](mmsstv-fskid.md) for the
+transmission remain future work. See [mmsstv/fskid.md](../mmsstv/fskid.md) for the
 protocol definition.
 
 ## State, Ownership, and Concurrency

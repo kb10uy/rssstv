@@ -76,6 +76,71 @@ fn embedded_icon() -> Option<IconData> {
     })
 }
 
+/// A claim on being the only running copy of the application.
+///
+/// Held for the lifetime of the process; releasing it lets the next launch
+/// through. The application takes a claim because it holds audio devices
+/// open, and a second copy silently failing to acquire them is harder to
+/// understand than not opening at all.
+pub struct SingleInstance(imp::Claim);
+
+/// Claims the right to be the only running copy.
+///
+/// Returns `None` when another copy already holds the claim, having first
+/// asked that copy to come to the front, so the launch the operator just made
+/// still puts the application in front of them.
+pub fn claim_single_instance() -> Option<SingleInstance> {
+    imp::claim_single_instance().map(SingleInstance)
+}
+
+impl SingleInstance {
+    /// Records where this copy's window is, so a later launch can raise it.
+    ///
+    /// Called once the platform has created the window, which is the earliest
+    /// point there is anything to record.
+    pub fn publish_window(&self, cc: &eframe::CreationContext<'_>) {
+        self.0.publish_window(cc);
+    }
+}
+
+/// A claim backed by a locked file, for the platforms without a better one.
+///
+/// The lock is released by the operating system when the process ends, so a
+/// copy that crashed does not keep the next launch out.
+#[cfg(not(target_os = "windows"))]
+pub struct FileLock {
+    /// Never read: the lock lasts exactly as long as the file is open, so
+    /// holding the handle is the whole point of the field.
+    #[expect(dead_code, reason = "held open to hold the lock")]
+    file: std::fs::File,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl FileLock {
+    /// Nothing is published: raising another process's window needs a
+    /// compositor-specific route that this application does not have yet, so
+    /// a second launch reports the situation and exits instead.
+    pub fn publish_window(&self, _cc: &eframe::CreationContext<'_>) {}
+}
+
+/// Takes an exclusive lock on a file named after the application.
+#[cfg(not(target_os = "windows"))]
+fn lock_file_claim() -> Option<FileLock> {
+    use std::fs::OpenOptions;
+
+    let directory = directories::BaseDirs::new()
+        .and_then(|directories| directories.runtime_dir().map(Path::to_path_buf))
+        .unwrap_or_else(std::env::temp_dir);
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(directory.join(concat!(env!("CARGO_PKG_NAME"), ".lock")))
+        .ok()?;
+    file.try_lock().ok()?;
+    Some(FileLock { file })
+}
+
 /// Opens `path` in the platform's file manager.
 ///
 /// The child is waited on by a detached thread rather than left unclaimed, so

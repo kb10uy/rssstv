@@ -102,6 +102,13 @@ const MONITOR_FRACTION: f32 = 0.92;
 fn main() -> Result<(), Box<dyn Error>> {
     platform::prepare_process();
 
+    // A second copy would fail to open the audio devices the first one holds,
+    // which is harder to understand than not opening at all. The running copy
+    // has already been asked to come forward by the time this returns.
+    let Some(instance) = platform::claim_single_instance() else {
+        return Ok(());
+    };
+
     let paths = paths::AppPaths::discover()?;
     paths.initialize()?;
 
@@ -126,7 +133,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     eframe::run_native(
         concat!("RSSSTV ", env!("CARGO_PKG_VERSION")),
         options,
-        Box::new(|cc| Ok(Box::new(Interface::new(cc, paths)))),
+        Box::new(|cc| Ok(Box::new(Interface::new(cc, paths, instance)))),
     )?;
     Ok(())
 }
@@ -148,6 +155,11 @@ struct Interface {
     /// Set when the operator chose to quit, so the frame can finish drawing
     /// and persist before the window closes.
     quitting: bool,
+    /// The claim on being the only running copy.
+    ///
+    /// Held here so it lasts as long as the interface does, and released with
+    /// it so the next launch is let through.
+    _instance: platform::SingleInstance,
 }
 
 /// Shrinks the window to fit the monitor it opened on.
@@ -167,9 +179,14 @@ fn fit_to_monitor(ctx: &egui::Context) -> bool {
 }
 
 impl Interface {
-    fn new(cc: &eframe::CreationContext<'_>, paths: paths::AppPaths) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        paths: paths::AppPaths,
+        instance: platform::SingleInstance,
+    ) -> Self {
         install_fonts(&cc.egui_ctx);
         platform::prepare_window(cc);
+        instance.publish_window(cc);
 
         let app = App::new(paths);
         cc.egui_ctx.set_zoom_factor(app.ui_scale);
@@ -187,6 +204,7 @@ impl Interface {
             menu,
             fitted: false,
             quitting: false,
+            _instance: instance,
         }
     }
 }

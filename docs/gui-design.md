@@ -33,6 +33,18 @@ The menu bar is the one deliberate exception and stays in `menu`, because its
 split is between two renderers of a shared model rather than between operating
 systems.
 
+Only one copy runs at a time. The application holds audio devices open, and a
+second copy silently failing to acquire them is harder to understand than not
+opening at all, so a launch that finds the claim already taken asks the running
+copy to come forward and exits. Windows takes the claim with a session-scoped
+named mutex and publishes its window handle through a named shared section, so
+the second launch can restore and raise the existing window; whether it reaches
+the foreground is the platform's decision, and a refusal flashes the taskbar
+button instead. Other platforms take the claim with a locked file and cannot
+raise the running window yet. Windows also sets an explicit AppUserModelID, so
+taskbar grouping and pinning do not follow the executable path and change
+between a development build and an installed copy.
+
 The window icon comes from the platform's own artwork store. On Windows the
 build script embeds `rssstv/assets/icon.ico` as an executable resource, and the
 application loads that resource back at startup, so the shell, the window, and

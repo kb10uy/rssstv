@@ -1,20 +1,34 @@
 //! Windows integration.
 
-use std::{mem, ptr};
+use std::{ffi::c_void, mem, ptr};
 
 use egui::IconData;
 use windows_sys::Win32::{
-    Foundation::{FreeLibrary, HWND},
+    Foundation::{
+        CloseHandle, ERROR_ALREADY_EXISTS, FreeLibrary, GetLastError, HANDLE, HWND,
+        INVALID_HANDLE_VALUE,
+    },
     Graphics::Gdi::{
         BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject, GetDC,
         GetDIBits, GetObjectW, HBITMAP, ReleaseDC,
     },
-    System::LibraryLoader::{
-        GetModuleHandleA, GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32,
-        LoadLibraryExA,
+    System::{
+        LibraryLoader::{
+            GetModuleHandleA, GetModuleHandleW, GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32,
+            LoadLibraryExA,
+        },
+        Memory::{
+            CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS,
+            MapViewOfFile, OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
+        },
+        Threading::CreateMutexW,
     },
-    UI::WindowsAndMessaging::{
-        DestroyIcon, GetIconInfo, HICON, ICONINFO, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW,
+    UI::{
+        Shell::SetCurrentProcessExplicitAppUserModelID,
+        WindowsAndMessaging::{
+            DestroyIcon, GetIconInfo, HICON, ICONINFO, IMAGE_ICON, IsIconic, IsWindow,
+            LR_DEFAULTCOLOR, LoadImageW, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+        },
     },
 };
 
@@ -22,8 +36,159 @@ pub const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
 
 pub const FILE_MANAGER: Option<&str> = Some("explorer.exe");
 
+/// Identifies the application to the shell.
+///
+/// Taskbar buttons, pinned shortcuts, and notifications are grouped by this
+/// string. A process that sets none is grouped by its executable path
+/// instead, so a development build and an installed copy would be treated as
+/// unrelated applications.
+const APP_USER_MODEL_ID: &str = "kb10uy.RSSSTV";
+
+/// Names the objects that coordinate the single-instance claim.
+///
+/// The `Local\` prefix keeps them in the signed-in session's namespace, so two
+/// operators signed in to the same machine each get their own copy.
+const INSTANCE_MUTEX: &str = concat!(r"Local\", env!("CARGO_PKG_NAME"), "-instance");
+const INSTANCE_WINDOW: &str = concat!(r"Local\", env!("CARGO_PKG_NAME"), "-instance-window");
+
 pub fn prepare_process() {
+    let _ = set_app_user_model_id();
     allow_dark_mode_for_app();
+}
+
+/// Returns the `HRESULT` the shell answered with.
+fn set_app_user_model_id() -> i32 {
+    let id = wide(APP_USER_MODEL_ID);
+    unsafe { SetCurrentProcessExplicitAppUserModelID(id.as_ptr()) }
+}
+
+/// Encodes `value` as the null-terminated UTF-16 the Win32 API expects.
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// The claim held by the copy that got there first.
+///
+/// The mutex is what other copies test. The shared section carries this
+/// copy's window handle so a later launch can raise it; it is mapped once and
+/// kept mapped, because the window is published after the claim is taken.
+pub struct Claim {
+    mutex: HANDLE,
+    mapping: HANDLE,
+    published: *mut c_void,
+}
+
+pub fn claim_single_instance() -> Option<Claim> {
+    claim_named(INSTANCE_MUTEX, INSTANCE_WINDOW)
+}
+
+/// Takes the claim held under `mutex_name`, publishing to `window_name`.
+///
+/// The names are arguments so tests can claim under their own, rather than
+/// contending with a copy the operator has open.
+fn claim_named(mutex_name: &str, window_name: &str) -> Option<Claim> {
+    unsafe {
+        let name = wide(mutex_name);
+        let mutex = CreateMutexW(ptr::null(), 1, name.as_ptr());
+        if mutex.is_null() {
+            // Without the mutex there is no way to tell, and refusing to start
+            // would be worse than allowing a second copy.
+            return Some(Claim::unheld());
+        }
+        if GetLastError() == ERROR_ALREADY_EXISTS {
+            CloseHandle(mutex);
+            raise_running_instance(window_name);
+            return None;
+        }
+
+        let name = wide(window_name);
+        let mapping = CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            ptr::null(),
+            PAGE_READWRITE,
+            0,
+            mem::size_of::<i64>() as u32,
+            name.as_ptr(),
+        );
+        let published = if mapping.is_null() {
+            ptr::null_mut()
+        } else {
+            MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, mem::size_of::<i64>()).Value
+        };
+        Some(Claim {
+            mutex,
+            mapping,
+            published,
+        })
+    }
+}
+
+/// Brings the copy that already holds the claim to the front.
+///
+/// The window handle is read from the section the running copy published. A
+/// launch that lands in the moment between the claim and the window being
+/// created finds nothing and simply exits; the running copy is left as it is.
+unsafe fn raise_running_instance(window_name: &str) {
+    unsafe {
+        let name = wide(window_name);
+        let mapping = OpenFileMappingW(FILE_MAP_READ, 0, name.as_ptr());
+        if mapping.is_null() {
+            return;
+        }
+        let view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, mem::size_of::<i64>());
+        if !view.Value.is_null() {
+            let hwnd = view.Value.cast::<i64>().read_volatile() as HWND;
+            if !hwnd.is_null() && IsWindow(hwnd) != 0 {
+                if IsIconic(hwnd) != 0 {
+                    ShowWindow(hwnd, SW_RESTORE);
+                } else {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
+                // Windows only honors this when the calling process holds the
+                // foreground privilege, which a launch the operator just made
+                // normally does. When it refuses, it flashes the taskbar
+                // button instead, which is the platform's own answer.
+                SetForegroundWindow(hwnd);
+            }
+            UnmapViewOfFile(view);
+        }
+        CloseHandle(mapping);
+    }
+}
+
+impl Claim {
+    /// A claim that holds nothing, for when the platform would not say.
+    const fn unheld() -> Self {
+        Self {
+            mutex: ptr::null_mut(),
+            mapping: ptr::null_mut(),
+            published: ptr::null_mut(),
+        }
+    }
+
+    pub fn publish_window(&self, cc: &eframe::CreationContext<'_>) {
+        let (Some(hwnd), false) = (main_window(cc), self.published.is_null()) else {
+            return;
+        };
+        unsafe { self.published.cast::<i64>().write_volatile(hwnd as i64) };
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.published.is_null() {
+                UnmapViewOfFile(MEMORY_MAPPED_VIEW_ADDRESS {
+                    Value: self.published,
+                });
+            }
+            for handle in [self.mapping, self.mutex] {
+                if !handle.is_null() {
+                    CloseHandle(handle);
+                }
+            }
+        }
+    }
 }
 
 pub fn prepare_window(cc: &eframe::CreationContext<'_>) {
@@ -252,7 +417,40 @@ fn windows_build_number() -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::to_rgba;
+    use super::{claim_named, set_app_user_model_id, to_rgba};
+
+    /// Names nothing else contends for, so the test does not disturb a copy
+    /// the operator has open.
+    fn test_names() -> (String, String) {
+        let process = std::process::id();
+        (
+            format!(r"Local\rssstv-test-instance-{process}"),
+            format!(r"Local\rssstv-test-window-{process}"),
+        )
+    }
+
+    #[test]
+    fn a_second_claim_is_refused_until_the_first_is_released() {
+        let (mutex, window) = test_names();
+        let first = claim_named(&mutex, &window).expect("the first claim should be granted");
+        assert!(
+            claim_named(&mutex, &window).is_none(),
+            "a second claim should be refused while the first is held"
+        );
+
+        drop(first);
+        assert!(
+            claim_named(&mutex, &window).is_some(),
+            "releasing the claim should let the next one through"
+        );
+    }
+
+    /// S_OK. The shell refuses a late call, so this also pins that the
+    /// identifier is set before anything else asks the shell for one.
+    #[test]
+    fn the_shell_accepts_the_app_user_model_id() {
+        assert_eq!(set_app_user_model_id(), 0);
+    }
 
     #[test]
     fn bgra_pixels_are_reordered() {

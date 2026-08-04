@@ -12,6 +12,12 @@ pub fn prepare_process() {}
 
 pub fn prepare_window(_cc: &eframe::CreationContext<'_>) {}
 
+pub type Claim = super::FileLock;
+
+pub fn claim_single_instance() -> Option<Claim> {
+    super::lock_file_claim()
+}
+
 pub fn window_icon() -> Option<IconData> {
     super::embedded_icon()
 }

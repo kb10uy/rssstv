@@ -40,16 +40,20 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     }
     Panel::top(Id::new("toolbar")).show(ui, |ui| toolbar(ui, app));
     Panel::bottom(Id::new("status-bar")).show(ui, |ui| status_bar(ui, app));
-    Panel::bottom(Id::new("library"))
-        .resizable(true)
-        .default_size(LIBRARY_HEIGHT)
-        .size_range(160.0..=640.0)
-        .show(ui, |ui| library(ui, app));
+    // The side panel is claimed before the library so it runs the full height
+    // between the toolbar and the status bar: its sections are read while
+    // working in either half of the window, and the library only needs the
+    // width the lists are laid out in.
     Panel::right(Id::new("side-panel"))
         .resizable(true)
         .default_size(SIDE_PANEL_WIDTH)
         .size_range(260.0..=560.0)
         .show(ui, |ui| side_panel(ui, app));
+    Panel::bottom(Id::new("library"))
+        .resizable(true)
+        .default_size(LIBRARY_HEIGHT)
+        .size_range(160.0..=640.0)
+        .show(ui, |ui| library(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
     device_fault_modal(ui, app);
     action

@@ -1,0 +1,38 @@
+// MMSSTV `def1.mtm`, ported.
+//
+// Fonts: Arial, Comic Sans MS.
+//
+// The title bar was a cyan-to-green horizontal gradient. It is filled with the
+// left-hand color, which is what MMSSTV's own fast preview drew as well.
+
+rect {
+    position x=(fw)0 y=(fh)0 anchor="top-left"
+    size width=(fw)100 height=(fh)6.2
+    fill color="#00ffff"
+}
+
+text "${station.callsign}" {
+    position x=(fw)96.6 y=(fh)100 anchor="bottom-right"
+    font family="Arial" size=(fh)20.7 weight=700
+    fill color="#0000ff"
+    stroke color="#ffffff" width=(em)0.075
+}
+
+text "CQSSTV" {
+    position x=(fw)0 y=(fh)1.2 anchor="top-left"
+    font family="Comic Sans MS" size=(fh)23.4 weight=700
+    fill color="#ff0000"
+    stroke color="#ffffff" width=(em)0.067
+}
+
+text "${station.callsign}" {
+    position x=(fw)0.9 y=(fh)0 anchor="top-left"
+    font family="Arial" size=(fh)6.6 weight=700
+    fill color="#ff0000"
+}
+
+text "RSSSTV ${application.version}" {
+    position x=(fw)98.8 y=(fh)0 anchor="top-right"
+    font family="Arial" size=(fh)6.6 weight=700
+    fill color="#800040"
+}

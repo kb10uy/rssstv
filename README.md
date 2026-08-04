@@ -26,6 +26,10 @@ active transmission. PTT and CAT control are not implemented, and completed
 receptions are not stored. See [docs/rssstv/gui-design.md](docs/rssstv/gui-design.md) for the
 design and remaining work.
 
+[templates/](templates) holds the five templates MMSSTV ships, ported to the
+KDL format. Copy the ones you want into the application's templates directory;
+each file records in a comment what its original did that this format cannot.
+
 ## Encode WAV
 
 `encode-wav` renders a KDL template over a background image and writes a

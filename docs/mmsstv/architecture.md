@@ -182,6 +182,39 @@ items, and groups.
 serialization, and template loading and saving. `CDrawLib` loads custom item
 DLLs and invokes their exported `mcm*` interface.
 
+A template file (`.mtm`) is one serialized `CDrawGroup`: a command word, the
+`CDraw` base fields, the transparent-color sample point and color, the drawing
+size, an item count, and then each item as a command word followed by its own
+fields. Every field is written raw and little-endian; the base is `CDraw::
+SaveToStream` at `Draw.cpp:408`. Two details decide whether a reader stays in
+step. `m_LineStyle` is a `TPenStyle`, which the compiler sizes as one byte, so
+the field is not aligned to the words around it. The word after it is read as
+`m_LineWidth` unless its high half is `0x55aa`, which marks a later revision
+that writes `m_BoxStyle` and the width separately. Strings are a length word
+and then unterminated bytes; bitmaps are width and height words and then a
+whole Windows BMP stream. Each item class writes its own version number and
+reads fields back conditionally, so the layout of an item depends on the
+version stored in it.
+
+Templates are drawn at 320 by 256 and scaled to the transmitted mode. Item
+geometry is stored as a pixel rectangle in that space. For a text item the
+rectangle is not the text: `CDrawText::Draw` at `Draw.cpp:2470` recomputes the
+bottom-right corner from the rendered extent plus an allowance for the outline,
+shadow, and extrusion it is about to paint, so recovering where the text
+actually sits means subtracting that allowance again. `m_RightAdj` says the
+right edge is the fixed one, which is how a right-aligned item stays against
+the frame edge as its text changes length.
+
+A picture item with `m_Type` of zero draws the receive history bitmap rather
+than one stored in the template, which is how a template shows the last
+received image.
+
+Text is filled with a solid color or one of two gradients over `m_Col1`
+through `m_Col4`, and `m_Shadow` selects one of an outline, four drop shadows,
+two extrusions, and an emboss, painted in `m_ColS` and `m_ColB`. A text painted
+in the group's transparent color is cut out of the overlay, so the picture
+shows through the glyphs and only the shadow around them is drawn.
+
 Image I/O supports BMP, JPEG, and WMF. The bundled IJG JPEG sources are compiled
 into the executable and bridged to VCL bitmaps through `jpeg/` and `ComLib.cpp`.
 

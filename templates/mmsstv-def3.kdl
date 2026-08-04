@@ -1,0 +1,55 @@
+// MMSSTV `def3.mtm`, ported.
+//
+// Fonts: Arial.
+//
+// The three large texts were set in Arial Rounded MT Bold, which does not ship
+// with Windows itself; they fall back to Arial.
+//
+// The picture box held MMSSTV's history image, which is what `rximage` shows.
+// The title bar was an orange-to-cream horizontal gradient and is filled with
+// the left-hand color. The three large texts carried drop shadows, which are
+// approximated by an outline in the shadow color.
+
+rximage {
+    position x=(fw)0.6 y=(fh)99.2 anchor="bottom-left"
+    size width=(fw)28.1 height=(fh)28.1 fit="stretch"
+}
+
+rect {
+    position x=(fw)0 y=(fh)0 anchor="top-left"
+    size width=(fw)100 height=(fh)6.2
+    fill color="#ff8040"
+}
+
+text "${contact.callsign}" {
+    position x=(fw)1.6 y=(fh)3.9 anchor="top-left"
+    font family="Arial" size=(fh)16.8 weight=700
+    fill color="#ff0000"
+    stroke color="#000000" width=(em)0.047
+}
+
+text "${report.sent}" {
+    position x=(fw)1.6 y=(fh)19.1 anchor="top-left"
+    font family="Arial" size=(fh)16.8 weight=700
+    fill color="#ff0000"
+    stroke color="#000000" width=(em)0.047
+}
+
+text "${station.callsign}" {
+    position x=(fw)98.8 y=(fh)100 anchor="bottom-right"
+    font family="Arial" size=(fh)16.8 weight=700
+    fill color="#00ffff"
+    stroke color="#000000" width=(em)0.047
+}
+
+text "RSSSTV ${application.version}" {
+    position x=(fw)98.8 y=(fh)0 anchor="top-right"
+    font family="Arial" size=(fh)6.6 weight=700
+    fill color="#800040"
+}
+
+text "${station.callsign}" {
+    position x=(fw)1.2 y=(fh)0 anchor="top-left"
+    font family="Arial" size=(fh)6.6 weight=700
+    fill color="#0000ff"
+}

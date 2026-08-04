@@ -1,0 +1,23 @@
+// MMSSTV `def2.mtm`, ported.
+//
+// Fonts: Arial.
+//
+// The call line was set in Arial Black, which a font database reports as Arial
+// at weight 900 rather than as a family of its own.
+//
+// That line was a yellow-to-red gradient extruded down and to the right. It is
+// filled with the first gradient color and keeps only its outline.
+
+text "CQ de ${station.callsign}" {
+    position x=(fw)95 y=(fh)97.7 anchor="bottom-right"
+    font family="Arial" size=(fh)11.7 weight=900
+    fill color="#ffff00"
+    stroke color="#000000" width=(em)0.067
+}
+
+text "${station.callsign}" {
+    position x=(fw)98.1 y=(fh)0 anchor="top-right"
+    font family="Arial" size=(fh)7 weight=700
+    fill color="#ffffff"
+    stroke color="#000000" width=(em)0.111
+}

@@ -278,6 +278,37 @@ Image assets are resolved relative to the template first, then from the
 application's shared `assets` directory; an `assets/` prefix is stripped for
 the shared lookup.
 
+## Ported MMSSTV Templates
+
+`templates/` holds the five templates MMSSTV ships as `def1.mtm` through
+`def5.mtm`, ported to this format. They are not installed anywhere; copy the
+ones that are wanted into the application's templates directory. Each file
+records in a comment what its original did that this format cannot.
+
+The ports follow one set of rules:
+
+- Geometry becomes frame-relative. MMSSTV draws templates at 320 by 256 and
+  scales the result, so every stored pixel is a percentage of that.
+- Each layer is anchored to the frame corner it sits nearest, so a template
+  built for a 4:3 mode keeps its layout in every other one. MMSSTV's own
+  `m_RightAdj` already says which horizontal edge an item was placed by.
+- A right or bottom edge is taken from the text's own extent rather than from
+  the stored rectangle, which includes an allowance for effects. An edge that
+  falls outside the frame is placed on it.
+- A gradient fill becomes the color at the edge the gradient starts from, which
+  is what MMSSTV's own fast preview drew.
+- An outline becomes a text stroke. A drop shadow, an extrusion, and an emboss
+  have no equivalent, so each keeps the outline it was drawn with, or is
+  approximated by one in the shadow color when it had none.
+- Text cut out of the overlay in the transparent color becomes a transparent
+  fill behind an opaque stroke. Alpha compositing gives the same reading as
+  color keying without the color key.
+- `%m`, `%c`, and `%r` become `${station.callsign}`, `${contact.callsign}`, and
+  `${report.sent}`. MMSSTV's `%r` is the report being given to the other
+  station, which is the one this application calls sent.
+- A font that Windows does not ship, or that a font database reports under
+  another family and weight, is named as the database has it.
+
 ## Text Rendering
 
 Text style is independent of the platform font API. A text layer can specify a

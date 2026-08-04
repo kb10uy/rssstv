@@ -50,6 +50,7 @@ platform integration, and application behavior.
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
 | Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
 | Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture and playback implemented |
+| Rig adapters | Rig keying, frequency reading, and the operator's own commands | `rssstv-rig`; `rigctld` client implemented |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
 | Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` receive interface; designed in [gui-design.md](gui-design.md) |
@@ -312,7 +313,7 @@ types must not appear in reusable core APIs.
 
 ## Current Crate Structure
 
-The workspace currently contains ten packages:
+The workspace currently contains eleven packages:
 
 | Package | Architectural role | Current status |
 | --- | --- | --- |
@@ -325,6 +326,7 @@ The workspace currently contains ten packages:
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
 | `rssstv-audio` | Host audio adapters | Bounded capture and playback implemented |
+| `rssstv-rig` | Rig control adapters | `rigctld` client, command scripts, and band table implemented |
 | `rssstv` | Application composition root | egui interface with live receive and transmit |
 
 Their current dependency direction is:
@@ -352,7 +354,8 @@ rssstv-audio ----------+
 rssstv-demodulator ----+
 rssstv-fskid ----------+
 rssstv-modulator ------+
-rssstv-sstv -----------+-> rssstv
+rssstv-rig ------------+-> rssstv
+rssstv-sstv -----------+
 rssstv-template -------+
 ```
 
@@ -363,6 +366,14 @@ Playback similarly exposes a bounded mono `f32` writer while the callback
 duplicates samples across the physical output channels. The application primes
 the queue before starting the device and treats an active underrun as a broken
 transmission.
+
+`rssstv-rig` is the platform rig boundary, and it is a socket rather than a
+library: Hamlib runs as the operator's own `rigctld` process, which keeps a C
+build out of every platform's toolchain and leaves the serial port available to
+whatever else the station runs. The crate exposes the moments a transmission
+passes through and the band the rig is on; what those moments send is written
+by the operator in the configuration file. The whole arrangement is described in
+[rig-control.md](rig-control.md).
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
@@ -480,7 +491,7 @@ implementations:
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
-- PTT, CAT, and template editing.
+- Template editing.
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

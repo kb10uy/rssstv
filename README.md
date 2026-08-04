@@ -22,9 +22,16 @@ To transmit, select an output device from Settings, enter My call, select a KDL
 template and stock image, and choose Set for transmit after the composite
 preview is ready. TX streams the complete VOX, VIS, raster, footer, FSKID, and
 trailing-silence sequence to the selected device. The same button stops an
-active transmission. PTT and CAT control are not implemented, and completed
-receptions are not stored. See [docs/rssstv/gui-design.md](docs/rssstv/gui-design.md) for the
-design and remaining work.
+active transmission. See [docs/rssstv/gui-design.md](docs/rssstv/gui-design.md)
+for the design and remaining work.
+
+Rig control goes through Hamlib's `rigctld` rather than a linked library, so
+there is nothing to build and the serial port stays available to the logger.
+Start `rigctld` for your rig, switch Rig Control on, and transmissions key it
+and read its frequency into `${radio.frequency}` and `${radio.band}`. What is
+sent at each moment — keying, unkeying, connecting, or arriving on a band — is
+written in `config.toml` and defaults to plain PTT. See
+[docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
 
 [templates/](templates) holds the five templates MMSSTV ships, ported to the
 KDL format. Copy the ones you want into the application's templates directory;

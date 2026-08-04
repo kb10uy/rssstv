@@ -407,7 +407,17 @@ marked shared are built once and reused across tabs.
 Only controls that do something are built. A feature that has not arrived yet
 is absent rather than shown disabled: a dead button occupies the place its
 working version will take and says nothing the operator can act on. The menu is
-the exception, where a disabled entry names a whole area still to be filled in.
+the exception, where a disabled entry either names a whole area still to be
+filled in or is something the menu only has to say — the rig's address, what its
+connection is doing, an empty device list.
+
+The Rig Control menu is the switch for the connection and nothing else. Below
+it, once it is on, sit the address, the connection's state or the failure that
+ended it, and what the rig is tuned to; reconnecting is offered exactly when
+there is a failure to recover from. The commands the rig is sent are not there:
+a menu cannot offer a list of what a rig wants around a transmission, and a
+dialog for editing command lines would be a worse text editor than the one the
+operator already has.
 
 What the station says about itself — its callsign, where it is operating from,
 and its grid locator — is edited in a dialog opened from the Settings menu, not
@@ -561,8 +571,17 @@ leader and the station identifier fall outside the window and are named on the
 state line instead of being reported as a row. Playback
 underrun is reported as a transmission error, and Stop TX closes playback and
 cancels the worker. TX is disabled while a prerequisite is missing; its
-disabled hover text reports the missing frame, output device, or valid
-station callsign, so the button is never dead without saying why.
+disabled hover text reports the missing frame, output device, valid
+station callsign, or unready rig, so the button is never dead without saying
+why.
+
+Rig control is implemented against `rigctld`. A worker thread owns the
+connection, keys the rig around a transmission, and reads the frequency between
+transmissions; the interface starts playback only once the rig has reported that
+it has switched over, and a rig that refused to key stops the transmission
+rather than sending into a receiver. The commands sent at each moment are the
+operator's own, read from the configuration file. [rig-control.md](rig-control.md)
+describes the protocol, the configuration format, and the timing.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.
@@ -578,7 +597,10 @@ receive controls that act on stored entries remain to be implemented.
 
 The application storage directories and an empty default configuration file
 are initialized at startup as described in [architecture.md](architecture.md).
-Template editing, PTT, CAT, and logging remain planned gaps.
+Rig control reads the same file: the Rig Control menu switches the connection
+on and reports what it is doing, and everything the rig is told is written under
+`[rig]`, as described in [rig-control.md](rig-control.md). Template editing and
+logging remain planned gaps.
 
 ## Verification Strategy
 

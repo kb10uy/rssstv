@@ -12,6 +12,7 @@ use std::{
 
 use image::imageops::FilterType;
 use jiff::{Zoned, tz::TimeZone};
+use rssstv_rig::Reading;
 use rssstv_sstv::{
     image::{ImageSize, Rgb8, RgbImage},
     mode::Mode,
@@ -41,6 +42,8 @@ pub struct ComposeRequest {
     pub report_received: String,
     /// Names the operator defined, offered as `${custom.<name>}`.
     pub custom: BTreeMap<String, String>,
+    /// What the rig is tuned to, when rig control has read it.
+    pub radio: Option<Reading>,
 }
 
 #[derive(Debug)]
@@ -53,6 +56,9 @@ pub struct ComposeResult {
     /// the interface composes again as the minute changes rather than leaving
     /// a stale time on the transmit tab.
     pub uses_timestamps: bool,
+    /// Whether the template that produced this frame prints what the rig is
+    /// tuned to, for the same reason and with the same consequence.
+    pub uses_radio: bool,
 }
 
 struct ComposeControl {
@@ -138,23 +144,37 @@ fn compose_loop(control: Arc<ComposeControl>, result: Arc<Mutex<Option<ComposeRe
         };
         let generation = request.generation;
         let composed = compose_frame(&request, &mut renderer, &mut backgrounds);
-        let uses_timestamps = composed.as_ref().is_ok_and(|(_, timed)| *timed);
+        let watched = composed
+            .as_ref()
+            .map_or(Watched::default(), |(_, watched)| *watched);
         let frame = composed.map(|(frame, _)| Arc::new(frame));
         if let Ok(mut output) = result.lock() {
             *output = Some(ComposeResult {
                 generation,
                 frame,
-                uses_timestamps,
+                uses_timestamps: watched.timestamps,
+                uses_radio: watched.radio,
             });
         }
     }
+}
+
+/// What a composed frame stops being true with.
+///
+/// A frame that prints the clock or the frequency is only right for as long as
+/// those agree with it, so the interface is told which of them it has to watch
+/// rather than composing again on every change of either.
+#[derive(Clone, Copy, Debug, Default)]
+struct Watched {
+    timestamps: bool,
+    radio: bool,
 }
 
 fn compose_frame(
     request: &ComposeRequest,
     renderer: &mut Renderer,
     backgrounds: &mut BackgroundCache,
-) -> Result<(RgbImage, bool), String> {
+) -> Result<(RgbImage, Watched), String> {
     let source = fs::read_to_string(&request.template_path)
         .map_err(|error| format!("{}: {error}", request.template_path.display()))?;
     let template = Template::parse(&source).map_err(|error| error.to_string())?;
@@ -173,14 +193,17 @@ fn compose_frame(
         assets_dir: request.assets_dir.clone(),
     };
     let variables = variables(request);
-    let uses_timestamps = template.uses_timestamps(&variables);
+    let watched = Watched {
+        timestamps: template.uses_timestamps(&variables),
+        radio: template.uses_radio(),
+    };
     let mut context = RenderContext::new(&variables, &assets);
     context.received_image = Some(&request.received_image);
     let overlay = renderer
         .render(&template, size, &context)
         .map_err(|error| error.to_string())?;
     let frame = composite(background, &overlay).map_err(|error| error.to_string())?;
-    Ok((frame, uses_timestamps))
+    Ok((frame, watched))
 }
 
 /// The prepared background the last composition used.
@@ -301,6 +324,24 @@ fn cover_image(source: &image::RgbImage, width: u32, height: u32) -> image::RgbI
 const PLACEHOLDER_FREQUENCY_MHZ: f64 = 7.178;
 const PLACEHOLDER_BAND: &str = "40m";
 
+/// What the radio variables say, from the rig when there is one to ask.
+///
+/// A rig tuned between the bands has no band to name. The variable is left
+/// empty rather than filled with the placeholder: the frequency beside it is
+/// real, and a band that contradicts it would be worse than none.
+fn radio(request: &ComposeRequest) -> (f64, String) {
+    match request.radio {
+        Some(reading) => (
+            reading.frequency_hz as f64 / 1_000_000.0,
+            reading
+                .band
+                .map(|band| band.name().to_owned())
+                .unwrap_or_default(),
+        ),
+        None => (PLACEHOLDER_FREQUENCY_MHZ, PLACEHOLDER_BAND.to_owned()),
+    }
+}
+
 fn variables(request: &ComposeRequest) -> Variables {
     let mut variables = Variables::new();
     for (name, value) in [
@@ -314,16 +355,13 @@ fn variables(request: &ComposeRequest) -> Variables {
     ] {
         variables.insert(name, VariableValue::Text(value.clone()));
     }
-    for (name, value) in [
-        ("radio.band", PLACEHOLDER_BAND),
-        ("application.version", env!("CARGO_PKG_VERSION")),
-    ] {
-        variables.insert(name, VariableValue::Text(value.to_owned()));
-    }
+    let (frequency_mhz, band) = radio(request);
+    variables.insert("radio.band", VariableValue::Text(band));
     variables.insert(
-        "radio.frequency",
-        VariableValue::Decimal(PLACEHOLDER_FREQUENCY_MHZ),
+        "application.version",
+        VariableValue::Text(env!("CARGO_PKG_VERSION").to_owned()),
     );
+    variables.insert("radio.frequency", VariableValue::Decimal(frequency_mhz));
     // An operator-defined name cannot collide with a built-in one: it only
     // ever appears under `custom.`, and the interface refuses a name no
     // template could reference.
@@ -380,6 +418,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use jiff::civil::date;
+    use rssstv_rig::Band;
 
     use super::*;
 
@@ -415,6 +454,7 @@ mod tests {
             number: "001".to_owned(),
             report_received: "579".to_owned(),
             custom: BTreeMap::from([("club".to_owned(), "JARL".to_owned())]),
+            radio: None,
         }
     }
 
@@ -435,6 +475,63 @@ mod tests {
                 "{name} should be offered to the template"
             );
         }
+    }
+
+    /// A transmit tab has to compose before there is a rig to ask, so the
+    /// radio variables stand in for one rather than being absent.
+    #[test]
+    fn the_radio_variables_fall_back_on_a_placeholder_without_a_rig() {
+        let variables = variables(&request());
+        assert_eq!(
+            variables.get("radio.frequency"),
+            Some(&VariableValue::Decimal(PLACEHOLDER_FREQUENCY_MHZ))
+        );
+        assert_eq!(
+            variables.get("radio.band"),
+            Some(&VariableValue::Text(PLACEHOLDER_BAND.to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_radio_variables_follow_what_the_rig_is_tuned_to() {
+        let variables = variables(&ComposeRequest {
+            radio: Some(Reading {
+                frequency_hz: 14_230_000,
+                band: Band::for_frequency(14_230_000),
+            }),
+            ..request()
+        });
+
+        assert_eq!(
+            variables.get("radio.frequency"),
+            Some(&VariableValue::Decimal(14.23))
+        );
+        assert_eq!(
+            variables.get("radio.band"),
+            Some(&VariableValue::Text("20m".to_owned()))
+        );
+    }
+
+    /// The frequency beside it is real, so a band that contradicted it would
+    /// be worse than none at all.
+    #[test]
+    fn a_rig_tuned_between_the_bands_names_no_band() {
+        let variables = variables(&ComposeRequest {
+            radio: Some(Reading {
+                frequency_hz: 6_000_000,
+                band: None,
+            }),
+            ..request()
+        });
+
+        assert_eq!(
+            variables.get("radio.frequency"),
+            Some(&VariableValue::Decimal(6.0))
+        );
+        assert_eq!(
+            variables.get("radio.band"),
+            Some(&VariableValue::Text(String::new()))
+        );
     }
 
     /// A reception is timed once, and a template chooses the zone it prints

@@ -7,7 +7,8 @@ use std::{
     time::Duration,
 };
 
-use rssstv_rig::{DEFAULT_TIMEOUT, Event, Reading, RigError, Session};
+pub use rssstv_rig::Reading;
+use rssstv_rig::{DEFAULT_TIMEOUT, Event, RigError, Session};
 
 use crate::storage::config::RigSettings;
 

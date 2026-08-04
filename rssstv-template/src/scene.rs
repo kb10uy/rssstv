@@ -32,7 +32,33 @@ impl Template {
         }
         any(&self.layers, variables)
     }
+
+    /// Whether any text layer reads what the radio is tuned to.
+    ///
+    /// Asked for the same reason as [`Template::uses_timestamps`]: a
+    /// composition that prints the frequency stops being true the moment the
+    /// operator tunes, and only a caller that knows the template reads it has
+    /// any reason to compose again when the rig moves.
+    ///
+    /// Named rather than compared against a value, because the frequency and
+    /// the band are ordinary text and a number: there is nothing in what they
+    /// hold that says where they came from.
+    pub fn uses_radio(&self) -> bool {
+        fn any(layers: &[Layer]) -> bool {
+            layers.iter().any(|layer| match layer {
+                Layer::Text(text) => {
+                    references(&text.text).any(|name| name.starts_with(RADIO_PREFIX))
+                }
+                Layer::Group(group) => any(&group.layers),
+                _ => false,
+            })
+        }
+        any(&self.layers)
+    }
 }
+
+/// What every variable the radio fills in is named under.
+const RADIO_PREFIX: &str = "radio.";
 
 /// A frame-relative or font-relative length.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -305,5 +331,15 @@ mod tests {
         assert!(text_template("${tx.timestamp.utc:%H:%M}").uses_timestamps(&variables));
         assert!(!text_template("${station.callsign}").uses_timestamps(&variables));
         assert!(!text_template("plain").uses_timestamps(&variables));
+    }
+
+    /// The rig only has to be watched for a template that prints what it is
+    /// tuned to, and a nested layer counts the same as a top-level one.
+    #[test]
+    fn a_radio_variable_in_a_group_is_still_found() {
+        assert!(text_template("${radio.frequency:.3}").uses_radio());
+        assert!(text_template("${radio.band}").uses_radio());
+        assert!(!text_template("${station.callsign}").uses_radio());
+        assert!(!text_template("plain").uses_radio());
     }
 }

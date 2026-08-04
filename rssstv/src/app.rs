@@ -28,7 +28,7 @@ use crate::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
         receive::{Frame, Progress},
-        rig::{RigSnapshot, RigState, RigWorker},
+        rig::{Reading, RigSnapshot, RigState, RigWorker},
         transmit::{TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
@@ -253,6 +253,14 @@ pub struct App {
     /// in, so the pair together say when it has to be made again.
     composition_timed: bool,
     composition_minute: i64,
+    /// Whether the composed frame prints what the rig is tuned to, and what it
+    /// was tuned to when it was composed.
+    ///
+    /// The pair says the same thing about the rig as the two above say about
+    /// the clock: a frame showing a frequency is only true while the rig is
+    /// still on it.
+    composition_tuned: bool,
+    composition_reading: Option<Reading>,
     /// The amplitude a running transmission reads, shared with its worker.
     tx_gain: Arc<TxGain>,
     playback: Option<Playback>,
@@ -375,6 +383,8 @@ impl App {
             composition_deferred: false,
             composition_timed: false,
             composition_minute: current_minute(),
+            composition_tuned: false,
+            composition_reading: None,
             playback: None,
             tx_worker: None,
             playback_started: false,
@@ -666,6 +676,7 @@ impl App {
         self.poll_rig();
         self.poll_transmit();
         self.refresh_timed_composition();
+        self.refresh_tuned_composition();
         self.report_activity();
     }
 
@@ -884,6 +895,8 @@ impl App {
         // off is not also asked for again on every frame that follows.
         self.composition_minute = current_minute();
         self.composition_timed = false;
+        self.composition_reading = self.rig_snapshot.reading;
+        self.composition_tuned = false;
         // A transmission is sending the frame currently on the tab. Replacing
         // it would show something that is not going out, so the change waits
         // until the transmission is over.
@@ -917,6 +930,7 @@ impl App {
             number: self.qso.number.clone(),
             report_received: self.qso.rsv_received.clone(),
             custom: self.custom_variables.clone(),
+            radio: self.composition_reading,
         });
     }
 
@@ -931,11 +945,23 @@ impl App {
         }
     }
 
+    /// Composes again once the rig has moved off what a frame printed.
+    ///
+    /// Only for a frame that prints it: a template that says nothing about the
+    /// frequency has no reason to be composed again every time the operator
+    /// turns the dial.
+    fn refresh_tuned_composition(&mut self) {
+        if self.composition_tuned && self.rig_snapshot.reading != self.composition_reading {
+            self.request_composition();
+        }
+    }
+
     fn poll_transmit(&mut self) {
         if let Some(result) = self.composer.latest()
             && result.generation == self.compose_generation
         {
             self.composition_timed = result.uses_timestamps;
+            self.composition_tuned = result.uses_radio;
             match result.frame {
                 Ok(frame) => {
                     self.tx_raster = Raster::from_image(&frame);

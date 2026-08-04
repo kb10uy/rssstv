@@ -8,6 +8,7 @@ use crate::{
     canvas,
     i18n::{number, text as arg},
     menu,
+    paths::Folder,
     receive::Progress,
     transmit::{TxPhase, TxProgress},
 };
@@ -439,7 +440,7 @@ fn library(ui: &mut Ui, app: &mut App) {
         let labels = ListLabels::new(app, "section-templates");
         let previous_template = app.template;
         match entry_list(ui, &labels, height, &app.templates, &mut app.template) {
-            Some(ListAction::Reveal) => app.reveal_templates(),
+            Some(ListAction::Reveal) => app.reveal(Folder::Templates),
             Some(ListAction::Refresh) => app.refresh_templates(),
             None => {}
         }
@@ -450,7 +451,7 @@ fn library(ui: &mut Ui, app: &mut App) {
         let labels = ListLabels::new(app, "section-stocks");
         let previous_stock = app.stock;
         match entry_list(ui, &labels, height, &app.stocks, &mut app.stock) {
-            Some(ListAction::Reveal) => app.reveal_stocks(),
+            Some(ListAction::Reveal) => app.reveal(Folder::Stocks),
             Some(ListAction::Refresh) => app.refresh_stocks(),
             None => {}
         }

@@ -103,6 +103,16 @@ pub trait Platform {
     /// Called only when the activity changes, so an implementation may treat
     /// each call as a transition rather than a repeat.
     fn set_activity(&mut self, activity: Activity);
+
+    /// Opens `path` in the file manager.
+    ///
+    /// Reached through the platform rather than called directly so a test can
+    /// hold one that answers without launching anything: the interface offers
+    /// this on every directory it keeps, and a suite that took each of them at
+    /// its word would bury the machine in file manager windows.
+    fn reveal_directory(&mut self, path: &Path) -> io::Result<()> {
+        reveal_directory(path)
+    }
 }
 
 /// Returns the platform the application is running on.
@@ -110,18 +120,37 @@ pub fn host() -> Box<dyn Platform> {
     Box::<imp::Host>::default()
 }
 
-/// A platform with nothing to say.
+/// A platform with nothing to say about activity.
 ///
-/// Used by the targets that cannot act on any of this yet, and by tests
-/// everywhere, so it is compiled where one of those applies rather than being
-/// carried into a build that would never construct it.
-#[cfg(any(not(target_os = "windows"), test))]
+/// The real platform on the targets that cannot report it yet, so it is
+/// compiled only there rather than being carried into a build that would never
+/// construct it. Everything it does not answer for itself, such as opening a
+/// directory, still reaches the shared implementation.
+#[cfg(not(target_os = "windows"))]
 #[derive(Default)]
 pub struct InertPlatform;
 
-#[cfg(any(not(target_os = "windows"), test))]
+#[cfg(not(target_os = "windows"))]
 impl Platform for InertPlatform {
     fn set_activity(&mut self, _activity: Activity) {}
+}
+
+/// A platform that answers without doing anything at all.
+///
+/// `InertPlatform` is the real platform on the targets without their own
+/// integration, so it still opens directories for the operator. Tests want the
+/// opposite, and take this instead.
+#[cfg(test)]
+#[derive(Default)]
+pub struct QuietPlatform;
+
+#[cfg(test)]
+impl Platform for QuietPlatform {
+    fn set_activity(&mut self, _activity: Activity) {}
+
+    fn reveal_directory(&mut self, _path: &Path) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A claim on being the only running copy of the application.

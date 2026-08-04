@@ -17,8 +17,8 @@ use crate::{
     audio::AudioState,
     config::{Config, Settings, UI_SCALE_RANGE},
     i18n::{I18n, Locale},
-    paths::AppPaths,
-    platform::{self, Activity, Platform, reveal_directory},
+    paths::{AppPaths, Folder},
+    platform::{self, Activity, Platform},
     raster::Raster,
     receive::Progress,
     transmit::{ComposeRequest, Composer, TxPhase, TxProgress, TxSnapshot, TxWorker},
@@ -223,7 +223,7 @@ impl App {
     /// tests.
     #[cfg(test)]
     pub(crate) fn headless() -> Self {
-        Self::headless_on(Box::new(platform::InertPlatform))
+        Self::headless_on(Box::new(platform::QuietPlatform))
     }
 
     /// Builds a headless interface reporting activity to `platform`.
@@ -422,38 +422,15 @@ impl App {
         }
     }
 
-    pub fn reveal_templates(&mut self) {
-        self.library_error = reveal_directory(self.paths.templates_dir())
-            .err()
-            .map(|error| error.to_string());
-    }
-
-    /// Opens the directory holding the configuration file.
+    /// Opens one of the application's directories in the file manager.
     ///
-    /// The directory rather than the file itself: the application rewrites
-    /// the file as settings change, and a `.toml` has no dependable handler
-    /// on every platform.
-    pub fn reveal_config(&mut self) {
-        self.library_error = reveal_directory(self.paths.config_dir())
-            .err()
-            .map(|error| error.to_string());
-    }
-
-    /// Opens the directory automatic history writes received images into.
-    ///
-    /// The images live under the operator's pictures directory rather than in
-    /// a session of the application's own, so browsing them is the file
-    /// manager's job and the interface only has to point at the folder.
-    pub fn reveal_history(&mut self) {
-        self.library_error = reveal_directory(self.paths.received_dir())
-            .err()
-            .map(|error| error.to_string());
-    }
-
-    pub fn reveal_stocks(&mut self) {
-        self.library_error = reveal_directory(self.paths.stocks_dir())
-            .err()
-            .map(|error| error.to_string());
+    /// Received images and everything else the application stores live in the
+    /// operator's own directories rather than in a session of its own, so
+    /// browsing them is the file manager's job and the interface only has to
+    /// point at the folder.
+    pub fn reveal(&mut self, folder: Folder) {
+        let opened = self.platform.reveal_directory(self.paths.folder(folder));
+        self.library_error = opened.err().map(|error| error.to_string());
     }
 
     /// Uppercases the callsign field after an edit.
@@ -977,7 +954,7 @@ mod tests {
             paths,
             config,
             settings,
-            Box::new(platform::InertPlatform),
+            Box::new(platform::QuietPlatform),
         );
         app.saved = app.settings();
         app
@@ -1161,6 +1138,10 @@ mod tests {
     impl Platform for RecordingPlatform {
         fn set_activity(&mut self, activity: Activity) {
             self.0.borrow_mut().push(activity);
+        }
+
+        fn reveal_directory(&mut self, _path: &Path) -> io::Result<()> {
+            Ok(())
         }
     }
 

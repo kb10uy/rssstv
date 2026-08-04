@@ -19,6 +19,23 @@ and macOS use `muda` for the native menu bar; Linux renders the same menu model
 inside the window. System fonts are discovered through `fontdb`, with egui's
 bundled fonts retained as fallback.
 
+The model is rebuilt from application state every frame and the native menu is
+brought in line with it, so labels and check marks follow the interface without
+anything having to invalidate them. Two consequences are handled explicitly. A
+structural change, such as a device appearing, rebuilds the menu, because the
+entries are matched to model items by position. And because a native check
+entry toggles itself when it is activated, the marks are written back from the
+model whenever an entry is activated: choosing the device or the language that
+is already selected leaves the model unchanged, which is exactly the case the
+in-place update skips, so the cleared mark would otherwise stay cleared.
+
+The File menu is the whole of the application's file handling. It opens each
+directory the application keeps — `Received`, `Sent`, `Stocks`, `templates`,
+`assets`, and the configuration directory — and is built from the same list
+those directories are defined by, so a new one cannot be added without also
+being reachable. The application stores nothing of its own to save or reopen,
+so there is nothing else for the menu to offer.
+
 ## Platform Integration
 
 Everything that only makes sense on one operating system lives in the
@@ -473,7 +490,7 @@ Automatic history retains completed receptions and interrupted receptions that
 reached at least 65 percent. The application does not browse them itself: the
 files sit in the operator's own pictures directory, where the file manager
 already shows them with thumbnails, sorting, and everything else a browser of
-its own would have to reimplement. The File menu opens that directory, and the
+its own would have to reimplement. The File menu opens the directory, and the
 receive controls that act on stored entries remain to be implemented.
 
 The application storage directories and an empty default configuration file

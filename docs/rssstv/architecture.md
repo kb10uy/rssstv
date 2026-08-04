@@ -455,9 +455,10 @@ The GUI template list is populated from regular `.kdl` files directly inside
 `Stocks` when the configured `image` crate decoders can read their dimensions.
 Both lists can be refreshed independently and provide an action that opens the
 corresponding directory in Explorer, Finder, or the desktop file manager. The
-File menu opens `Received` the same way: received images are the operator's
-files in the operator's pictures directory, so browsing them belongs to the
-file manager rather than to a session the application would have to keep.
+File menu opens each of the directories above the same way, the configuration
+by the directory holding its file: they hold the operator's own files in the
+operator's own directories, so browsing them belongs to the file manager rather
+than to a session the application would have to keep.
 
 ## Planned Gaps
 

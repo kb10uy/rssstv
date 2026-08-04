@@ -13,6 +13,42 @@ const APP_DIRECTORY: &str = if cfg!(target_os = "linux") {
 };
 const DEFAULT_CONFIG: &str = "";
 
+/// One of the directories the application keeps for the operator.
+///
+/// Every one of them is somewhere the operator is expected to work with a
+/// file manager, so the interface only has to name them and point at them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Folder {
+    Received,
+    Sent,
+    Stocks,
+    Templates,
+    Assets,
+    Config,
+}
+
+impl Folder {
+    pub const ALL: [Self; 6] = [
+        Self::Received,
+        Self::Sent,
+        Self::Stocks,
+        Self::Templates,
+        Self::Assets,
+        Self::Config,
+    ];
+
+    pub const fn label_key(self) -> &'static str {
+        match self {
+            Self::Received => "menu-open-received",
+            Self::Sent => "menu-open-sent",
+            Self::Stocks => "menu-open-stocks",
+            Self::Templates => "menu-open-templates",
+            Self::Assets => "menu-open-assets",
+            Self::Config => "menu-open-config",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppPaths {
     config_file: PathBuf,
@@ -123,6 +159,22 @@ impl AppPaths {
 
     pub fn received_dir(&self) -> &Path {
         &self.received_dir
+    }
+
+    /// Returns the directory `folder` names.
+    ///
+    /// The configuration answers with the directory holding the file rather
+    /// than the file itself: the application rewrites it as settings change,
+    /// and a `.toml` has no dependable handler on every platform.
+    pub fn folder(&self, folder: Folder) -> &Path {
+        match folder {
+            Folder::Received => &self.received_dir,
+            Folder::Sent => &self.sent_dir,
+            Folder::Stocks => &self.stocks_dir,
+            Folder::Templates => &self.templates_dir,
+            Folder::Assets => &self.assets_dir,
+            Folder::Config => self.config_dir(),
+        }
     }
 
     pub fn log_file(&self) -> &Path {

@@ -6,7 +6,7 @@
 //! platform-independent [model](model) that the native and in-window renderers
 //! both consume, so the two paths cannot drift apart.
 
-use crate::{app::App, i18n::Locale};
+use crate::{app::App, i18n::Locale, paths::Folder};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub use native::Native;
@@ -23,8 +23,7 @@ pub enum Action {
     ZoomIn,
     ZoomOut,
     ZoomReset,
-    RevealConfig,
-    RevealHistory,
+    Reveal(Folder),
     Quit,
 }
 
@@ -66,19 +65,7 @@ pub fn model(app: &App) -> Vec<Menu> {
     vec![
         Menu {
             label: text("menu-file"),
-            items: vec![
-                Item::Pending(text("action-save")),
-                Item::Separator,
-                Item::Command {
-                    label: text("menu-open-history"),
-                    action: Action::RevealHistory,
-                },
-                Item::Separator,
-                Item::Command {
-                    label: text("menu-quit"),
-                    action: Action::Quit,
-                },
-            ],
+            items: folder_items(app),
         },
         Menu {
             label: text("menu-edit"),
@@ -122,11 +109,6 @@ pub fn model(app: &App) -> Vec<Menu> {
                     label: text("menu-language"),
                     items: locale_items(app),
                 },
-                Item::Separator,
-                Item::Command {
-                    label: text("menu-open-config"),
-                    action: Action::RevealConfig,
-                },
             ],
         },
         Menu {
@@ -138,6 +120,28 @@ pub fn model(app: &App) -> Vec<Menu> {
             items: vec![Item::Pending(text("menu-help"))],
         },
     ]
+}
+
+/// The File menu: every directory the application keeps, and then Quit.
+///
+/// The application stores nothing of its own, so opening a folder is the whole
+/// of what File has to offer; the entries are built from [`Folder::ALL`] so a
+/// new directory cannot be added without also being reachable.
+fn folder_items(app: &App) -> Vec<Item> {
+    Folder::ALL
+        .into_iter()
+        .map(|folder| Item::Command {
+            label: app.i18n.text(folder.label_key()),
+            action: Action::Reveal(folder),
+        })
+        .chain([
+            Item::Separator,
+            Item::Command {
+                label: app.i18n.text("menu-quit"),
+                action: Action::Quit,
+            },
+        ])
+        .collect()
 }
 
 fn ui_scale_percent(app: &App) -> f32 {
@@ -198,8 +202,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
         Action::ZoomReset => app.set_ui_scale(crate::config::DEFAULT_UI_SCALE),
-        Action::RevealConfig => app.reveal_config(),
-        Action::RevealHistory => app.reveal_history(),
+        Action::Reveal(folder) => app.reveal(folder),
         Action::Quit => return true,
     }
     false
@@ -462,12 +465,55 @@ mod native {
         /// Returns whatever the operator activated since the last frame.
         pub fn poll(&self) -> Vec<Action> {
             let mut actions = Vec::new();
+            let mut activated = false;
             while let Ok(event) = MenuEvent::receiver().try_recv() {
+                activated = true;
                 if let Some(action) = self.actions.get(&event.id) {
                     actions.push(action.clone());
                 }
             }
+            if activated {
+                self.restore_checks();
+            }
             actions
+        }
+
+        /// Rewrites the check marks the platform flipped on its own.
+        ///
+        /// A check entry toggles itself when it is activated, so choosing the
+        /// device or the language that is already selected clears its mark
+        /// even though the selection did not change. The next [`Self::sync`]
+        /// cannot put it back: an unchanged selection produces the model that
+        /// is already applied, which is exactly the case sync skips. The model
+        /// is the authority, so the marks are written back from it here.
+        pub(super) fn restore_checks(&self) {
+            for (entry, item) in self.items.iter().zip(super::flatten(&self.model)) {
+                if let (Entry::Check(entry), Item::Check { checked, .. }) = (entry, item) {
+                    entry.set_checked(*checked);
+                }
+            }
+        }
+
+        /// Flips every check mark, as the platform does when one is activated.
+        #[cfg(test)]
+        pub fn flip_checks(&self) {
+            for entry in &self.items {
+                if let Entry::Check(entry) = entry {
+                    entry.set_checked(!entry.is_checked());
+                }
+            }
+        }
+
+        /// Returns the state of each check entry, in model order.
+        #[cfg(test)]
+        pub fn checks(&self) -> Vec<bool> {
+            self.items
+                .iter()
+                .filter_map(|entry| match entry {
+                    Entry::Check(entry) => Some(entry.is_checked()),
+                    _ => None,
+                })
+                .collect()
         }
     }
 
@@ -643,6 +689,31 @@ mod tests {
         assert!(matches!(flat[3], Item::Pending(label) if label == "after"));
     }
 
+    /// Every directory the application keeps is reachable from one menu, or a
+    /// folder the operator is expected to work in has no way in.
+    #[test]
+    fn the_file_menu_offers_every_folder() {
+        let app = App::headless();
+        let model = model(&app);
+        let offered: Vec<Folder> = model[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Command {
+                    action: Action::Reveal(folder),
+                    ..
+                } => Some(*folder),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(offered, Folder::ALL);
+        for folder in Folder::ALL {
+            let key = folder.label_key();
+            assert_ne!(app.i18n.text(key), key, "{key} is not translated");
+        }
+    }
+
     /// Every action the model offers has to be handled, or a menu entry does
     /// nothing when clicked.
     #[test]
@@ -679,10 +750,52 @@ mod native_tests {
         bar.chain(items).collect()
     }
 
+    /// The check marks a menu should be showing, in [`Native::checks`] order.
+    fn expected_checks(model: &[Menu]) -> Vec<bool> {
+        flatten(model)
+            .into_iter()
+            .filter_map(|item| match item {
+                Item::Check { checked, .. } => Some(*checked),
+                _ => None,
+            })
+            .collect()
+    }
+
     #[test]
     fn a_freshly_built_menu_shows_the_model() {
         let model = model(&App::headless());
         assert_eq!(Native::detached(&model).labels(), expected(&model));
+    }
+
+    /// Activating a check entry flips its mark, so choosing the device or the
+    /// language that is already selected clears it. The selection did not
+    /// change, which leaves the model equal to the applied one and `sync` with
+    /// nothing to do, so the mark has to be written back where the activation
+    /// was noticed.
+    #[test]
+    fn choosing_the_selected_entry_again_keeps_its_mark() {
+        let mut app = App::headless();
+        let english = model(&app);
+        let mut native = Native::detached(&english);
+        assert!(
+            expected_checks(&english).contains(&true),
+            "a selected entry is needed for this to be worth asserting"
+        );
+
+        native.flip_checks();
+        assert_ne!(
+            native.checks(),
+            expected_checks(&english),
+            "the platform's own toggle is what has to be undone"
+        );
+        native.restore_checks();
+        assert_eq!(native.checks(), expected_checks(&english));
+
+        // The mark still has to follow a selection that did change.
+        app.select_locale(Locale::Ja);
+        let switched = model(&app);
+        native.sync(&switched);
+        assert_eq!(native.checks(), expected_checks(&switched));
     }
 
     /// Switching the language relabels every entry in place. Getting this

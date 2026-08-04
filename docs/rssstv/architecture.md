@@ -240,9 +240,27 @@ PCM conversion remains a separate modulator responsibility.
 returns validated `FskId` values. The receive front end owns the 1900/2100 Hz
 detectors and supplies those classifications.
 
-Callsign records are implemented. Contest records, N-VIS events, and FSKID
-transmission remain future work. See [mmsstv/fskid.md](../mmsstv/fskid.md) for the
-protocol definition.
+The implementation is divided by responsibility:
+
+- `rssstv-fskid` owns the sample-driven acquisition timing, six-bit assembly,
+  callsign framing, checksum validation, bounded identifier value, and the
+  allocation-free physical transmit event iterator.
+- `rssstv-demodulator` reuses its existing AFC-adjusted 1900 and 2100 Hz
+  resonators and converts their normalized envelopes to mark, space, or
+  ambiguous samples.
+- `decode-wav` carries validated identifiers in `DecodeReport` and writes each
+  one to stdout as `fskid: CALLSIGN`.
+- `rssstv-sstv::TransmissionEncoder` places encoded FSKID events after the
+  conventional image footer, and `encode-wav` supplies its normalized callsign.
+
+The core accepts classified detector samples rather than audio amplitudes. It is
+therefore independent of audio backends and detector scaling, while preserving
+the protocol's timing.
+
+Callsign records are implemented in both directions. Contest records and N-VIS
+events remain future work. See [sstv/fskid.md](../sstv/fskid.md) for the
+protocol definition and [mmsstv/fskid.md](../mmsstv/fskid.md) for the original
+detector this one follows.
 
 ## State, Ownership, and Concurrency
 

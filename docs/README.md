@@ -14,6 +14,8 @@ the signal rather than the program.
 
 - [sstv/modes.md](sstv/modes.md): modes, geometry, timing, and VIS
   identification.
+- [sstv/fskid.md](sstv/fskid.md): the FSK station-identification protocol,
+  including the callsign, contest, and narrow N-VIS records.
 
 ## `mmsstv/` — the original implementation
 
@@ -25,7 +27,9 @@ that program does, including where it departs from published descriptions.
   structure, state, and data flow.
 - [mmsstv/dsp.md](mmsstv/dsp.md): filters, discriminators, synchronization, and
   clock correction.
-- [mmsstv/fskid.md](mmsstv/fskid.md): the FSKID protocol and its detector.
+- [mmsstv/modes.md](mmsstv/modes.md): how its mode table is written, and where
+  it differs from public tables.
+- [mmsstv/fskid.md](mmsstv/fskid.md): its FSKID detector and acquisition.
 - [mmsstv/porting.md](mmsstv/porting.md): reading the original source for the
   Rust port.
 

@@ -1,12 +1,15 @@
-# SSTV Formats Supported by MMSSTV
+# SSTV Modes
 
-This document describes the SSTV formats implemented by the original MMSSTV
-source in `original/mmsstv`. Source-derived values describe MMSSTV behavior;
-external references provide protocol history and interoperability context.
+This document describes the SSTV modes, their geometry, timing, and
+identification.
 
-MMSSTV defines 43 receive/transmit modes in `sstv.h:450`. Their names and UI
-order are in `sstv.cpp:493`, timing and geometry in `sstv.cpp:607`, RX raster
-conversion in `Main.cpp:3715`, and TX line generators in `Main.cpp:6088`.
+There is no single formal standard covering every mode here; most are de facto
+protocols created by scan-converter or software authors, and public sources
+conflict with each other. Values below are therefore largely derived from the
+original MMSSTV source in `original/mmsstv`, which remains the most complete
+single reference. Where that source departs from published descriptions, the
+departure is recorded in [mmsstv/modes.md](../mmsstv/modes.md) rather than
+here.
 
 ## Conventions
 
@@ -21,7 +24,7 @@ Ordinary analog SSTV image intensity is represented by frequency:
 | Mid-level | 1900 Hz |
 | White | 2300 Hz |
 
-MMSSTV narrow modes use a smaller image deviation:
+Narrow modes use a smaller image deviation:
 
 | Signal | Frequency |
 | --- | ---: |
@@ -30,8 +33,6 @@ MMSSTV narrow modes use a smaller image deviation:
 | Center | 2172 Hz |
 | White | 2300 Hz |
 
-These narrow constants are declared at `sstv.h:440`.
-
 The horizontal axis is analog. A stated width such as 320 or 640 is the sample
 and bitmap convention used by software, not a fixed count of on-air symbols.
 Different receivers can sample the same scan at different horizontal
@@ -39,10 +40,9 @@ resolutions.
 
 ### Dimensions
 
-The inventory below reports the bitmap allocated by MMSSTV. For Robot and AVT,
-MMSSTV allocates 256 rows but treats 240 as picture rows. Other families often
+The inventory below reports the bitmap a receiver allocates. Families often
 reserve top rows for grayscale or identification in conventional operation;
-their transport bitmap can therefore be taller than the active source image.
+the transport bitmap can therefore be taller than the active source image.
 
 ### Conventional VIS
 
@@ -58,37 +58,31 @@ even parity bit, 30 ms
 1200 Hz  30 ms stop
 ```
 
-A data one is 1100 Hz and zero is 1300 Hz. MMSSTV usually represents the full
-eight transmitted bits, including parity, as one byte. Public tables normally
-list only the seven-bit mode number. For example Robot 36 is VIS `0x08`, while
-MMSSTV transmits and compares parity-inclusive byte `0x88`.
+A data one is 1100 Hz and zero is 1300 Hz. Public tables normally list only the
+seven-bit mode number, while an implementation often carries the full eight
+transmitted bits including parity as one byte. Robot 36 is VIS `0x08`
+publicly and `0x88` as a parity-inclusive byte.
 
-### MMSSTV Extended VIS
+### Extended VIS
 
-MR, MP, and ML modes use a two-byte extension. MMSSTV first sends `0x23`, then a
-second parity-bearing identifier byte using the same 30 ms LSB-first encoding.
-This is an MMSSTV extension rather than a conventional seven-bit VIS assignment.
+MR, MP, and ML modes use a two-byte extension: `0x23` first, then a second
+parity-bearing identifier byte using the same 30 ms LSB-first encoding. This is
+an MMSSTV extension rather than a conventional seven-bit VIS assignment.
 
 ### Narrow N-VIS
 
-Narrow modes do not use conventional VIS. MMSSTV sends an FSK-framed sequence
-using 1900 Hz mark, 2100 Hz space, and 22 ms six-bit symbols:
+Narrow modes do not use conventional VIS. They are identified by an FSK-framed
+sequence sharing the FSKID physical layer, described in
+[sstv/fskid.md](fskid.md).
 
-```text
-0x2d, 0x15, mode, mode XOR 0x15
-```
+## Mode Inventory
 
-The source sends each six-bit value least-significant bit first. Header creation
-is in `Main.cpp:6939`, and decoding is in `sstv.cpp:2552`.
-
-## Complete MMSSTV Mode Inventory
-
-`VIS` gives the public seven-bit value followed by MMSSTV's parity-inclusive raw
+`VIS` gives the public seven-bit value followed by the parity-inclusive raw
 byte. `Ext` and `N-VIS` give the exact source identifiers. `Period` is the
 horizontal synchronization interval; paired-row modes encode two image rows in
 one period.
 
-| MMSSTV mode | Identification | Bitmap | Period | Color organization |
+| Mode | Identification | Bitmap | Period | Color organization |
 | --- | --- | ---: | ---: | --- |
 | Robot 36 | VIS `08` / `88` | 320x256, 240 picture rows | 150.000 ms | Y plus alternating R-Y/B-Y |
 | Robot 72 | VIS `0c` / `0c` | 320x256, 240 picture rows | 300.000 ms | Y, R-Y, B-Y |
@@ -133,9 +127,6 @@ one period.
 | MC110-N | N-VIS `14` | 320x256 | 428.5 ms | Narrow R, G, B |
 | MC140-N | N-VIS `15` | 320x256 | 548.5 ms | Narrow R, G, B |
 | MC180-N | N-VIS `16` | 320x256 | 704.5 ms | Narrow R, G, B |
-
-The source enum names the narrow MP-like modes `smMN73`, `smMN110`, and
-`smMN140`; the UI displays them as MP73-N, MP110-N, and MP140-N.
 
 ## Mode Families
 
@@ -298,29 +289,11 @@ the image range to 2044-2300 Hz and using 1900 Hz horizontal sync.
 MC110-N, MC140-N, and MC180-N are direct narrow-band R/G/B modes. Their line is
 8 ms of 1900 Hz sync, 0.5 ms at 2044 Hz, then three equal color components.
 
-One public handbook table gives 143 ms per component for MC110-N; MMSSTV source
-uses 140 ms and a 428.5 ms period. Source behavior is authoritative here.
-
-## Implementation Notes and Differences
-
-- VIS comments in `sstv.cpp` often show the seven-bit value while switch cases
-  use the parity-inclusive byte.
-- The P5 decoder comment says `$71`, but RX and TX code both use `0x72`.
-- AVT framing, extended VIS parity, and N-VIS framing are implementation-specific
-  areas where MMSSTV source should control compatibility behavior.
-- MMSSTV's SC2-60/120 component allocation differs from common public tables.
-- MC110-N uses 140 ms components in source, not the 143 ms found in one
-  secondary table.
-- `m_OFP` and other receive offsets are empirically tuned synchronization
-  positions and do not necessarily equal literal TX porch boundaries.
-- Bitmap dimensions describe MMSSTV storage. They should not be interpreted as
-  a mandatory analog horizontal sample count.
-
 ## References
 
-The MMSSTV source remains the primary reference for exact behavior. The
-following public sources were used for history and independent specification
-checks:
+The MMSSTV source remains the primary reference for exact behavior; see
+[mmsstv/modes.md](../mmsstv/modes.md). The following public sources were used
+for history and independent specification checks:
 
 - J. L. Barber, N7CXI, [Proposal for SSTV Mode Specifications](https://www.classicsstv.com/graphics/daytonpaper.pdf), Dayton SSTV Forum, 2000. Firmware-derived Robot, Martin, Scottie, SC2-180, Pasokon, and PD timing.
 - Paul Turner, G4IJE, [The development of the PD modes](https://www.classicsstv.com/pdmodes.php). Creator-published history and PD specification.
@@ -330,7 +303,6 @@ checks:
 - Martin Bruchanov, OK2MNM, [Image Communication on Short Waves, Chapter 5](https://www.sstv-handbook.com/download/sstv_05.pdf). Consolidated mode and VIS tables.
 - [MMSSTV distribution page](https://hamsoft.ca/pages/mmsstv.php). MMSSTV authorship and release information.
 
-There is no single formal standard covering every mode in this document. Most
-are de facto protocols created by scan-converter or software authors. Public
-sources also contain conflicts, so source-derived MMSSTV values are identified
-explicitly where interoperability descriptions differ.
+Public sources contain conflicts with each other and with the MMSSTV source.
+Where they differ, the difference is recorded in
+[mmsstv/modes.md](../mmsstv/modes.md).

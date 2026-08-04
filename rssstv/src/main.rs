@@ -4,34 +4,22 @@ use std::{error::Error, sync::Arc};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 
+use platform::UI_FONTS;
+
 mod app;
 mod audio;
 mod canvas;
 mod config;
 mod i18n;
-mod icon;
 mod menu;
 mod paths;
+mod platform;
 mod raster;
 mod receive;
 mod transmit;
 mod view;
 
 use app::App;
-
-/// Font families the interface is drawn with, in priority order.
-///
-/// The platform's own UI face is named rather than left to the font crate's
-/// list, which puts `Noto Sans JP` first. On Windows that resolves to
-/// `NotoSansJP-VF.ttf`, a variable font whose weight axis defaults to Thin;
-/// egui does not apply variable axes, so the whole interface would be drawn
-/// hairline.
-#[cfg(target_os = "windows")]
-const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
-#[cfg(target_os = "macos")]
-const UI_FONTS: [&str; 2] = ["Hiragino Sans", "Helvetica Neue"];
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const UI_FONTS: [&str; 3] = ["Noto Sans CJK JP", "Noto Sans", "DejaVu Sans"];
 
 /// Draws the interface with the platform's UI font.
 ///
@@ -112,8 +100,7 @@ const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 880.0];
 const MONITOR_FRACTION: f32 = 0.92;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    #[cfg(target_os = "windows")]
-    menu::allow_dark_mode_for_app();
+    platform::prepare_process();
 
     let paths = paths::AppPaths::discover()?;
     paths.initialize()?;
@@ -127,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_clamp_size_to_monitor_size(false)
         .with_inner_size(DEFAULT_WINDOW_SIZE);
-    match icon::window_icon() {
+    match platform::window_icon() {
         Some(icon) => viewport = viewport.with_icon(icon),
         None => eprintln!("could not load the application icon; using the platform default"),
     }
@@ -182,6 +169,7 @@ fn fit_to_monitor(ctx: &egui::Context) -> bool {
 impl Interface {
     fn new(cc: &eframe::CreationContext<'_>, paths: paths::AppPaths) -> Self {
         install_fonts(&cc.egui_ctx);
+        platform::prepare_window(cc);
 
         let app = App::new(paths);
         cc.egui_ctx.set_zoom_factor(app.ui_scale);

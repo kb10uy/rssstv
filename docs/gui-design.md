@@ -19,11 +19,28 @@ and macOS use `muda` for the native menu bar; Linux renders the same menu model
 inside the window. System fonts are discovered through `fontdb`, with egui's
 bundled fonts retained as fallback.
 
+## Platform Integration
+
+Everything that only makes sense on one operating system lives in the
+`platform` module, which selects one implementation file per target with
+`#[path]`. Because every target supplies the same set of items, adding an
+operation forces an answer on each platform before the build passes, even if
+the answer is to do nothing. Font family names, revealing a directory in the
+file manager, the window icon, and the Windows dark-mode opt-in are all
+resolved there.
+
+The menu bar is the one deliberate exception and stays in `menu`, because its
+split is between two renderers of a shared model rather than between operating
+systems.
+
 The window icon comes from the platform's own artwork store. On Windows the
 build script embeds `rssstv/assets/icon.ico` as an executable resource, and the
 application loads that resource back at startup, so the shell, the window, and
 the task switcher all show one icon. Other platforms have no resource section,
-so `rssstv/assets/icon.png` is compiled into the binary and decoded instead.
+so `rssstv/assets/icon.png` is compiled into the binary and decoded instead, as
+does Windows when the build had no resource compiler. The executable also
+carries a `VERSIONINFO` resource generated from `Cargo.toml`, so the version
+Explorer reports cannot drift from the version the application reports.
 
 Reproducing a specific visual style is not a goal. The design mock defines
 placement and information hierarchy only.

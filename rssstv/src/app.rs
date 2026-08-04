@@ -1,7 +1,6 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     sync::Arc,
 };
 
@@ -17,6 +16,7 @@ use crate::{
     config::{Config, Settings, UI_SCALE_RANGE},
     i18n::{I18n, Locale},
     paths::AppPaths,
+    platform::reveal_directory,
     raster::Raster,
     transmit::{ComposeRequest, Composer, TxPhase, TxSnapshot, TxWorker},
 };
@@ -759,31 +759,6 @@ fn replace_entries(entries: &mut Vec<Entry>, selected: &mut Option<usize>, next:
         .or_else(|| (!next.is_empty()).then_some(0));
     *entries = next;
     *selected = next_selected;
-}
-
-fn reveal_directory(path: &Path) -> io::Result<()> {
-    #[cfg(target_os = "windows")]
-    let mut command = Command::new("explorer.exe");
-    #[cfg(target_os = "macos")]
-    let mut command = Command::new("open");
-    #[cfg(target_os = "linux")]
-    let mut command = Command::new("xdg-open");
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    return Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "opening a directory is not supported on this platform",
-    ));
-
-    let mut child = command
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
 }
 
 #[cfg(test)]

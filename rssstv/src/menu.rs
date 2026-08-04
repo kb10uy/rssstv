@@ -11,9 +11,6 @@ use crate::{app::App, i18n::Locale};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub use native::Native;
 
-#[cfg(target_os = "windows")]
-pub use native::allow_dark_mode_for_app;
-
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub use in_window::Native;
 
@@ -321,7 +318,6 @@ mod native {
                 // answers WM_COMMAND itself, so the winit event loop needs no
                 // cooperation for menu clicks.
                 let hwnd = window.hwnd.get();
-                allow_dark_mode_for_window(hwnd);
                 unsafe { self.menu.init_for_hwnd(hwnd) }?;
                 self.hwnd = Some(hwnd);
             }
@@ -465,103 +461,6 @@ mod native {
                 }
             }
             actions
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    fn allow_dark_mode_for_window(hwnd: isize) {
-        use windows_sys::Win32::{
-            Foundation::{FreeLibrary, HWND},
-            System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExA},
-        };
-
-        type AllowDarkModeForWindow = unsafe extern "system" fn(HWND, bool) -> bool;
-        const ALLOW_DARK_MODE_FOR_WINDOW_ORDINAL: usize = 133;
-
-        unsafe {
-            let module = LoadLibraryExA(
-                c"uxtheme.dll".as_ptr().cast(),
-                std::ptr::null_mut(),
-                LOAD_LIBRARY_SEARCH_SYSTEM32,
-            );
-            if module.is_null() {
-                return;
-            }
-            if let Some(function) =
-                GetProcAddress(module, ALLOW_DARK_MODE_FOR_WINDOW_ORDINAL as *const u8)
-            {
-                let allow: AllowDarkModeForWindow = std::mem::transmute(function);
-                allow(hwnd as HWND, true);
-            }
-            FreeLibrary(module);
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn allow_dark_mode_for_app() {
-        use windows_sys::Win32::{
-            Foundation::FreeLibrary,
-            System::LibraryLoader::{GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExA},
-        };
-
-        type AllowDarkModeForApp = unsafe extern "system" fn(bool) -> bool;
-        type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
-        type RefreshImmersiveColorPolicyState = unsafe extern "system" fn();
-        const DARK_MODE_FOR_APP_ORDINAL: usize = 135;
-        const REFRESH_COLOR_POLICY_ORDINAL: usize = 104;
-        const WINDOWS_10_1903_BUILD: u32 = 18_362;
-        const PREFERRED_APP_MODE_ALLOW_DARK: i32 = 1;
-
-        let Some(build) = windows_build_number() else {
-            return;
-        };
-
-        unsafe {
-            let module = LoadLibraryExA(
-                c"uxtheme.dll".as_ptr().cast(),
-                std::ptr::null_mut(),
-                LOAD_LIBRARY_SEARCH_SYSTEM32,
-            );
-            if module.is_null() {
-                return;
-            }
-            if let Some(function) = GetProcAddress(module, DARK_MODE_FOR_APP_ORDINAL as *const u8) {
-                if build < WINDOWS_10_1903_BUILD {
-                    let allow: AllowDarkModeForApp = std::mem::transmute(function);
-                    allow(true);
-                } else {
-                    let set_preference: SetPreferredAppMode = std::mem::transmute(function);
-                    set_preference(PREFERRED_APP_MODE_ALLOW_DARK);
-                }
-            }
-            if let Some(function) =
-                GetProcAddress(module, REFRESH_COLOR_POLICY_ORDINAL as *const u8)
-            {
-                let refresh: RefreshImmersiveColorPolicyState = std::mem::transmute(function);
-                refresh();
-            }
-            FreeLibrary(module);
-        }
-
-        fn windows_build_number() -> Option<u32> {
-            use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
-
-            type RtlGetNtVersionNumbers = unsafe extern "system" fn(*mut u32, *mut u32, *mut u32);
-
-            unsafe {
-                let module = GetModuleHandleA(c"ntdll.dll".as_ptr().cast());
-                if module.is_null() {
-                    return None;
-                }
-                let function = GetProcAddress(module, c"RtlGetNtVersionNumbers".as_ptr().cast())?;
-                let get_version: RtlGetNtVersionNumbers = std::mem::transmute(function);
-                let mut major = 0;
-                let mut minor = 0;
-                let mut build = 0;
-                get_version(&mut major, &mut minor, &mut build);
-                build &= !0xf000_0000;
-                (major == 10 && minor == 0 && build >= 17_763).then_some(build)
-            }
         }
     }
 

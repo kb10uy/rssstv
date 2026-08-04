@@ -81,6 +81,7 @@ in the original DSP classes.
 - Prefer the smallest correct implementation and avoid speculative abstractions.
 - Model ownership and state transitions explicitly; avoid global mutable state.
 - Keep platform-specific types and dependencies out of reusable core APIs.
+- Prefer `modname.rs` and `modname/` style over `mod.rs` style.
 - Use `rstest` features for parameterized tests, fixtures, and test cases where
   they improve coverage or reduce repetition.
 

@@ -76,6 +76,54 @@ fn embedded_icon() -> Option<IconData> {
     })
 }
 
+/// What the application is doing, as far as the platform cares.
+///
+/// Reported so the machine does not go to sleep in the middle of a picture.
+/// Only the states worth keeping the machine awake for are distinguished; an
+/// open device that nothing is arriving on is [`Activity::Idle`], so leaving
+/// the application running does not hold sleep off indefinitely.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Activity {
+    #[default]
+    Idle,
+    /// A picture is being decoded.
+    Receiving,
+    /// A picture is being sent.
+    Transmitting,
+}
+
+/// Platform side effects that follow application state.
+///
+/// Unlike the rest of this module these are not one-shot, so they are reached
+/// through a trait: the application holds one of these, and a test can hold a
+/// recording one instead and assert on what the interface asked for.
+pub trait Platform {
+    /// Reports what the application is doing.
+    ///
+    /// Called only when the activity changes, so an implementation may treat
+    /// each call as a transition rather than a repeat.
+    fn set_activity(&mut self, activity: Activity);
+}
+
+/// Returns the platform the application is running on.
+pub fn host() -> Box<dyn Platform> {
+    Box::<imp::Host>::default()
+}
+
+/// A platform with nothing to say.
+///
+/// Used by the targets that cannot act on any of this yet, and by tests
+/// everywhere, so it is compiled where one of those applies rather than being
+/// carried into a build that would never construct it.
+#[cfg(any(not(target_os = "windows"), test))]
+#[derive(Default)]
+pub struct InertPlatform;
+
+#[cfg(any(not(target_os = "windows"), test))]
+impl Platform for InertPlatform {
+    fn set_activity(&mut self, _activity: Activity) {}
+}
+
 /// A claim on being the only running copy of the application.
 ///
 /// Held for the lifetime of the process; releasing it lets the next launch

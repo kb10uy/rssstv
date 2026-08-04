@@ -21,6 +21,10 @@ use windows_sys::Win32::{
             CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS,
             MapViewOfFile, OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
         },
+        Power::{
+            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
+            SetThreadExecutionState,
+        },
         Threading::CreateMutexW,
     },
     UI::{
@@ -65,6 +69,32 @@ fn set_app_user_model_id() -> i32 {
 /// Encodes `value` as the null-terminated UTF-16 the Win32 API expects.
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[derive(Default)]
+pub struct Host;
+
+impl super::Platform for Host {
+    /// Holds sleep off for as long as the activity lasts.
+    ///
+    /// `ES_CONTINUOUS` makes the request stand until it is replaced, rather
+    /// than nudging the idle timer once, so the flags are restated on every
+    /// transition and cleared by the idle case. The display is only kept on
+    /// while transmitting, which is short and attended; a reception can finish
+    /// with the screen off.
+    ///
+    /// The request belongs to the calling thread, which is the interface
+    /// thread every transition arrives on.
+    fn set_activity(&mut self, activity: super::Activity) {
+        let state: EXECUTION_STATE = match activity {
+            super::Activity::Idle => ES_CONTINUOUS,
+            super::Activity::Receiving => ES_CONTINUOUS | ES_SYSTEM_REQUIRED,
+            super::Activity::Transmitting => {
+                ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
+            }
+        };
+        unsafe { SetThreadExecutionState(state) };
+    }
 }
 
 /// The claim held by the copy that got there first.

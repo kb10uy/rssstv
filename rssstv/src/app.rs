@@ -16,8 +16,9 @@ use crate::{
     config::{Config, Settings, UI_SCALE_RANGE},
     i18n::{I18n, Locale},
     paths::AppPaths,
-    platform::reveal_directory,
+    platform::{self, Activity, Platform, reveal_directory},
     raster::Raster,
+    receive::Progress,
     transmit::{ComposeRequest, Composer, TxPhase, TxSnapshot, TxWorker},
 };
 
@@ -180,6 +181,12 @@ pub struct App {
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
+    platform: Box<dyn Platform>,
+    /// What the platform was last told the application is doing.
+    ///
+    /// Compared against each frame so a transition is reported once instead of
+    /// restated on every frame.
+    activity: Activity,
 }
 
 impl App {
@@ -191,7 +198,7 @@ impl App {
             settings.output_device.as_deref(),
             settings.dsp.slant,
         );
-        let mut app = Self::from_parts(audio, paths, config, &settings);
+        let mut app = Self::from_parts(audio, paths, config, &settings, platform::host());
         app.refresh_library();
         app.restore_selection(&settings);
         app.request_preview();
@@ -203,15 +210,28 @@ impl App {
     /// tests.
     #[cfg(test)]
     pub(crate) fn headless() -> Self {
+        Self::headless_on(Box::new(platform::InertPlatform))
+    }
+
+    /// Builds a headless interface reporting activity to `platform`.
+    #[cfg(test)]
+    pub(crate) fn headless_on(platform: Box<dyn Platform>) -> Self {
         Self::from_parts(
             AudioState::disconnected(),
             AppPaths::from_roots(PathBuf::new(), PathBuf::new(), PathBuf::new()),
             Config::detached(),
             &Settings::default(),
+            platform,
         )
     }
 
-    fn from_parts(audio: AudioState, paths: AppPaths, config: Config, settings: &Settings) -> Self {
+    fn from_parts(
+        audio: AudioState,
+        paths: AppPaths,
+        config: Config,
+        settings: &Settings,
+        platform: Box<dyn Platform>,
+    ) -> Self {
         Self {
             tab: Tab::default(),
             i18n: I18n::new(settings.locale),
@@ -246,6 +266,8 @@ impl App {
             playback: None,
             tx_worker: None,
             playback_started: false,
+            platform,
+            activity: Activity::default(),
         }
     }
 
@@ -473,6 +495,35 @@ impl App {
             self.select_rx_mode(mode);
         }
         self.poll_transmit();
+        self.report_activity();
+    }
+
+    /// Tells the platform what the application is doing, when that changes.
+    ///
+    /// Transmission outranks reception: the two cannot overlap on one device,
+    /// and a transmission in progress is the stronger claim on the machine.
+    fn report_activity(&mut self) {
+        let activity = if self.tx_snapshot.phase.is_active() {
+            Activity::Transmitting
+        } else if matches!(
+            self.audio.snapshot().progress,
+            Progress::Acquiring | Progress::Decoding { .. }
+        ) {
+            Activity::Receiving
+        } else {
+            Activity::Idle
+        };
+
+        if activity != self.activity {
+            self.activity = activity;
+            self.platform.set_activity(activity);
+        }
+    }
+
+    /// What the platform was last told the application is doing.
+    #[cfg(test)]
+    pub(crate) const fn activity(&self) -> Activity {
+        self.activity
     }
 
     /// Fraction of the active tab's raster that is drawn as decoded.
@@ -764,6 +815,8 @@ fn replace_entries(entries: &mut Vec<Entry>, selected: &mut Option<usize>, next:
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
+        rc::Rc,
         sync::atomic::{AtomicUsize, Ordering},
         time::{Duration, Instant},
     };
@@ -771,7 +824,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::receive::{Progress, Snapshot};
+    use crate::receive::Snapshot;
 
     static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -796,7 +849,13 @@ mod tests {
     /// Builds an interface over real directories but no host audio.
     fn disconnected(paths: AppPaths, settings: &Settings) -> App {
         let config = Config::load(paths.config_file());
-        let mut app = App::from_parts(AudioState::disconnected(), paths, config, settings);
+        let mut app = App::from_parts(
+            AudioState::disconnected(),
+            paths,
+            config,
+            settings,
+            Box::new(platform::InertPlatform),
+        );
         app.saved = app.settings();
         app
     }
@@ -841,6 +900,73 @@ mod tests {
             progress: Progress::Decoding { rows, total },
             ..Snapshot::default()
         }
+    }
+
+    /// A platform that records what the interface asked it for.
+    #[derive(Clone, Default)]
+    struct RecordingPlatform(Rc<RefCell<Vec<Activity>>>);
+
+    impl Platform for RecordingPlatform {
+        fn set_activity(&mut self, activity: Activity) {
+            self.0.borrow_mut().push(activity);
+        }
+    }
+
+    /// Sleep has to be held off for the whole of a reception and released
+    /// again when it ends, or a long picture is cut short by an idle timer.
+    #[test]
+    fn a_reception_asks_the_platform_to_stay_awake_until_it_ends() {
+        let recorder = RecordingPlatform::default();
+        let mut app = App::headless_on(Box::new(recorder.clone()));
+
+        app.audio.set_snapshot(decoding(40, 100));
+        app.poll_audio();
+        assert_eq!(app.activity(), Activity::Receiving);
+
+        app.audio.set_snapshot(Snapshot::default());
+        app.poll_audio();
+        assert_eq!(app.activity(), Activity::Idle);
+        assert_eq!(
+            recorder.0.take(),
+            vec![Activity::Receiving, Activity::Idle],
+            "each transition should be reported once"
+        );
+    }
+
+    /// An unchanged activity must not be restated, or the platform is asked
+    /// the same thing on every frame.
+    #[test]
+    fn an_unchanged_activity_is_not_reported_again() {
+        let recorder = RecordingPlatform::default();
+        let mut app = App::headless_on(Box::new(recorder.clone()));
+
+        app.audio.set_snapshot(decoding(10, 100));
+        app.poll_audio();
+        app.audio.set_snapshot(decoding(20, 100));
+        app.poll_audio();
+
+        assert_eq!(recorder.0.take(), vec![Activity::Receiving]);
+    }
+
+    /// A transmission outranks a reception: both cannot hold the device, and
+    /// the transmission is the stronger claim on the machine.
+    #[rstest]
+    #[case(TxPhase::Priming, Activity::Transmitting)]
+    #[case(TxPhase::Producing, Activity::Transmitting)]
+    #[case(TxPhase::Draining, Activity::Transmitting)]
+    #[case(TxPhase::Complete, Activity::Receiving)]
+    #[case(TxPhase::Cancelled, Activity::Receiving)]
+    fn a_transmission_outranks_a_reception(#[case] phase: TxPhase, #[case] expected: Activity) {
+        let mut app = App::headless();
+        app.audio.set_snapshot(decoding(40, 100));
+        app.tx_snapshot = TxSnapshot {
+            phase,
+            ..TxSnapshot::default()
+        };
+
+        app.poll_audio();
+
+        assert_eq!(app.activity(), expected);
     }
 
     #[test]

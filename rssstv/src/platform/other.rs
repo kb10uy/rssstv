@@ -20,6 +20,10 @@ pub fn prepare_process() {}
 
 pub fn prepare_window(_cc: &eframe::CreationContext<'_>) {}
 
+/// Keeping the machine awake needs the desktop's inhibit service, which is not
+/// wired up yet, so activity is accepted and discarded.
+pub type Host = super::InertPlatform;
+
 pub type Claim = super::FileLock;
 
 pub fn claim_single_instance() -> Option<Claim> {

@@ -33,6 +33,17 @@ The menu bar is the one deliberate exception and stays in `menu`, because its
 split is between two renderers of a shared model rather than between operating
 systems.
 
+Sleep is held off while a picture is moving. The application reports an
+`Activity` of `Receiving` while a raster is being acquired or decoded, and
+`Transmitting` while a transmission is priming, producing, or draining;
+anything else is `Idle`. Windows answers with `SetThreadExecutionState`,
+keeping the display on only while transmitting, which is short and attended.
+An open device that nothing is arriving on stays `Idle`, so leaving the
+application running does not hold sleep off indefinitely. Activity is the one
+part of the platform surface reached through a trait rather than a free
+function, because it follows application state and tests substitute a
+recording implementation to assert what the interface asked for.
+
 Only one copy runs at a time. The application holds audio devices open, and a
 second copy silently failing to acquire them is harder to understand than not
 opening at all, so a launch that finds the claim already taken asks the running

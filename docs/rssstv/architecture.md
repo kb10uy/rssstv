@@ -190,6 +190,16 @@ cannot see whole — one cut short by the start or the end of the retained sampl
 completion, and stopped states, consumes an explicit prefix of each input block,
 and reports typed events and errors. Its responsibilities include:
 
+- Mode detection from the spacing of synchronization pulses, so a transmission
+  joined after its header, or that never sent one, can still be received. This
+  is MMSSTV's `CSYNCINT`: a short history of measured intervals is matched
+  against every candidate's line period at one-, two-, and three-line multiples,
+  the multiples being what tolerates pulses lost to noise. A period can be
+  matched by more than one mode — Robot 36 at two lines is exactly Robot 72 at
+  one — so ties resolve towards the smallest multiple, the reading that assumes
+  no pulse was missed. Nothing in such a signal says which row the reception
+  started on, so the picture decodes correctly but vertically rolled, as it does
+  in MMSSTV.
 - Initial raster phase acquisition from four recurring synchronization pulses,
   buffering at most five periods when the first post-VIS pulse is incomplete.
   The phase is averaged over those pulses, leaving out the first one because the

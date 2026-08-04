@@ -8,7 +8,7 @@ use std::{
 };
 
 use rssstv_audio::CaptureReader;
-use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
+use rssstv_demodulator::{DemodulatedChunk, Demodulator, SyncStart, sync_detector_delay};
 use rssstv_sstv::{
     RxDecoder, SstvError,
     image::RgbImage,
@@ -167,21 +167,24 @@ pub struct Worker {
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
     slant: Arc<AtomicBool>,
+    sync_start: Arc<Mutex<SyncStart>>,
 }
 
 impl Worker {
     /// Starts decoding everything `reader` produces.
-    pub fn spawn(reader: CaptureReader, slant: bool) -> Self {
+    pub fn spawn(reader: CaptureReader, slant: bool, sync_start: SyncStart) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
+        let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::default());
         let join = {
             let stop = Arc::clone(&stop);
             let slant = Arc::clone(&slant);
+            let sync_start = Arc::clone(&sync_start);
             let mailbox = Arc::clone(&mailbox);
             thread::Builder::new()
                 .name("rssstv-receive".to_owned())
-                .spawn(move || run(reader, &mailbox, &stop, &slant))
+                .spawn(move || run(reader, &mailbox, &stop, &slant, &sync_start))
                 .ok()
         };
         Self {
@@ -189,11 +192,19 @@ impl Worker {
             join,
             mailbox,
             slant,
+            sync_start,
         }
     }
 
     pub fn set_slant(&self, enabled: bool) {
         self.slant.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_sync_start(&self, scope: SyncStart) {
+        *self
+            .sync_start
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = scope;
     }
 
     /// Returns the newest state, or `None` when nothing changed since the last
@@ -241,6 +252,11 @@ struct Session {
     sample_rate_hz: u32,
     published_revision: Option<u64>,
     searching: bool,
+    /// Which modes a reception may start in without a VIS header.
+    ///
+    /// Held here because every demodulator the session builds has to be given
+    /// it again: a restarted search is still looking for the same signals.
+    sync_start: SyncStart,
     refinement: Refinement,
     /// Staged length at which the next refinement attempt is worthwhile.
     refine_next_len: usize,
@@ -250,17 +266,30 @@ struct Session {
 }
 
 impl Session {
-    fn new(sample_rate_hz: u32) -> Result<Self, String> {
+    fn new(sample_rate_hz: u32, sync_start: SyncStart) -> Result<Self, String> {
+        let mut demodulator =
+            Demodulator::new(sample_rate_hz).map_err(|error| error.to_string())?;
+        demodulator.set_sync_start(sync_start);
         Ok(Self {
-            demodulator: Demodulator::new(sample_rate_hz).map_err(|error| error.to_string())?,
+            demodulator,
             decoder: None,
             sample_rate_hz,
             published_revision: None,
             searching: true,
+            sync_start,
             refinement: Refinement::NotApplicable,
             refine_next_len: 0,
             refine_limit_len: 0,
         })
+    }
+
+    /// Adopts a new sync-start scope, for this reception and later ones.
+    fn set_sync_start(&mut self, scope: SyncStart) {
+        if self.sync_start == scope {
+            return;
+        }
+        self.sync_start = scope;
+        self.demodulator.set_sync_start(scope);
     }
 
     /// Discards all protocol state.
@@ -268,7 +297,7 @@ impl Session {
     /// Capture overrun breaks the contiguity the demodulator requires, so the
     /// pipeline restarts rather than decoding across the gap.
     fn reset(&mut self) -> Result<(), String> {
-        *self = Self::new(self.sample_rate_hz)?;
+        *self = Self::new(self.sample_rate_hz, self.sync_start)?;
         Ok(())
     }
 
@@ -306,6 +335,7 @@ impl Session {
     fn restart_search(&mut self) -> Result<(), String> {
         self.demodulator =
             Demodulator::new(self.sample_rate_hz).map_err(|error| error.to_string())?;
+        self.demodulator.set_sync_start(self.sync_start);
         self.searching = true;
         Ok(())
     }
@@ -470,9 +500,16 @@ impl Session {
     }
 }
 
-fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &AtomicBool) {
+fn run(
+    mut reader: CaptureReader,
+    mailbox: &Mailbox,
+    stop: &AtomicBool,
+    slant: &AtomicBool,
+    sync_start: &Mutex<SyncStart>,
+) {
     let sample_rate_hz = reader.sample_rate_hz();
-    let mut session = match Session::new(sample_rate_hz) {
+    let initial_sync_start = *sync_start.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut session = match Session::new(sample_rate_hz, initial_sync_start) {
         Ok(session) => session,
         Err(error) => {
             mailbox.publish(Snapshot {
@@ -498,6 +535,7 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
         }
         let samples = &pcm[..reading.count];
         level = follow_peak(level, block_peak(samples), RELEASE);
+        session.set_sync_start(*sync_start.lock().unwrap_or_else(PoisonError::into_inner));
 
         if reading.is_discontinuous() && session.reset().is_err() {
             error = Some("failed to restart after a capture overrun".to_owned());
@@ -758,8 +796,16 @@ mod pipeline_tests {
     /// Drives the real worker through the capture queue and returns its last
     /// image, so the test covers the same code path a live device does.
     fn receive(pcm: &[f32], trailing_silence: usize) -> (Snapshot, Option<Frame>) {
+        receive_with(pcm, trailing_silence, SyncStart::Disabled)
+    }
+
+    fn receive_with(
+        pcm: &[f32],
+        trailing_silence: usize,
+        sync_start: SyncStart,
+    ) -> (Snapshot, Option<Frame>) {
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = Worker::spawn(reader, true);
+        let worker = Worker::spawn(reader, true, sync_start);
         let mut snapshot = Snapshot::default();
         let mut frame = None;
         let silence = vec![0.0_f32; trailing_silence];
@@ -831,5 +877,74 @@ mod pipeline_tests {
             error < baseline + 4.0,
             "mistimed reception scored {error} against a {baseline} baseline"
         );
+    }
+
+    /// Tuning in part way through a picture leaves no VIS header to identify
+    /// the mode, so nothing is decoded unless the raster's own sync spacing is
+    /// enough to start on. The rows that arrived before the mode was known
+    /// stay blank, which is what the operator sees in MMSSTV too.
+    #[test]
+    fn a_transmission_joined_after_its_header_still_decodes() {
+        let mode = Mode::Martin1;
+        let expected = source_image(mode);
+        let pcm = transmission(mode, expected.clone(), 0.0);
+        // Drop the VOX, VIS, and the first quarter of the raster.
+        let joined = &pcm[pcm.len() / 4..];
+
+        let (without, _) = receive(joined, RATE as usize * 3);
+        assert_eq!(
+            without.mode, None,
+            "a headerless signal must not start while sync start is off"
+        );
+
+        let (snapshot, frame) = receive_with(joined, RATE as usize * 3, SyncStart::Any);
+
+        assert_eq!(snapshot.mode, Some(mode), "{snapshot:?}");
+        let frame = frame.expect("a decoded frame");
+        assert_eq!(frame.width, u32::from(mode.spec().width()));
+
+        let (offset, error) = best_vertical_alignment(&frame, &expected);
+        assert!(
+            error < 40.0,
+            "the joined reception scored {error} at its best alignment of {offset} rows"
+        );
+        assert!(
+            offset > 0,
+            "the reception was cut into, so it cannot have started on row zero"
+        );
+    }
+
+    /// Returns the vertical alignment that best matches `expected`, and its
+    /// mean error.
+    ///
+    /// A reception joined part way through has to be judged this way: nothing
+    /// in the signal says which row it started on, so the picture is decoded
+    /// correctly but rolled. MMSSTV leaves the operator to shift it too.
+    ///
+    /// Only the lower half of the frame is compared, which is clear of the
+    /// blank rows left where the picture arrived before the mode was known.
+    fn best_vertical_alignment(frame: &Frame, expected: &RgbImage) -> (usize, f64) {
+        let width = expected.size().width();
+        let height = expected.size().height();
+        let first = height / 2;
+        let mut best = (0, f64::INFINITY);
+        for offset in 0..first {
+            let mut total = 0_u64;
+            for y in first..height - offset {
+                for x in 0..width {
+                    let pixel = expected.get(x, y + offset).unwrap();
+                    let chunk = &frame.rgba[(y * width + x) * 4..][..3];
+                    total += u64::from(pixel.r.abs_diff(chunk[0]));
+                    total += u64::from(pixel.g.abs_diff(chunk[1]));
+                    total += u64::from(pixel.b.abs_diff(chunk[2]));
+                }
+            }
+            let rows = height - offset - first;
+            let error = total as f64 / (rows * width * 3) as f64;
+            if error < best.1 {
+                best = (offset, error);
+            }
+        }
+        best
     }
 }

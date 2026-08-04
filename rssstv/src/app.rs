@@ -11,6 +11,8 @@ use rssstv_sstv::{
     mode::{Mode, Support},
 };
 
+use rssstv_demodulator::SyncStart;
+
 use crate::{
     audio::AudioState,
     config::{Config, Settings, UI_SCALE_RANGE},
@@ -508,6 +510,7 @@ impl App {
             self.rx_raster = raster;
         }
         self.adopt_decoded_callsign();
+        self.audio.set_sync_start(self.sync_start());
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.
         if self.auto_mode
@@ -517,6 +520,22 @@ impl App {
         }
         self.poll_transmit();
         self.report_activity();
+    }
+
+    /// Chooses which modes a reception may start in without a VIS header.
+    ///
+    /// A transmission joined after its header, or that never sent one, can only
+    /// be identified by the spacing of its sync pulses, and a period can be
+    /// matched by more than one mode. So the operator's own choice decides how
+    /// far the inference may reach: with automatic detection on, any supported
+    /// mode may be inferred, and with it off only the selected mode is
+    /// considered, which confirms rather than overrides that choice.
+    const fn sync_start(&self) -> SyncStart {
+        if self.auto_mode {
+            SyncStart::Any
+        } else {
+            SyncStart::Only(self.rx_mode)
+        }
     }
 
     /// Puts a newly decoded station identifier in the QSO contact field.
@@ -1049,6 +1068,27 @@ mod tests {
         app.poll_audio();
 
         assert_eq!(app.qso.call, "JA1ABC");
+    }
+
+    /// A sync-interval match can only narrow a mode down, never confirm it the
+    /// way a header does, so how far it may reach follows the operator's own
+    /// choice: it may pick any mode while automatic detection is on, and
+    /// otherwise only confirm the mode already selected.
+    #[test]
+    fn sync_start_scope_follows_automatic_mode_detection() {
+        let mut app = App::headless();
+        app.auto_mode = true;
+        app.poll_audio();
+        assert_eq!(app.audio.sync_start(), SyncStart::Any);
+
+        app.auto_mode = false;
+        app.select_rx_mode(Mode::Scottie1);
+        app.poll_audio();
+        assert_eq!(app.audio.sync_start(), SyncStart::Only(Mode::Scottie1));
+
+        app.select_rx_mode(Mode::Pd120);
+        app.poll_audio();
+        assert_eq!(app.audio.sync_start(), SyncStart::Only(Mode::Pd120));
     }
 
     /// The FSKID alphabet includes the space, and an identifier that is only

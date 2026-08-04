@@ -1,6 +1,7 @@
 use rssstv_audio::{
     AudioHost, Capture, InputDevice, OutputDevice, Playback, PlaybackWriter, StreamFault,
 };
+use rssstv_demodulator::SyncStart;
 
 use crate::receive::{Snapshot, Worker};
 
@@ -22,6 +23,7 @@ pub struct AudioState {
     worker: Option<Worker>,
     snapshot: Snapshot,
     slant: bool,
+    sync_start: SyncStart,
 }
 
 impl AudioState {
@@ -74,6 +76,7 @@ impl AudioState {
             worker: None,
             snapshot: Snapshot::default(),
             slant,
+            sync_start: SyncStart::default(),
         };
         if let Some(device) = device {
             state.open(&device);
@@ -98,6 +101,7 @@ impl AudioState {
             worker: None,
             snapshot: Snapshot::default(),
             slant: true,
+            sync_start: SyncStart::default(),
         }
     }
 
@@ -138,7 +142,7 @@ impl AudioState {
         self.snapshot = Snapshot::default();
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
-                self.worker = Some(Worker::spawn(reader, self.slant));
+                self.worker = Some(Worker::spawn(reader, self.slant, self.sync_start));
                 self.capture = Some(capture);
                 self.error = None;
             }
@@ -167,6 +171,25 @@ impl AudioState {
         if let Some(worker) = self.worker.as_ref() {
             worker.set_slant(enabled);
         }
+    }
+
+    /// Chooses whether a reception may start without a VIS header.
+    ///
+    /// Kept here as well as pushed to the worker, because a device opened
+    /// later spawns a worker that has to start with the same scope.
+    pub fn set_sync_start(&mut self, scope: SyncStart) {
+        if self.sync_start == scope {
+            return;
+        }
+        self.sync_start = scope;
+        if let Some(worker) = self.worker.as_ref() {
+            worker.set_sync_start(scope);
+        }
+    }
+
+    #[cfg(test)]
+    pub const fn sync_start(&self) -> SyncStart {
+        self.sync_start
     }
 
     #[cfg(test)]

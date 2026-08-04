@@ -162,6 +162,15 @@ reports the gap, and the worker responds by discarding the demodulator and any
 decoder and starting again, rather than decoding across a discontinuity and
 producing a silently corrupt image.
 
+A reception can start without a VIS header, from the spacing of the raster's
+own synchronization pulses. How far that inference may reach follows the
+automatic mode detection control, because a period can be matched by more than
+one mode: with automatic detection on, any supported mode may be inferred, and
+with it off only the selected mode is considered, so the match confirms the
+operator's choice instead of overriding it. The scope is pushed to the worker
+whenever it changes and is reapplied to every demodulator the worker builds,
+including after a restarted search.
+
 A reception whose signal stops arriving is stopped rather than discarded. The
 worker watches for progress that has not moved for the stall window and calls
 `RxDecoder::stop`, which leaves the decoder holding the rows it managed to

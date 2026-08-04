@@ -1,5 +1,6 @@
 [package]
 name = "rssstv"
+description = "SSTV for amateur radio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -186,8 +186,9 @@ The application supplies the last reception it kept: one that completed, or one
 that was interrupted with at least 65 percent of its rows decoded, which is the
 same rule the received folder uses. The image is held in memory, so the layer
 follows the last reception whether or not receptions are being written to disk.
-Until a reception qualifies there is nothing to show, and the application
-supplies the prepared background in its place rather than failing the render.
+Until a reception qualifies, the layer shows the mode's test pattern, so a
+template built around a reception composes from the first launch rather than
+failing to render.
 
 ## Variables
 

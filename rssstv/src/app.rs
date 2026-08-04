@@ -20,7 +20,7 @@ use crate::{
         config::{Config, Settings, UI_SCALE_RANGE},
         paths::{AppPaths, Folder},
     },
-    ui::raster::Raster,
+    ui::raster::{Raster, test_pattern_image},
     worker::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
@@ -192,8 +192,10 @@ pub struct App {
     ///
     /// Held in memory rather than read back from the received folder: the
     /// layer shows what was just received, which is true whether or not the
-    /// operator saves receptions at all.
-    received_image: Option<Arc<RgbImage>>,
+    /// operator saves receptions at all. It starts as a test pattern so a
+    /// template built around a reception composes before the first one
+    /// arrives.
+    received_image: Arc<RgbImage>,
     preview_frame: Option<Arc<RgbImage>>,
     prepared_frame: Option<Arc<RgbImage>>,
     playback: Option<Playback>,
@@ -292,7 +294,7 @@ impl App {
             saved: settings.clone(),
             composer: Composer::spawn(),
             compose_generation: 0,
-            received_image: None,
+            received_image: Arc::new(test_pattern_image(settings.rx_mode)),
             preview_frame: None,
             prepared_frame: None,
             playback: None,
@@ -599,7 +601,7 @@ impl App {
         let Some(image) = frame.to_image() else {
             return;
         };
-        self.received_image = Some(Arc::new(image));
+        self.received_image = Arc::new(image);
         self.request_preview();
     }
 
@@ -1104,10 +1106,12 @@ mod tests {
 
         app.poll_audio();
 
-        let image = app.received_image.expect("a received image");
-        assert_eq!(image.size().width(), 2);
-        assert_eq!(image.size().height(), 1);
-        assert_eq!(image.pixels().first(), Some(&Rgb8::new(10, 20, 30)));
+        assert_eq!(app.received_image.size().width(), 2);
+        assert_eq!(app.received_image.size().height(), 1);
+        assert_eq!(
+            app.received_image.pixels().first(),
+            Some(&Rgb8::new(10, 20, 30))
+        );
     }
 
     /// A reception the worker never offered leaves the layer showing what it
@@ -1119,7 +1123,7 @@ mod tests {
         app.audio.set_snapshot(decoding(10, 100));
         app.poll_audio();
 
-        assert!(app.received_image.is_none());
+        assert_eq!(*app.received_image, test_pattern_image(app.rx_mode));
     }
 
     #[test]

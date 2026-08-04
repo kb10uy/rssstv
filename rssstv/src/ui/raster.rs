@@ -87,7 +87,11 @@ impl Raster {
     }
 }
 
-fn test_pattern_image(mode: Mode) -> RgbImage {
+/// Builds the color-bar and gray-ramp pattern at a mode's geometry.
+///
+/// Shared with the transmit composition, which shows it in place of a received
+/// image until a reception has produced one.
+pub(crate) fn test_pattern_image(mode: Mode) -> RgbImage {
     const BARS: [Rgb8; 8] = [
         Rgb8::new(255, 255, 255),
         Rgb8::new(255, 255, 0),

@@ -174,6 +174,11 @@ fn badge(app: &App) -> String {
         Tab::History => app.i18n.text_with("badge-history", &[("mode", mode)]),
         Tab::Receive => {
             let progress = app.audio.snapshot().progress;
+            // A stopped reception leaves a partial image on the canvas, so it
+            // has to read differently from having nothing at all.
+            if progress == Progress::Stopped {
+                return app.i18n.text_with("badge-stopped", &[("mode", mode)]);
+            }
             if !progress.is_active() && progress != Progress::Complete {
                 return app.i18n.text("badge-waiting");
             }

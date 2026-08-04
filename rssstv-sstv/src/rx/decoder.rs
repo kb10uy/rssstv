@@ -225,6 +225,25 @@ impl RxDecoder {
         self.image_revision
     }
 
+    /// Terminates decoding, keeping the rows decoded so far.
+    ///
+    /// AutoStop reaches the same terminal state from the decoder's own
+    /// synchronization history. This is the entry point for a caller that can
+    /// see a reception is over for a reason the decoder cannot observe, such as
+    /// a signal that stopped arriving at all: no further input advances the
+    /// raster, so nothing here would ever score a bad line. An already
+    /// finished reception is left as it is.
+    pub fn stop(&mut self, reason: StopReason) {
+        if matches!(self.decode.state, RxState::Complete | RxState::Stopped { .. }) {
+            return;
+        }
+        self.decode.state = RxState::Stopped {
+            completed_rows: self.decode.delivered_rows,
+            reason,
+        };
+        self.queue_event(RxEvent::Stopped { reason });
+    }
+
     /// Consumes a prefix and returns at most one event.
     ///
     /// For a non-empty valid block this either consumes at least one sample or
@@ -1844,6 +1863,83 @@ mod tests {
         assert!(matches!(decoder.state(), RxState::Stopped { .. }));
         assert!(matches!(events.last(), Some(RxEvent::Stopped { .. })));
         assert!(matches!(decoder.finish(), RxOutcome::Stopped { .. }));
+    }
+
+    /// A signal that stops arriving cannot be ended by AutoStop, which only
+    /// scores lines that actually arrive. The caller ends it instead, and the
+    /// rows decoded up to that point are the whole value of what is left.
+    #[test]
+    fn an_externally_stopped_reception_keeps_its_decoded_rows() {
+        let (frequency, sync) = sampled_body(Mode::Martin2, 311);
+        let mut decoder = RxDecoder::with_config(
+            Mode::Martin2,
+            SAMPLE_RATE,
+            RxConfig {
+                live_sync: true,
+                ..RxConfig::default()
+            },
+        )
+        .unwrap();
+        let absolute_start = 70_000;
+        let mut offset = 0;
+        let rows = loop {
+            if let RxState::Decoding { completed_rows } = decoder.state()
+                && completed_rows >= 4
+            {
+                break completed_rows;
+            }
+            let result = decoder
+                .process(DemodulatedBlock::new(
+                    absolute_start + offset as u64,
+                    &frequency[offset..],
+                    &sync[offset..],
+                ))
+                .unwrap();
+            offset += result.consumed();
+            assert!(result.consumed() != 0 || result.event().is_some());
+        };
+        let revision = decoder.image_revision();
+        assert!(revision > 0, "no rows were drawn before stopping");
+
+        decoder.stop(StopReason::SynchronizationLost);
+
+        assert_eq!(
+            decoder.state(),
+            RxState::Stopped {
+                completed_rows: rows,
+                reason: StopReason::SynchronizationLost,
+            }
+        );
+        let mut events = Vec::new();
+        while let Some(event) = decoder.poll_event() {
+            events.push(event);
+        }
+        assert_eq!(
+            events.last(),
+            Some(&RxEvent::Stopped {
+                reason: StopReason::SynchronizationLost
+            })
+        );
+        assert_eq!(
+            decoder.image_revision(),
+            revision,
+            "stopping must not disturb the image"
+        );
+        assert!(matches!(decoder.finish(), RxOutcome::Stopped { .. }));
+    }
+
+    /// Stopping a reception that already finished would rewrite a complete
+    /// image as a partial one.
+    #[test]
+    fn stopping_a_finished_reception_leaves_it_complete() {
+        let (frequency, sync) = sampled_body(Mode::Martin2, 311);
+        let (mut decoder, _) =
+            drive_configured(Mode::Martin2, &frequency, &sync, RxConfig::default());
+        assert_eq!(decoder.state(), RxState::Complete);
+
+        decoder.stop(StopReason::SynchronizationLost);
+
+        assert_eq!(decoder.state(), RxState::Complete);
     }
 
     #[test]

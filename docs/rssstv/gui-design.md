@@ -162,6 +162,15 @@ reports the gap, and the worker responds by discarding the demodulator and any
 decoder and starting again, rather than decoding across a discontinuity and
 producing a silently corrupt image.
 
+A reception whose signal stops arriving is stopped rather than discarded. The
+worker watches for progress that has not moved for the stall window and calls
+`RxDecoder::stop`, which leaves the decoder holding the rows it managed to
+decode. The reception then reads as stopped rather than as never having
+happened: the partial image stays on the canvas undimmed, the badge says so,
+and the demodulator restarts its search for the next signal. This is a normal
+outcome with something to show, so it is reported through the progress state
+and not as an error on the status line.
+
 Progressive image display uses the existing decoder API. The worker tracks
 `RxDecoder::image_revision`, and when it changes, converts `RxDecoder::image`
 into RGBA bytes and publishes an owned frame. The conversion runs on the worker

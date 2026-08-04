@@ -13,7 +13,7 @@ use rssstv_sstv::{
     RxDecoder, SstvError,
     image::RgbImage,
     mode::Mode,
-    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging},
+    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging, StopReason},
 };
 
 /// Samples drained from the capture queue per pass.
@@ -41,10 +41,15 @@ const REFINEMENT_RETRY_MS: usize = 250;
 /// Trailing audio staged before staged refinement is abandoned.
 const REFINEMENT_TAIL_SECONDS: usize = 15;
 
-/// Longest a reception may stall before the worker searches for a new signal.
+/// Longest a reception may stall before the worker stops it.
 ///
 /// `auto_stop` is left off because its live scoring aborts real receptions
 /// early, so a signal that simply disappears is caught by this timeout instead.
+///
+/// The window has to outlast startup acquisition, which fixes the raster phase
+/// over five periods and reports no progress while it does. That is a little
+/// over five seconds for the slowest mode, so this leaves ample room rather
+/// than racing acquisition on a signal that is arriving perfectly well.
 const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Decoded image published to the interface.
@@ -283,6 +288,21 @@ impl Session {
         }
     }
 
+    /// Ends a reception that stopped arriving, keeping what was decoded.
+    ///
+    /// The decoder is stopped rather than discarded: the rows already decoded
+    /// are the whole point of a partial reception, and dropping the decoder
+    /// would take the image with it and report the reception as never having
+    /// happened. Refinement is abandoned at the same time, because it is
+    /// waiting for a tail that is not coming.
+    fn stop(&mut self) {
+        let Some(decoder) = self.decoder.as_mut() else {
+            return;
+        };
+        decoder.stop(StopReason::SynchronizationLost);
+        self.refinement = Refinement::NotApplicable;
+    }
+
     fn restart_search(&mut self) -> Result<(), String> {
         self.demodulator =
             Demodulator::new(self.sample_rate_hz).map_err(|error| error.to_string())?;
@@ -388,7 +408,7 @@ impl Session {
             })?;
             if processed.event()
                 == Some(RxEvent::Stopped {
-                    reason: rssstv_sstv::rx::StopReason::SynchronizationLost,
+                    reason: StopReason::SynchronizationLost,
                 })
             {
                 break;
@@ -507,10 +527,14 @@ fn run(mut reader: CaptureReader, mailbox: &Mailbox, stop: &AtomicBool, slant: &
 
         let mut progress = session.progress();
         if progress == last_progress {
+            // A reception that stops arriving is stopped rather than reset:
+            // this is a normal outcome with a partial image to show, not a
+            // fault, so it is reported through the progress state and not as
+            // an error on the status line.
             if progress.is_active() && progress_changed_at.elapsed() >= STALL_TIMEOUT {
-                error = Some("reception stalled; searching for a new signal".to_owned());
-                let _ = session.reset();
+                session.stop();
                 progress = session.progress();
+                last_progress = progress;
                 progress_changed_at = Instant::now();
             }
         } else {

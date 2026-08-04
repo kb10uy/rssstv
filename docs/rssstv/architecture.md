@@ -202,7 +202,11 @@ and reports typed events and errors. Its responsibilities include:
 - Stable live raster-phase correction. A correction may move the raster
   backwards, so the working window keeps one raster period behind the unit being
   decoded rather than trimming to its start.
-- Optional automatic stop based on synchronization history.
+- Optional automatic stop based on synchronization history, and `RxDecoder::stop`
+  for a caller that can see a reception is over for a reason the decoder cannot
+  observe. A signal that stops arriving altogether is one: no further input
+  advances the raster, so no line is ever scored badly. Both reach the same
+  terminal state and keep the rows decoded so far.
 - Optional bounded staging and deterministic whole-image reconstruction.
 
 Acquisition fixes the raster phase only. A reception starts on the configured

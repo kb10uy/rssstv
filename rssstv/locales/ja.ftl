@@ -63,6 +63,7 @@ library-empty = ファイルなし
 badge-waiting = 信号待ち
 badge-receiving = RECEIVING · { $mode } · { $percent }%
 badge-complete = COMPLETE · { $mode }
+badge-stopped = RX STOPPED · { $mode }
 badge-transmit-ready = TX READY · { $mode }
 badge-transmit-not-ready = TX NOT READY · { $mode }
 badge-transmit-preparing = TX PREPARING · { $mode }

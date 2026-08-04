@@ -97,6 +97,11 @@ This repository uses a Cargo workspace. Run commands from the workspace root.
 
 - Build all workspace members with `cargo build --workspace`.
 - Run all tests with `cargo test --workspace`.
+- Check that `rssstv-sstv` still builds without `std` using
+  `cargo build -p rssstv-sstv --no-default-features`. A workspace build does not
+  cover this: another member enabling the `std` feature hides a core primitive
+  used through `std` alone, so the crate can stop being `no_std` without any
+  workspace command noticing.
 - Run Clippy with `cargo clippy --workspace --all-targets`.
 - Check formatting with `cargo fmt --all --check`.
 - Apply formatting with `cargo fmt --all` when needed.
@@ -108,6 +113,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets
 cargo test --workspace
 cargo build --workspace
+cargo build -p rssstv-sstv --no-default-features
 ```
 
 Add focused unit tests for DSP and protocol behavior. Prefer deterministic test

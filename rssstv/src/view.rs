@@ -579,7 +579,10 @@ fn status_bar(ui: &mut Ui, app: &App) {
         match app.tx_progress() {
             TxProgress::Scanning { rows, total } => app.i18n.text_with(
                 "status-transmitting",
-                &[("row", number(rows as u32)), ("total", number(total as u32))],
+                &[
+                    ("row", number(rows as u32)),
+                    ("total", number(total as u32)),
+                ],
             ),
             TxProgress::Identifying => app.i18n.text("status-transmit-identifying"),
             _ => app.i18n.text("status-transmit-leader"),

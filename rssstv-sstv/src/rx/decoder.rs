@@ -234,7 +234,10 @@ impl RxDecoder {
     /// raster, so nothing here would ever score a bad line. An already
     /// finished reception is left as it is.
     pub fn stop(&mut self, reason: StopReason) {
-        if matches!(self.decode.state, RxState::Complete | RxState::Stopped { .. }) {
+        if matches!(
+            self.decode.state,
+            RxState::Complete | RxState::Stopped { .. }
+        ) {
             return;
         }
         self.decode.state = RxState::Stopped {

@@ -594,10 +594,10 @@ impl FrontEnd {
         let sync_strength = (envelopes[1] / (envelopes[1] + competing)).clamp(0.0, 1.0);
         // A header identifies the mode outright, so it is preferred over an
         // inference drawn from the raster's timing.
-        let mode = self
-            .vis
-            .process(envelopes)
-            .or_else(|| self.sync_intervals.process(self.sample_rate_hz, sync_strength));
+        let mode = self.vis.process(envelopes).or_else(|| {
+            self.sync_intervals
+                .process(self.sample_rate_hz, sync_strength)
+        });
         let difference = (envelopes[3] - envelopes[4]).abs();
         let fsk_tone = if difference < FSK_MINIMUM_CONTRAST {
             FskTone::Ambiguous
@@ -1348,9 +1348,9 @@ mod tests {
         let pulse_samples = (rate * 0.006).round() as usize;
         let mut detected = None;
         let feed = |detector: &mut SyncIntervalDetector,
-                        samples: usize,
-                        strength: f64,
-                        detected: &mut Option<Mode>| {
+                    samples: usize,
+                    strength: f64,
+                    detected: &mut Option<Mode>| {
             for _ in 0..samples {
                 if let Some(mode) = detector.process(rate, strength) {
                     detected.get_or_insert(mode);

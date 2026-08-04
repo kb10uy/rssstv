@@ -323,9 +323,7 @@ fn rx_level(ui: &mut Ui, app: &App) {
 ///
 /// Drawn as that meter rather than as a slider so the panel keeps one shape
 /// across the tabs, and colored while transmitting for the same reason the
-/// receive meter is: the bar says whether the radio is doing anything. A handle
-/// rides the end of the fill, because a bar that can be dragged has to look
-/// unlike one that only reports.
+/// receive meter is: the bar says whether the radio is doing anything.
 fn tx_level(ui: &mut Ui, app: &mut App) {
     let transmitting = app.tx_snapshot.phase.is_active();
     let color = if transmitting {
@@ -339,12 +337,6 @@ fn tx_level(ui: &mut Ui, app: &mut App) {
     if let Some(pointer) = dragged.interact_pointer_pos() {
         app.tx_volume = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
     }
-    ui.painter().circle(
-        egui::pos2(fill_edge(rect, app.tx_volume), rect.center().y),
-        rect.height() * 0.5,
-        Color32::WHITE,
-        egui::Stroke::new(1.0, Color32::from_gray(40)),
-    );
     dragged.on_hover_text(app.i18n.text_with(
         "tx-volume",
         &[
@@ -352,17 +344,6 @@ fn tx_level(ui: &mut Ui, app: &mut App) {
             ("decibels", arg(&decibels(app.tx_volume))),
         ],
     ));
-}
-
-/// Where the fill ends, which is where the handle marking it belongs.
-///
-/// The travel spans the whole track rather than the track inset by the
-/// handle's radius. Insetting it would keep the handle within the track at
-/// both ends, but the fill behind it starts at the edge regardless, so the
-/// handle would sit ahead of the end it marks — most visibly near zero, where
-/// the bar is empty and the handle would already be a radius along it.
-fn fill_edge(rect: egui::Rect, travel: f32) -> f32 {
-    rect.left() + travel.clamp(0.0, 1.0) * rect.width()
 }
 
 /// The level as an amplitude ratio in decibels, which is the unit the setting
@@ -873,17 +854,6 @@ mod tests {
         }
 
         assert_eq!(app.stock, Some(0));
-    }
-
-    /// The handle marks the end of the fill, so it tracks the same edge at
-    /// every position including the ends, rather than a track inset by its own
-    /// radius.
-    #[test]
-    fn the_level_handle_sits_on_the_end_of_the_fill() {
-        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 0.0), egui::vec2(100.0, 20.0));
-        assert_eq!(fill_edge(rect, 0.0), rect.left());
-        assert_eq!(fill_edge(rect, 0.5), 60.0);
-        assert_eq!(fill_edge(rect, 1.0), rect.right());
     }
 
     /// Decibels are the unit the level is heard in, so the readout is what

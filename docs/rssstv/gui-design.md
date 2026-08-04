@@ -413,12 +413,9 @@ that is the input meter, which fills green while a raster is being acquired or
 decoded, and the DSP toggles. Transmitting, it is the output level and the
 transmit trigger. The output level is drawn as the same bar rather than as a
 slider, and is dragged to set it; it fills red while a transmission is running,
-for the reason the receive meter fills green. A round handle rides the end of
-the fill, because a bar that can be dragged has to look unlike one that only
-reports, and hovering reads the level back as a percentage and in decibels. Its
-travel spans the whole track rather than the track inset by its own radius: the
-fill starts at the edge regardless, so an inset handle would sit ahead of the
-end it marks.
+for the reason the receive meter fills green. It carries no handle: the fill already
+shows where the level is, and hovering reads it back as a percentage and in
+decibels.
 
 The fader's travel is squared to reach the amplitude a transmission is scaled
 by. Loudness follows amplitude by a power law rather than in step with it, so a

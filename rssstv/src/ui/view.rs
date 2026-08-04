@@ -10,7 +10,7 @@ use crate::{
     ui::{canvas, menu},
     worker::{
         receive::Progress,
-        transmit::{TxPhase, TxProgress},
+        transmit::{TxGain, TxPhase, TxProgress},
     },
 };
 
@@ -323,7 +323,9 @@ fn rx_level(ui: &mut Ui, app: &App) {
 ///
 /// Drawn as that meter rather than as a slider so the panel keeps one shape
 /// across the tabs, and colored while transmitting for the same reason the
-/// receive meter is: the bar says whether the radio is doing anything.
+/// receive meter is: the bar says whether the radio is doing anything. A handle
+/// rides the end of the fill, because a bar that can be dragged has to look
+/// unlike one that only reports.
 fn tx_level(ui: &mut Ui, app: &mut App) {
     let transmitting = app.tx_snapshot.phase.is_active();
     let color = if transmitting {
@@ -333,15 +335,43 @@ fn tx_level(ui: &mut Ui, app: &mut App) {
     };
     let bar = ui.add(ProgressBar::new(app.tx_volume).fill(color));
     let dragged = bar.interact(egui::Sense::click_and_drag());
+    let (start, span) = fader_travel(dragged.rect);
     if let Some(pointer) = dragged.interact_pointer_pos() {
-        let rect = dragged.rect;
-        app.tx_volume = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+        app.tx_volume = ((pointer.x - start) / span).clamp(0.0, 1.0);
     }
-    let percent = (app.tx_volume * 100.0).round();
-    dragged.on_hover_text(
-        app.i18n
-            .text_with("tx-volume", &[("percent", number(percent))]),
+    ui.painter().circle(
+        egui::pos2(start + app.tx_volume * span, dragged.rect.center().y),
+        dragged.rect.height() * 0.5,
+        Color32::WHITE,
+        egui::Stroke::new(1.0, Color32::from_gray(40)),
     );
+    dragged.on_hover_text(app.i18n.text_with(
+        "tx-volume",
+        &[
+            ("percent", number((app.tx_volume * 100.0).round())),
+            ("decibels", arg(&decibels(app.tx_volume))),
+        ],
+    ));
+}
+
+/// The span a fader handle's center may move over, inset by its own radius so
+/// the handle stays inside the track at both ends.
+fn fader_travel(rect: egui::Rect) -> (f32, f32) {
+    let radius = rect.height() * 0.5;
+    (
+        rect.left() + radius,
+        (rect.width() - rect.height()).max(1.0),
+    )
+}
+
+/// The level as an amplitude ratio in decibels, which is the unit the setting
+/// is actually perceived in.
+fn decibels(travel: f32) -> String {
+    let amplitude = TxGain::amplitude(travel);
+    if amplitude <= 0.0 {
+        return "-\u{221e}".to_owned();
+    }
+    format!("{:.1}", 20.0 * amplitude.log10())
 }
 
 fn mode_panel(ui: &mut Ui, app: &mut App) {
@@ -842,6 +872,15 @@ mod tests {
         }
 
         assert_eq!(app.stock, Some(0));
+    }
+
+    /// Decibels are the unit the level is heard in, so the readout is what
+    /// makes the squared travel legible rather than arbitrary.
+    #[test]
+    fn the_transmit_level_reads_out_in_decibels() {
+        assert_eq!(decibels(1.0), "0.0");
+        assert_eq!(decibels(0.5), "-12.0");
+        assert_eq!(decibels(0.0), "-\u{221e}");
     }
 
     #[test]

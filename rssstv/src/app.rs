@@ -25,7 +25,7 @@ use crate::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
         receive::{Frame, Progress},
-        transmit::{TxPhase, TxProgress, TxSnapshot, TxVolume, TxWorker},
+        transmit::{TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
 
@@ -156,10 +156,11 @@ pub struct App {
     pub vis_restart: bool,
     /// Whether a transmission ends with the station identifier.
     pub send_fskid: bool,
-    /// Output level a transmission is scaled by, in `0.0..=1.0`.
+    /// How far along its travel the transmit level fader sits, in `0.0..=1.0`.
     ///
-    /// Held here for the interface and mirrored into [`App::tx_gain`], which
-    /// is what a running transmission actually reads.
+    /// Held here for the interface, and converted into the amplitude a
+    /// transmission is scaled by in [`App::tx_gain`], which is what a running
+    /// transmission reads.
     pub tx_volume: f32,
     pub auto_history: bool,
     pub history_format: crate::storage::history::HistoryFormat,
@@ -210,8 +211,8 @@ pub struct App {
     /// Set when something changed the composition while a transmission was
     /// running, so the change is made once the transmission ends.
     composition_deferred: bool,
-    /// The level a running transmission reads, shared with its worker.
-    tx_gain: Arc<TxVolume>,
+    /// The amplitude a running transmission reads, shared with its worker.
+    tx_gain: Arc<TxGain>,
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
@@ -291,7 +292,7 @@ impl App {
             vis_restart: settings.vis_restart,
             send_fskid: settings.send_fskid,
             tx_volume: settings.tx_volume,
-            tx_gain: Arc::new(TxVolume::new(settings.tx_volume)),
+            tx_gain: Arc::new(TxGain::from_travel(settings.tx_volume)),
             auto_history: settings.auto_history,
             history_format: settings.history_format,
             qso: Qso::default(),
@@ -555,7 +556,7 @@ impl App {
         self.adopt_decoded_callsign();
         self.audio.set_sync_start(self.sync_start());
         self.audio.set_vis_restart(self.vis_restart);
-        self.tx_gain.set(self.tx_volume);
+        self.tx_gain.set_travel(self.tx_volume);
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.
         if self.auto_mode
@@ -883,7 +884,7 @@ impl App {
         };
         self.tx_error = None;
         self.playback = Some(playback);
-        self.tx_gain.set(self.tx_volume);
+        self.tx_gain.set_travel(self.tx_volume);
         self.tx_worker = Some(TxWorker::spawn(
             writer,
             self.tx_mode,

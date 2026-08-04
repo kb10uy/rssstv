@@ -113,16 +113,31 @@ pub struct TxSnapshot {
 /// every frame while the worker reads it between blocks, and neither should
 /// wait for the other over one number.
 #[derive(Debug)]
-pub struct TxVolume(AtomicU32);
+pub struct TxGain(AtomicU32);
 
-impl TxVolume {
-    pub fn new(gain: f32) -> Self {
-        Self(AtomicU32::new(gain.clamp(0.0, 1.0).to_bits()))
+impl TxGain {
+    /// Builds a gain from how far along its travel the operator's fader is.
+    pub fn from_travel(travel: f32) -> Self {
+        Self(AtomicU32::new(Self::amplitude(travel).to_bits()))
     }
 
-    pub fn set(&self, gain: f32) {
+    /// Moves the fader, which a running transmission picks up per block.
+    pub fn set_travel(&self, travel: f32) {
         self.0
-            .store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+            .store(Self::amplitude(travel).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Returns the amplitude a fader position stands for.
+    ///
+    /// Loudness follows amplitude by a power law rather than in step with it,
+    /// so a fader that scales amplitude directly spends its upper half on
+    /// levels that all sound about the same and crowds everything audible into
+    /// the bottom. Squaring the travel spreads that range over the whole bar:
+    /// half way down is a quarter of full scale, about 12 dB, which is close to
+    /// where a mixing desk's fader sits at its midpoint.
+    pub fn amplitude(travel: f32) -> f32 {
+        let travel = travel.clamp(0.0, 1.0);
+        travel * travel
     }
 
     pub fn get(&self) -> f32 {
@@ -142,7 +157,7 @@ impl TxWorker {
         mode: Mode,
         frame: Arc<RgbImage>,
         station_id: Option<FskId>,
-        volume: Arc<TxVolume>,
+        gain: Arc<TxGain>,
     ) -> Self {
         let snapshot = Arc::new(Mutex::new(TxSnapshot {
             phase: TxPhase::Priming,
@@ -157,7 +172,7 @@ impl TxWorker {
                 mode,
                 frame,
                 station_id,
-                volume,
+                gain,
                 worker_snapshot,
                 worker_cancel,
             )
@@ -204,7 +219,7 @@ fn transmit_loop(
     mode: Mode,
     frame: Arc<RgbImage>,
     station_id: Option<FskId>,
-    volume: Arc<TxVolume>,
+    gain: Arc<TxGain>,
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -254,9 +269,9 @@ fn transmit_loop(
                     // Applied as the block is produced rather than as it is
                     // written, so a level changed mid-transmission takes
                     // effect on whole blocks and never scales one twice.
-                    let gain = volume.get();
+                    let level = gain.get();
                     for sample in &mut block[..next] {
-                        *sample *= gain;
+                        *sample *= level;
                     }
                     count = next;
                     offset = 0;
@@ -351,6 +366,29 @@ mod tests {
         assert_eq!(progress.fraction(), expected);
     }
 
+    /// A fader that scaled amplitude directly would spend its top half on
+    /// levels that all sound alike, so half travel has to be an audible step
+    /// down rather than half as loud.
+    #[rstest]
+    #[case(-1.0, 0.0)]
+    #[case(0.0, 0.0)]
+    #[case(0.5, 0.25)]
+    #[case(1.0, 1.0)]
+    #[case(2.0, 1.0)]
+    fn fader_travel_maps_onto_a_perceptual_amplitude(#[case] travel: f32, #[case] expected: f32) {
+        assert_eq!(TxGain::amplitude(travel), expected);
+    }
+
+    #[test]
+    fn a_shared_gain_follows_the_fader() {
+        let gain = TxGain::from_travel(1.0);
+        assert_eq!(gain.get(), 1.0);
+
+        gain.set_travel(0.5);
+
+        assert_eq!(gain.get(), 0.25);
+    }
+
     /// The level scales what actually leaves for the sound card, rather than
     /// only the bar the operator drags.
     #[test]
@@ -359,8 +397,8 @@ mod tests {
         let size = ImageSize::new(mode.spec().width().into(), mode.spec().height().into()).unwrap();
         let frame = Arc::new(RgbImage::new(size, Rgb8::new(80, 140, 200)));
         let (writer, mut reader) = synthetic_playback(8_000, 512).unwrap();
-        let volume = Arc::new(TxVolume::new(0.0));
-        let worker = TxWorker::spawn(writer, mode, frame, None, Arc::clone(&volume));
+        let gain = Arc::new(TxGain::from_travel(0.0));
+        let worker = TxWorker::spawn(writer, mode, frame, None, Arc::clone(&gain));
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut block = [0.0_f32; 512];
@@ -377,7 +415,7 @@ mod tests {
             silent += read;
             thread::yield_now();
         }
-        assert_eq!(volume.get(), 0.0);
+        assert_eq!(gain.get(), 0.0);
     }
 
     #[test]
@@ -391,7 +429,7 @@ mod tests {
             mode,
             frame,
             Some(FskId::new("N0CALL").unwrap()),
-            Arc::new(TxVolume::new(1.0)),
+            Arc::new(TxGain::from_travel(1.0)),
         );
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut received = 0_u64;

@@ -28,7 +28,7 @@ output-device = Output device
 
 section-rx-status = Receive status
 section-tx-control = Transmit control
-tx-volume = Transmit level { $percent }%
+tx-volume = Transmit level { $percent }% ({ $decibels } dB)
 
 section-mode = Mode
 label-auto-vis = Automatic detection (VIS)

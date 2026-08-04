@@ -43,3 +43,13 @@ thiserror = { version = "2.0", default-features = false }
 toml_edit = "0.25"
 unic-langid = "0.9"
 windows-sys = "0.61"
+
+# Release builds are what gets distributed, so they are optimized for the
+# result rather than for how long they take to produce. Panics keep unwinding:
+# the receive and transmit workers are separate threads whose failure is
+# reported to the interface, and aborting would take the whole session down
+# with one of them.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "debuginfo"

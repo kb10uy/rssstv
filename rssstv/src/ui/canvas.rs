@@ -1,6 +1,6 @@
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::raster::Raster;
+use crate::ui::raster::Raster;
 
 const VIEWPORT: Color32 = Color32::from_rgb(10, 10, 13);
 const PENDING: Color32 = Color32::from_rgb(23, 23, 26);

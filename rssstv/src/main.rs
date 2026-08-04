@@ -4,24 +4,17 @@ use std::{error::Error, sync::Arc};
 
 use egui::{FontData, FontDefinitions, FontFamily};
 
-use platform::UI_FONTS;
-
 mod app;
-mod audio;
-mod canvas;
-mod config;
-mod history;
 mod i18n;
-mod log;
-mod menu;
-mod paths;
 mod platform;
-mod raster;
-mod receive;
-mod transmit;
-mod view;
+mod storage;
+mod ui;
+mod worker;
 
 use app::App;
+use platform::UI_FONTS;
+use storage::{log, paths};
+use ui::{menu, view};
 
 /// Draws the interface with the platform's UI font.
 ///

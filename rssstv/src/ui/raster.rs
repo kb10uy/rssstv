@@ -6,7 +6,7 @@ use rssstv_sstv::{
     mode::Mode,
 };
 
-use crate::receive::Frame;
+use crate::worker::receive::Frame;
 
 /// Display-ready raster.
 ///

@@ -7,7 +7,7 @@ use std::{
 use image::{ExtendedColorType, ImageEncoder, codecs::jpeg::JpegEncoder};
 use image_webp::{ColorType as WebPColorType, WebPEncoder};
 
-use crate::receive::HistoryCandidate;
+use crate::worker::receive::HistoryCandidate;
 
 const JPEG_QUALITY: u8 = 90;
 const XMP_JPEG_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
@@ -195,7 +195,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::receive::Frame;
+    use crate::worker::receive::Frame;
 
     static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 

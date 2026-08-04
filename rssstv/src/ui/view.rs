@@ -5,12 +5,13 @@ use rssstv_audio::FaultKind;
 
 use crate::{
     app::{App, Dsp, Entry, Tab},
-    canvas,
     i18n::{number, text as arg},
-    menu,
-    paths::Folder,
-    receive::Progress,
-    transmit::{TxPhase, TxProgress},
+    storage::paths::Folder,
+    ui::{canvas, menu},
+    worker::{
+        receive::Progress,
+        transmit::{TxPhase, TxProgress},
+    },
 };
 
 const SIDE_PANEL_WIDTH: f32 = 320.0;
@@ -222,7 +223,7 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                 ComboBox::from_id_salt("receive-history-format")
                     .selected_text(app.i18n.text(app.history_format.label_key()))
                     .show_ui(ui, |ui| {
-                        for format in crate::history::HistoryFormat::ALL {
+                        for format in crate::storage::history::HistoryFormat::ALL {
                             ui.selectable_value(
                                 &mut app.history_format,
                                 format,

@@ -3,7 +3,7 @@ use rssstv_audio::{
 };
 use rssstv_demodulator::SyncStart;
 
-use crate::receive::{HistoryCandidate, Snapshot, Worker};
+use crate::worker::receive::{HistoryCandidate, Snapshot, Worker};
 
 /// One second of queue at the preferred capture rate.
 const QUEUE_CAPACITY_SAMPLES: usize = 48_000;
@@ -154,7 +154,7 @@ impl AudioState {
     ///
     /// Returns the decoded frame when one arrived, so the caller can refresh
     /// the raster without cloning pixels on every poll.
-    pub fn poll(&mut self) -> Option<crate::receive::Frame> {
+    pub fn poll(&mut self) -> Option<crate::worker::receive::Frame> {
         let worker = self.worker.as_ref()?;
         let mut snapshot = worker.latest()?;
         let frame = snapshot.frame.take();

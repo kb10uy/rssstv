@@ -14,14 +14,19 @@ use rssstv_sstv::{
 use rssstv_demodulator::SyncStart;
 
 use crate::{
-    audio::AudioState,
-    config::{Config, Settings, UI_SCALE_RANGE},
     i18n::{I18n, Locale},
-    paths::{AppPaths, Folder},
     platform::{self, Activity, Platform},
-    raster::Raster,
-    receive::Progress,
-    transmit::{ComposeRequest, Composer, TxPhase, TxProgress, TxSnapshot, TxWorker},
+    storage::{
+        config::{Config, Settings, UI_SCALE_RANGE},
+        paths::{AppPaths, Folder},
+    },
+    ui::raster::Raster,
+    worker::{
+        audio::AudioState,
+        compose::{ComposeRequest, Composer},
+        receive::Progress,
+        transmit::{TxPhase, TxProgress, TxSnapshot, TxWorker},
+    },
 };
 
 const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
@@ -148,7 +153,7 @@ pub struct App {
     pub tx_modes: Vec<Mode>,
     pub dsp: DspFlags,
     pub auto_history: bool,
-    pub history_format: crate::history::HistoryFormat,
+    pub history_format: crate::storage::history::HistoryFormat,
     pub qso: Qso,
     pub station_callsign: String,
     pub templates: Vec<Entry>,
@@ -500,10 +505,13 @@ impl App {
         }
         if let Some(candidate) = self.audio.take_history()
             && self.auto_history
-            && let Err(error) =
-                crate::history::save(self.paths.received_dir(), candidate, self.history_format)
+            && let Err(error) = crate::storage::history::save(
+                self.paths.received_dir(),
+                candidate,
+                self.history_format,
+            )
         {
-            crate::log::note(&format!("failed to save receive history: {error}"));
+            crate::storage::log::note(&format!("failed to save receive history: {error}"));
         }
         self.adopt_decoded_callsign();
         self.audio.set_sync_start(self.sync_start());
@@ -581,7 +589,7 @@ impl App {
         let Some(fault) = self.audio.take_capture_fault() else {
             return;
         };
-        crate::log::note(&format!("capture stopped: {fault}"));
+        crate::storage::log::note(&format!("capture stopped: {fault}"));
         self.audio.rescan();
         self.device_fault = Some(fault);
     }
@@ -924,7 +932,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::receive::{Frame, HistoryCandidate, Snapshot};
+    use crate::worker::receive::{Frame, HistoryCandidate, Snapshot};
 
     static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -1300,7 +1308,7 @@ mod tests {
         app.toggle_dsp(Dsp::Lms);
         app.auto_mode = false;
         app.auto_history = false;
-        app.history_format = crate::history::HistoryFormat::Jpeg;
+        app.history_format = crate::storage::history::HistoryFormat::Jpeg;
         app.select_tx_mode(Mode::Martin1);
         app.station_callsign = "JA1ABC".to_owned();
         app.template = Some(1);
@@ -1319,7 +1327,10 @@ mod tests {
         assert!(next.dsp.lms);
         assert!(!next.auto_mode);
         assert!(!next.auto_history);
-        assert_eq!(next.history_format, crate::history::HistoryFormat::Jpeg);
+        assert_eq!(
+            next.history_format,
+            crate::storage::history::HistoryFormat::Jpeg
+        );
         assert_eq!(next.station_callsign, "JA1ABC");
         assert_eq!(next.templates[next.template.unwrap()].name, "beta.kdl");
         assert_eq!(next.stocks[next.stock.unwrap()].name, "second.png");

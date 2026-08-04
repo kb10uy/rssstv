@@ -12,7 +12,7 @@ use std::{
 use rssstv_sstv::mode::Mode;
 use toml_edit::{DocumentMut, Item, Table, value};
 
-use crate::{app::DspFlags, history::HistoryFormat, i18n::Locale};
+use crate::{app::DspFlags, i18n::Locale, storage::history::HistoryFormat};
 
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;

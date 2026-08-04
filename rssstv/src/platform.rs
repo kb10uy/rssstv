@@ -6,7 +6,7 @@
 //! new operation has to be answered on every platform before the build passes,
 //! even if the answer is to do nothing.
 //!
-//! The menu bar is the one deliberate exception. It stays in [`crate::menu`]
+//! The menu bar is the one deliberate exception. It stays in [`crate::ui::menu`]
 //! because its platform split is between two renderers of a shared model
 //! rather than between operating systems.
 
@@ -19,11 +19,11 @@ use std::{
 use egui::IconData;
 use image::ImageFormat;
 
-#[cfg_attr(target_os = "windows", path = "windows.rs")]
-#[cfg_attr(target_os = "macos", path = "macos.rs")]
+#[cfg_attr(target_os = "windows", path = "platform/windows.rs")]
+#[cfg_attr(target_os = "macos", path = "platform/macos.rs")]
 #[cfg_attr(
     not(any(target_os = "windows", target_os = "macos")),
-    path = "other.rs"
+    path = "platform/other.rs"
 )]
 mod imp;
 
@@ -61,7 +61,7 @@ pub use imp::window_icon;
 /// The application icon, compiled into the binary.
 ///
 /// Used by the platforms that have nowhere else to read it from.
-const ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
 
 /// Decodes the icon embedded in the binary.
 fn embedded_icon() -> Option<IconData> {

@@ -28,6 +28,8 @@ output-device = 出力デバイス
 
 tx-volume = 送信レベル { $percent }% ({ $decibels } dB)
 
+section-rx-level = 受信レベル
+section-tx-level = 送信レベル
 section-mode = モード
 label-auto-vis = 自動判定 (VIS)
 mode-detecting = { $mode }（自動検出中）

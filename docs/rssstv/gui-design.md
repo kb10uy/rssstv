@@ -413,7 +413,7 @@ would have named. The window therefore opens straight onto the image, with no
 strip above it.
 
 That first box follows the tab and keeps one shape across
-both: a level bar, the mode, and the controls that act on the signal. Receiving,
+both: a labelled level bar, the mode, and the controls that act on the signal. Receiving,
 that is the input meter, which fills green while a raster is being acquired or
 decoded, and the DSP toggles. Transmitting, it is the output level and the
 transmit trigger. The output level is drawn as the same bar rather than as a

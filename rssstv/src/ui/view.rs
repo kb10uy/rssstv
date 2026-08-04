@@ -14,15 +14,11 @@ use crate::{
     },
 };
 
-const SIDE_PANEL_WIDTH: f32 = 320.0;
+const SIDE_PANEL_WIDTH: f32 = 224.0;
 /// Default height of the library row; the operator can drag it.
-const LIBRARY_HEIGHT: f32 = 260.0;
-const LIST_WIDTH: f32 = 260.0;
-/// Narrowest a DSP toggle may be drawn.
-///
-/// The toggles divide the panel three ways, which is what one of them measures
-/// at the panel's default width.
-const TOGGLE_WIDTH: f32 = 96.0;
+const LIBRARY_HEIGHT: f32 = 182.0;
+/// Narrowest a library list is laid out at before the panel scrolls.
+const LIST_WIDTH: f32 = 182.0;
 const FIELD_LABEL_WIDTH: f32 = 64.0;
 
 const SMALL: f32 = 12.0;
@@ -51,12 +47,12 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     Panel::right(Id::new("side-panel"))
         .resizable(true)
         .default_size(SIDE_PANEL_WIDTH)
-        .size_range(260.0..=560.0)
+        .size_range(182.0..=560.0)
         .show(ui, |ui| side_panel(ui, app));
     Panel::bottom(Id::new("library"))
         .resizable(true)
         .default_size(LIBRARY_HEIGHT)
-        .size_range(160.0..=640.0)
+        .size_range(112.0..=640.0)
         .show(ui, |ui| library(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
     device_fault_modal(ui, app);
@@ -289,6 +285,13 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
 /// while transmitting, and the DSP toggles give way to the transmit trigger.
 fn tab_controls(ui: &mut Ui, app: &mut App) {
     ui.set_width(ui.available_width());
+    heading(
+        ui,
+        &app.i18n.text(match app.tab {
+            Tab::Receive => "section-rx-level",
+            Tab::Transmit => "section-tx-level",
+        }),
+    );
     match app.tab {
         Tab::Receive => rx_level(ui, app),
         Tab::Transmit => tx_level(ui, app),
@@ -395,7 +398,9 @@ fn dsp_panel(ui: &mut Ui, app: &mut App) {
     let mut toggled = None;
     ui.horizontal(|ui| {
         let gaps = ui.spacing().item_spacing.x * (Dsp::ALL.len() - 1) as f32;
-        let width = ((ui.available_width() - gaps) / Dsp::ALL.len() as f32).max(TOGGLE_WIDTH);
+        // Divided rather than given a minimum: three buttons that each insist
+        // on a readable width overflow the panel once it is dragged narrow.
+        let width = (ui.available_width() - gaps) / Dsp::ALL.len() as f32;
         let height = ui.spacing().interact_size.y;
         for dsp in Dsp::ALL {
             let label = RichText::new(app.i18n.text(dsp.label_key())).size(SMALL);

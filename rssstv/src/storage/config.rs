@@ -17,6 +17,11 @@ use crate::{app::DspFlags, i18n::Locale, storage::history::HistoryFormat};
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
 pub const DEFAULT_UI_SCALE: f32 = 1.0;
+/// Transmit level a first run starts at.
+///
+/// Full scale, because the modulator already produces normalized PCM and the
+/// operator's own output mixer is what the level is usually set against.
+pub const DEFAULT_TX_VOLUME: f32 = 1.0;
 /// How far the interface may be scaled.
 ///
 /// A stored value is clamped to this, so a hand-edited file cannot shrink the
@@ -42,6 +47,7 @@ pub struct Settings {
     pub dsp: DspFlags,
     pub vis_restart: bool,
     pub send_fskid: bool,
+    pub tx_volume: f32,
     pub auto_history: bool,
     pub history_format: HistoryFormat,
     pub ui_scale: f32,
@@ -62,6 +68,7 @@ impl Default for Settings {
             dsp: DspFlags::default(),
             vis_restart: true,
             send_fskid: true,
+            tx_volume: DEFAULT_TX_VOLUME,
             auto_history: true,
             history_format: HistoryFormat::default(),
             ui_scale: DEFAULT_UI_SCALE,
@@ -154,6 +161,9 @@ impl Config {
                 .unwrap_or(defaults.vis_restart),
             send_fskid: boolean(&self.document, Some("transmit"), "fskid")
                 .unwrap_or(defaults.send_fskid),
+            tx_volume: float(&self.document, Some("transmit"), "volume")
+                .map(|volume| volume.clamp(0.0, 1.0))
+                .unwrap_or(defaults.tx_volume),
             auto_history: boolean(&self.document, Some("receive"), "auto-history")
                 .unwrap_or(defaults.auto_history),
             history_format: string(&self.document, Some("receive"), "history-format")
@@ -258,6 +268,14 @@ impl Config {
             Some("transmit"),
             "fskid",
             Some(value(settings.send_fskid)),
+        );
+        set(
+            document,
+            Some("transmit"),
+            "volume",
+            Some(value(
+                (f64::from(settings.tx_volume) * 100.0).round() / 100.0,
+            )),
         );
         set(
             document,
@@ -400,6 +418,7 @@ mod tests {
             auto_mode: false,
             vis_restart: false,
             send_fskid: false,
+            tx_volume: 0.5,
             dsp: DspFlags {
                 afc: false,
                 lms: true,

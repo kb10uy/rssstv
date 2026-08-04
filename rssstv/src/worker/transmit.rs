@@ -1,7 +1,7 @@
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -107,6 +107,29 @@ pub struct TxSnapshot {
     pub error: Option<String>,
 }
 
+/// Output gain applied to generated PCM, shared with the interface.
+///
+/// Held as bits rather than behind a lock because the interface writes it on
+/// every frame while the worker reads it between blocks, and neither should
+/// wait for the other over one number.
+#[derive(Debug)]
+pub struct TxVolume(AtomicU32);
+
+impl TxVolume {
+    pub fn new(gain: f32) -> Self {
+        Self(AtomicU32::new(gain.clamp(0.0, 1.0).to_bits()))
+    }
+
+    pub fn set(&self, gain: f32) {
+        self.0
+            .store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> f32 {
+        f32::from_bits(self.0.load(Ordering::Relaxed))
+    }
+}
+
 pub struct TxWorker {
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
@@ -119,6 +142,7 @@ impl TxWorker {
         mode: Mode,
         frame: Arc<RgbImage>,
         station_id: Option<FskId>,
+        volume: Arc<TxVolume>,
     ) -> Self {
         let snapshot = Arc::new(Mutex::new(TxSnapshot {
             phase: TxPhase::Priming,
@@ -133,6 +157,7 @@ impl TxWorker {
                 mode,
                 frame,
                 station_id,
+                volume,
                 worker_snapshot,
                 worker_cancel,
             )
@@ -179,6 +204,7 @@ fn transmit_loop(
     mode: Mode,
     frame: Arc<RgbImage>,
     station_id: Option<FskId>,
+    volume: Arc<TxVolume>,
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
 ) {
@@ -225,6 +251,13 @@ fn transmit_loop(
                     return;
                 }
                 Ok(next) => {
+                    // Applied as the block is produced rather than as it is
+                    // written, so a level changed mid-transmission takes
+                    // effect on whole blocks and never scales one twice.
+                    let gain = volume.get();
+                    for sample in &mut block[..next] {
+                        *sample *= gain;
+                    }
                     count = next;
                     offset = 0;
                 }
@@ -318,13 +351,48 @@ mod tests {
         assert_eq!(progress.fraction(), expected);
     }
 
+    /// The level scales what actually leaves for the sound card, rather than
+    /// only the bar the operator drags.
+    #[test]
+    fn the_transmit_level_scales_the_generated_audio() {
+        let mode = Mode::Robot36;
+        let size = ImageSize::new(mode.spec().width().into(), mode.spec().height().into()).unwrap();
+        let frame = Arc::new(RgbImage::new(size, Rgb8::new(80, 140, 200)));
+        let (writer, mut reader) = synthetic_playback(8_000, 512).unwrap();
+        let volume = Arc::new(TxVolume::new(0.0));
+        let worker = TxWorker::spawn(writer, mode, frame, None, Arc::clone(&volume));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut block = [0.0_f32; 512];
+        let mut silent = 0;
+        while silent < block.len() {
+            let snapshot = worker.latest();
+            assert!(snapshot.phase != TxPhase::Failed, "{:?}", snapshot.error);
+            assert!(Instant::now() < deadline, "no audio was produced");
+            let read = reader.read(&mut block);
+            assert!(
+                block[..read].iter().all(|sample| *sample == 0.0),
+                "a silenced transmission still produced audio"
+            );
+            silent += read;
+            thread::yield_now();
+        }
+        assert_eq!(volume.get(), 0.0);
+    }
+
     #[test]
     fn transmit_worker_streams_a_complete_bounded_transmission() {
         let mode = Mode::Robot36;
         let size = ImageSize::new(mode.spec().width().into(), mode.spec().height().into()).unwrap();
         let frame = Arc::new(RgbImage::new(size, Rgb8::new(80, 140, 200)));
         let (writer, mut reader) = synthetic_playback(8_000, 512).unwrap();
-        let worker = TxWorker::spawn(writer, mode, frame, Some(FskId::new("N0CALL").unwrap()));
+        let worker = TxWorker::spawn(
+            writer,
+            mode,
+            frame,
+            Some(FskId::new("N0CALL").unwrap()),
+            Arc::new(TxVolume::new(1.0)),
+        );
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut received = 0_u64;
         let mut block = [0.0_f32; 512];

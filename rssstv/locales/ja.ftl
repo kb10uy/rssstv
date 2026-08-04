@@ -27,6 +27,8 @@ input-device = 入力デバイス
 output-device = 出力デバイス
 
 section-rx-status = 受信ステータス
+section-tx-control = 送信コントロール
+tx-volume = 送信レベル { $percent }%
 
 section-mode = モード
 label-auto-vis = 自動判定 (VIS)

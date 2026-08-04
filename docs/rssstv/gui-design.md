@@ -386,11 +386,11 @@ marked shared are built once and reused across tabs.
 | Tab selector | Shared | Button row with the active tab styled differently |
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
-| Receive action bar | Receive | Mode and size text |
-| Transmit action bar | Transmit | The transmit trigger, mode and size text |
-| Input level meter | Shared | Signal-colored `progress_bar` |
+| Action bar | Shared | Mode and size text |
+| Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
-| DSP panel | Shared | Three toggle buttons |
+| DSP panel | Receive | Three toggle buttons |
+| Transmit trigger | Transmit | One button, where the DSP toggles sit |
 | QSO panel | Shared | `text_input` for callsign, RSV, and serial number |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
@@ -407,7 +407,16 @@ whether a VIS header may start a reception over, whether receptions are kept,
 and in what format. Each is a check entry under Settings, grouped by what it
 affects.
 
-The input level meter, mode panel, and DSP controls share one bordered
+The side panel's first section follows the tab and keeps one shape across
+both: a level bar, the mode, and the controls that act on the signal. Receiving,
+that is the input meter, which fills green while a raster is being acquired or
+decoded, and the DSP toggles. Transmitting, it is the output level and the
+transmit trigger. The output level is drawn as the same bar rather than as a
+slider, and is dragged to set it; it fills red while a transmission is running,
+for the reason the receive meter fills green. The section is titled for whichever
+of the two it is showing.
+
+The level bar, mode panel, and the controls below them share one bordered
 container. The mode dropdown fills the container width and no tab shows helper
 text below it.
 

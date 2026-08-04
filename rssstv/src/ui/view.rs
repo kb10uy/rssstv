@@ -145,7 +145,7 @@ fn main_pane(ui: &mut Ui, app: &mut App) {
             Color32::from_rgb(200, 200, 210),
         );
     });
-    action_bar(ui, app, &geometry);
+    action_bar(ui, &geometry);
 }
 
 fn badge(app: &App) -> String {
@@ -220,17 +220,18 @@ fn geometry_label(app: &App) -> String {
     )
 }
 
-fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
+fn action_bar(ui: &mut Ui, geometry: &str) {
     ui.horizontal(|ui| {
-        if app.tab == Tab::Transmit {
-            transmit_button(ui, app);
-        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(RichText::new(geometry).size(SMALL));
         });
     });
 }
 
+/// Starts or stops a transmission.
+///
+/// It sits where the receive tab keeps its DSP toggles, so the control that
+/// acts on the picture is in the panel beside it rather than under it.
 fn transmit_button(ui: &mut Ui, app: &mut App) {
     let active = app.tx_snapshot.phase.is_active();
     let label = app.i18n.text(if active {
@@ -260,23 +261,40 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
     // a large font scale; scroll rather than silently clipping the bottom.
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(4.0);
-        let status_title = app.i18n.text("section-rx-status");
-        section(ui, &status_title, |ui| receive_controls(ui, app));
+        let title = app.i18n.text(match app.tab {
+            Tab::Receive => "section-rx-status",
+            Tab::Transmit => "section-tx-control",
+        });
+        section(ui, &title, |ui| tab_controls(ui, app));
         ui.add_space(16.0);
         let qso_title = app.i18n.text("section-qso");
         section(ui, &qso_title, |ui| qso_panel(ui, app));
     });
 }
 
-fn receive_controls(ui: &mut Ui, app: &mut App) {
+/// The controls for whichever half of the application is in front.
+///
+/// The two tabs share a shape: a level across the top, the mode below it, and
+/// the controls that act on the signal at the bottom. What each one means
+/// differs, so the level is an input meter while receiving and the output level
+/// while transmitting, and the DSP toggles give way to the transmit trigger.
+fn tab_controls(ui: &mut Ui, app: &mut App) {
     ui.set_width(ui.available_width());
-    rx_status(ui, app);
+    match app.tab {
+        Tab::Receive => rx_level(ui, app),
+        Tab::Transmit => tx_level(ui, app),
+    }
     ui.add_space(12.0);
     heading(ui, &app.i18n.text("section-mode"));
     mode_panel(ui, app);
     ui.add_space(12.0);
-    heading(ui, &app.i18n.text("section-dsp"));
-    dsp_panel(ui, app);
+    match app.tab {
+        Tab::Receive => {
+            heading(ui, &app.i18n.text("section-dsp"));
+            dsp_panel(ui, app);
+        }
+        Tab::Transmit => transmit_button(ui, app),
+    }
 }
 
 fn heading(ui: &mut Ui, label: &str) {
@@ -291,7 +309,7 @@ fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) {
     });
 }
 
-fn rx_status(ui: &mut Ui, app: &App) {
+fn rx_level(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
     let color = if snapshot.progress.is_active() {
         Color32::from_rgb(80, 200, 120)
@@ -299,6 +317,31 @@ fn rx_status(ui: &mut Ui, app: &App) {
         Color32::WHITE
     };
     ui.add(ProgressBar::new(snapshot.level).fill(color));
+}
+
+/// The transmit level, set by dragging the bar the receive meter fills.
+///
+/// Drawn as that meter rather than as a slider so the panel keeps one shape
+/// across the tabs, and colored while transmitting for the same reason the
+/// receive meter is: the bar says whether the radio is doing anything.
+fn tx_level(ui: &mut Ui, app: &mut App) {
+    let transmitting = app.tx_snapshot.phase.is_active();
+    let color = if transmitting {
+        Color32::from_rgb(200, 60, 60)
+    } else {
+        Color32::WHITE
+    };
+    let bar = ui.add(ProgressBar::new(app.tx_volume).fill(color));
+    let dragged = bar.interact(egui::Sense::click_and_drag());
+    if let Some(pointer) = dragged.interact_pointer_pos() {
+        let rect = dragged.rect;
+        app.tx_volume = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+    }
+    let percent = (app.tx_volume * 100.0).round();
+    dragged.on_hover_text(
+        app.i18n
+            .text_with("tx-volume", &[("percent", number(percent))]),
+    );
 }
 
 fn mode_panel(ui: &mut Ui, app: &mut App) {

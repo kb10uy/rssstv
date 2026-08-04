@@ -5,11 +5,13 @@
 //! application saves a changed selection.
 
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
 };
 
 use rssstv_sstv::mode::Mode;
+use rssstv_template::valid_variable_name;
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::{app::DspFlags, i18n::Locale, storage::history::HistoryFormat};
@@ -43,6 +45,11 @@ pub struct Settings {
     pub station_qth: String,
     /// The station's Maidenhead grid locator.
     pub station_grid: String,
+    /// Names the operator defined, read by templates as `${custom.<name>}`.
+    ///
+    /// Ordered so the file the application writes back stays in the order the
+    /// operator reads it in, rather than being shuffled on every save.
+    pub custom_variables: BTreeMap<String, String>,
     pub template: Option<String>,
     pub stock: Option<String>,
     pub rx_mode: Mode,
@@ -66,6 +73,7 @@ impl Default for Settings {
             station_callsign: String::new(),
             station_qth: String::new(),
             station_grid: String::new(),
+            custom_variables: BTreeMap::new(),
             template: None,
             stock: None,
             rx_mode: DEFAULT_RX_MODE,
@@ -154,6 +162,7 @@ impl Config {
                 .unwrap_or_default(),
             station_qth: owned(&self.document, Some("station"), "qth").unwrap_or_default(),
             station_grid: owned(&self.document, Some("station"), "grid").unwrap_or_default(),
+            custom_variables: custom_variables(&self.document),
             template: owned(&self.document, Some("library"), "template"),
             stock: owned(&self.document, Some("library"), "stock"),
             rx_mode: string(&self.document, Some("receive"), "mode")
@@ -235,6 +244,7 @@ impl Config {
                 (!text.is_empty()).then(|| value(text)),
             );
         }
+        store_custom_variables(document, &settings.custom_variables);
         set(
             document,
             Some("library"),
@@ -323,6 +333,38 @@ impl Config {
             fs::create_dir_all(parent)?;
         }
         fs::write(&self.path, self.document.to_string())
+    }
+}
+
+/// Reads the operator's own template variables.
+///
+/// A name no `${...}` expression could ever hold is dropped rather than
+/// carried around unreadable, which is the same treatment every other
+/// unusable value in the file gets.
+fn custom_variables(document: &DocumentMut) -> BTreeMap<String, String> {
+    let Some(table) = document.get("variables").and_then(Item::as_table) else {
+        return BTreeMap::new();
+    };
+    table
+        .iter()
+        .filter(|(name, _)| valid_variable_name(name))
+        .filter_map(|(name, item)| Some((name.to_owned(), item.as_str()?.to_owned())))
+        .collect()
+}
+
+/// Writes the variable table back, leaving the keys that survived in place.
+///
+/// Keys are assigned rather than the table being rebuilt, so a comment written
+/// beside one by hand outlives a save that did not touch it.
+fn store_custom_variables(document: &mut DocumentMut, variables: &BTreeMap<String, String>) {
+    if variables.is_empty() {
+        document.remove("variables");
+        return;
+    }
+    let table = table_mut(document, "variables");
+    table.retain(|name, _| variables.contains_key(name));
+    for (name, text) in variables {
+        table[name.as_str()] = value(text);
     }
 }
 
@@ -433,6 +475,10 @@ mod tests {
             station_callsign: "JA1ABC".to_owned(),
             station_qth: "Chiyoda, Tokyo".to_owned(),
             station_grid: "PM95uq".to_owned(),
+            custom_variables: BTreeMap::from([
+                ("club".to_owned(), "JARL".to_owned()),
+                ("rig".to_owned(), "FT-991A".to_owned()),
+            ]),
             template: Some("field-day.kdl".to_owned()),
             stock: Some("antenna.png".to_owned()),
             rx_mode: Mode::Robot36,

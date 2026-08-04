@@ -1,15 +1,18 @@
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
+use jiff::{Timestamp, Zoned};
 use rssstv_audio::{InputDevice, OutputDevice, Playback, StreamFault};
 use rssstv_fskid::FskId;
 use rssstv_sstv::{
     image::RgbImage,
     mode::{Mode, Support},
 };
+use rssstv_template::valid_variable_name;
 
 use rssstv_demodulator::SyncStart;
 
@@ -108,6 +111,8 @@ pub struct Qso {
     pub call: String,
     pub rsv: String,
     pub number: String,
+    /// The report the other station gave, which `${report.received}` reads.
+    pub rsv_received: String,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +175,16 @@ pub struct App {
     pub station_grid: String,
     /// Set while the station dialog is open in front of the interface.
     pub station_open: bool,
+    /// The operator's own template variables, offered as `${custom.<name>}`.
+    pub custom_variables: BTreeMap<String, String>,
+    /// Set while the template variable dialog is open.
+    pub custom_open: bool,
+    /// The rows that dialog is editing.
+    ///
+    /// Kept as a list rather than edited in the map directly, because a map
+    /// reorders itself the moment a name is typed into and the row under the
+    /// cursor would move out from under it.
+    pub custom_draft: Vec<(String, String)>,
     pub templates: Vec<Entry>,
     pub template: Option<usize>,
     pub stocks: Vec<Entry>,
@@ -209,12 +224,25 @@ pub struct App {
     /// template built around a reception composes before the first one
     /// arrives.
     received_image: Arc<RgbImage>,
+    /// When that image was adopted, which `${rx.timestamp...}` reads.
+    ///
+    /// The test pattern counts as adopted at startup, so the variable resolves
+    /// from the first launch for the same reason the layer itself shows
+    /// something before any reception has arrived.
+    received_at: Zoned,
     /// The composed image the transmit tab shows, and the one a transmission
     /// starting now would send.
     prepared_frame: Option<Arc<RgbImage>>,
     /// Set when something changed the composition while a transmission was
     /// running, so the change is made once the transmission ends.
     composition_deferred: bool,
+    /// Whether the composed frame shows the time, and the minute it was
+    /// composed in.
+    ///
+    /// A frame that prints the clock is only true for the minute it was made
+    /// in, so the pair together say when it has to be made again.
+    composition_timed: bool,
+    composition_minute: i64,
     /// The amplitude a running transmission reads, shared with its worker.
     tx_gain: Arc<TxGain>,
     playback: Option<Playback>,
@@ -304,6 +332,9 @@ impl App {
             station_qth: settings.station_qth.clone(),
             station_grid: settings.station_grid.clone(),
             station_open: false,
+            custom_variables: settings.custom_variables.clone(),
+            custom_open: false,
+            custom_draft: Vec::new(),
             templates: Vec::new(),
             template: None,
             stocks: Vec::new(),
@@ -321,8 +352,11 @@ impl App {
             composer: Composer::spawn(),
             compose_generation: 0,
             received_image: Arc::new(test_pattern_image(settings.rx_mode)),
+            received_at: Zoned::now(),
             prepared_frame: None,
             composition_deferred: false,
+            composition_timed: false,
+            composition_minute: current_minute(),
             playback: None,
             tx_worker: None,
             playback_started: false,
@@ -362,6 +396,7 @@ impl App {
             station_callsign: self.station_callsign.clone(),
             station_qth: self.station_qth.clone(),
             station_grid: self.station_grid.clone(),
+            custom_variables: self.custom_variables.clone(),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
             rx_mode: self.rx_mode,
@@ -509,6 +544,40 @@ impl App {
         self.request_composition();
     }
 
+    /// Puts the operator's own variables in front of them for editing.
+    pub fn open_custom_variables(&mut self) {
+        self.custom_draft = self
+            .custom_variables
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        self.custom_open = true;
+    }
+
+    /// Adds a row for a variable that has not been named yet.
+    pub fn add_custom_variable(&mut self) {
+        self.custom_draft.push((String::new(), String::new()));
+    }
+
+    /// Takes the edited rows as the variables templates may read.
+    ///
+    /// A row whose name no `${...}` expression could hold is left in the
+    /// dialog to be corrected but kept out of the composition, so an unusable
+    /// name never becomes a missing-variable error against a template that
+    /// never asked for it.
+    pub fn commit_custom_variables(&mut self) {
+        let variables: BTreeMap<_, _> = self
+            .custom_draft
+            .iter()
+            .filter(|(name, _)| valid_variable_name(name))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+        if variables != self.custom_variables {
+            self.custom_variables = variables;
+            self.request_composition();
+        }
+    }
+
     fn refresh_library(&mut self) {
         let mut errors = Vec::new();
         if let Err(error) = self.load_templates() {
@@ -574,6 +643,7 @@ impl App {
             self.select_rx_mode(mode);
         }
         self.poll_transmit();
+        self.refresh_timed_composition();
         self.report_activity();
     }
 
@@ -642,6 +712,7 @@ impl App {
             return;
         };
         self.received_image = Arc::new(image);
+        self.received_at = Zoned::now();
         self.request_composition();
     }
 
@@ -741,6 +812,10 @@ impl App {
     /// what a transmission would send, so there is nothing to confirm between
     /// choosing a template and keying up.
     fn request_composition(&mut self) {
+        // Recorded before anything can turn back, so a composition that is put
+        // off is not also asked for again on every frame that follows.
+        self.composition_minute = current_minute();
+        self.composition_timed = false;
         // A transmission is sending the frame currently on the tab. Replacing
         // it would show something that is not going out, so the change waits
         // until the transmission is over.
@@ -765,19 +840,34 @@ impl App {
             assets_dir: self.paths.assets_dir().to_path_buf(),
             mode: self.tx_mode,
             received_image: self.received_image.clone(),
+            received_at: self.received_at.clone(),
             station_callsign: self.station_callsign.clone(),
             station_qth: self.station_qth.clone(),
             station_grid: self.station_grid.clone(),
             contact_callsign: self.qso.call.clone(),
             report: self.qso.rsv.clone(),
             number: self.qso.number.clone(),
+            report_received: self.qso.rsv_received.clone(),
+            custom: self.custom_variables.clone(),
         });
+    }
+
+    /// Composes again once a frame that shows the time has fallen behind it.
+    ///
+    /// The finest unit a composition can print is the minute, so the clock
+    /// moving on is exactly when the frame on the transmit tab stops being
+    /// what a transmission should send.
+    fn refresh_timed_composition(&mut self) {
+        if self.composition_timed && current_minute() != self.composition_minute {
+            self.request_composition();
+        }
     }
 
     fn poll_transmit(&mut self) {
         if let Some(result) = self.composer.latest()
             && result.generation == self.compose_generation
         {
+            self.composition_timed = result.uses_timestamps;
             match result.frame {
                 Ok(frame) => {
                     self.tx_raster = Raster::from_image(&frame);
@@ -946,6 +1036,14 @@ impl App {
     pub fn output_sample_rate_hz(&self) -> Option<u32> {
         self.playback.as_ref().map(Playback::sample_rate_hz)
     }
+}
+
+/// Which minute the clock is in, counted from the epoch.
+///
+/// A composition is compared against this rather than against a wall-clock
+/// field, so it follows the same instant in every zone and needs no calendar.
+fn current_minute() -> i64 {
+    Timestamp::now().as_second().div_euclid(60)
 }
 
 fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {
@@ -1410,6 +1508,42 @@ mod tests {
         if dsp == Dsp::Slant {
             assert_eq!(app.audio.slant(), expected);
         }
+    }
+
+    /// A frame that prints the clock is composed again as the minute turns,
+    /// and one that does not is left alone however long it sits there.
+    #[test]
+    fn only_a_composition_that_shows_the_time_is_made_again() {
+        let mut app = App::headless();
+        let stale = current_minute() - 1;
+
+        app.composition_timed = false;
+        app.composition_minute = stale;
+        app.refresh_timed_composition();
+        assert_eq!(app.composition_minute, stale);
+
+        app.composition_timed = true;
+        app.refresh_timed_composition();
+        assert_eq!(app.composition_minute, current_minute());
+    }
+
+    /// A half-typed name is still in the dialog to be finished, but it is not
+    /// offered to a template, which could only fail to read it.
+    #[test]
+    fn an_unusable_custom_variable_name_is_kept_out_of_the_composition() {
+        let mut app = App::headless();
+        app.custom_draft = vec![
+            ("club".to_owned(), "JARL".to_owned()),
+            ("2m rig".to_owned(), "FT-991A".to_owned()),
+        ];
+
+        app.commit_custom_variables();
+
+        assert_eq!(
+            app.custom_variables,
+            BTreeMap::from([("club".to_owned(), "JARL".to_owned())])
+        );
+        assert_eq!(app.custom_draft.len(), 2);
     }
 
     #[test]

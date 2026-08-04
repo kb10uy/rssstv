@@ -251,12 +251,32 @@ given variable set. A caller that holds a rendered overlay uses it to decide
 whether that overlay has to be rendered again; the finest unit the default
 format shows is a minute, so refreshing as the minute changes is enough.
 
-The desktop composition worker currently supplies `${station.callsign}`,
-`${station.qth}`, and `${station.grid}` from the station dialog,
-`${contact.callsign}` from the QSO call field, `${report.sent}` from RSV, and
-`${report.number}` from the serial-number field. Image assets are resolved
-relative to the template first, then from the application's shared `assets`
-directory; an `assets/` prefix is stripped for the shared lookup.
+The desktop composition worker currently supplies:
+
+| Variable | Source |
+| --- | --- |
+| `station.callsign`, `station.qth`, `station.grid` | Station dialog |
+| `contact.callsign` | QSO call field |
+| `report.sent`, `report.number` | QSO RSV and serial-number fields |
+| `report.received` | QSO received-RSV field |
+| `radio.frequency`, `radio.band` | Fixed until rig control arrives |
+| `tx.timestamp.*` | The clock, as the composition is made |
+| `rx.timestamp.*` | When the image `rximage` shows was adopted |
+| `custom.*` | The template variable dialog |
+| `application.version` | The crate version |
+
+`radio.frequency` and `radio.band` are a fixed pair rather than an absent one:
+a template that prints the frequency has to compose to something before there
+is a radio to ask, and a missing variable would refuse to render at all. Rig
+control replaces the values without the template changing.
+
+`rx.timestamp.*` follows the same rule as the `rximage` layer it describes: the
+test pattern counts as adopted at startup, so the variable resolves from the
+first launch rather than failing until a reception arrives.
+
+Image assets are resolved relative to the template first, then from the
+application's shared `assets` directory; an `assets/` prefix is stripped for
+the shared lookup.
 
 ## Text Rendering
 
@@ -369,5 +389,7 @@ cargo run -p encode-wav -- --callsign N0CALL template.kdl background.png robot36
 
 It cover-resizes and center-crops the background, supplies that prepared image
 to every `rximage` layer, defines `${station.callsign}` from the normalized
-callsign, and
-resolves template image assets relative to the template file.
+callsign and `${tx.timestamp.utc}` and `${tx.timestamp.local}` from the clock,
+and resolves template image assets relative to the template file. It supplies
+nothing else, so a template written for the desktop application may name a
+variable this command refuses.

@@ -1161,6 +1161,7 @@ dependencies = [
  "decode-wav",
  "hound",
  "image",
+ "jiff",
  "rssstv-fskid",
  "rssstv-modulator",
  "rssstv-sstv",

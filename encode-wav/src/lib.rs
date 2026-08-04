@@ -6,6 +6,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use image::imageops::FilterType;
+use jiff::{Zoned, tz::TimeZone};
 use rssstv_fskid::FskId;
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{
@@ -190,9 +191,21 @@ fn render_frame(
     Ok(composite(background, &overlay)?)
 }
 
+/// The values a template may read here.
+///
+/// The command names one station and one image, so the station callsign and
+/// the time the file is being written are all there is to offer; a template
+/// built for the desktop application may well ask for more and be refused.
+/// The encode stands in for a transmission, so it dates one.
 fn template_variables(callsign: &str) -> Variables {
     let mut variables = Variables::new();
     variables.insert("station.callsign", VariableValue::Text(callsign.to_owned()));
+    let now = Zoned::now();
+    variables.insert(
+        "tx.timestamp.utc",
+        VariableValue::Timestamp(now.with_time_zone(TimeZone::UTC)),
+    );
+    variables.insert("tx.timestamp.local", VariableValue::Timestamp(now));
     variables
 }
 

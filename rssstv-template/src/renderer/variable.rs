@@ -137,7 +137,11 @@ impl<'a> Reference<'a> {
     }
 }
 
-fn valid_variable_name(name: &str) -> bool {
+/// Whether `name` can be referenced by a `${...}` text expression.
+///
+/// Exported because a caller that lets an operator name a variable has to
+/// refuse the names no template could ever read.
+pub fn valid_variable_name(name: &str) -> bool {
     !name.is_empty()
         && name.split('.').all(|segment| {
             let mut characters = segment.chars();

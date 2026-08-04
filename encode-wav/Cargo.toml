@@ -9,6 +9,7 @@ authors.workspace = true
 anyhow.workspace = true
 hound.workspace = true
 image.workspace = true
+jiff.workspace = true
 rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-modulator = { path = "../rssstv-modulator" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }

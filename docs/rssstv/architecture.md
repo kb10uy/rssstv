@@ -455,7 +455,12 @@ At startup the application creates all of these directories and creates an
 empty, valid `config.toml` when it does not already exist. Existing
 configuration files are never replaced. The application preserves comments and
 unknown keys while saving its language, UI scale, device, library, mode, DSP,
-history, and station-callsign settings.
+history, and station-callsign settings. A `[variables]` table holds the
+operator's own template variables as plain string keys, read by templates as
+`${custom.<name>}`; a key that no `${...}` expression could hold is dropped on
+load the way every other unusable value in the file is. Keys are assigned
+rather than the table being rewritten, so a comment beside one survives a save
+that did not touch it.
 
 The GUI template list is populated from regular `.kdl` files directly inside
 `templates`. The stock list is populated from regular files directly inside

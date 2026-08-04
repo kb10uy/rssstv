@@ -318,6 +318,12 @@ builds a `TransmissionEncoder` from that frame and streams PCM through
 Template rendering through `resvg` is not real-time and runs before the
 transmission starts, not inside the streaming loop.
 
+A composition that prints the clock is composed again as the minute turns. The
+worker reports whether the template it just rendered read any timestamp, and
+the interface compares the minute that composition was made in against the
+current one; the finest unit a composition can print is the minute, so that is
+exactly when the frame stops being what a transmission should send.
+
 A transmission holds the frame it started with, so the interface freezes the
 image to match: the template and stock lists are disabled while one runs, and a
 composition requested by anything else, such as a QSO field edit, is deferred
@@ -345,7 +351,7 @@ App
   rx: RxState                    // live session, image handle, level, sync
   tx: TxState                    // selected mode, prepared frame, progress
   library: LibraryState          // template list, stock list
-  qso: QsoState                  // callsign, RSV, serial number
+  qso: QsoState                  // callsign, RSV, serial number, RSV received
   locale: Locale
 ```
 
@@ -391,8 +397,9 @@ marked shared are built once and reused across tabs.
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Receive | Three toggle buttons |
 | Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
-| QSO panel | Shared | `text_input` for the contact call, RSV, and serial number |
+| QSO panel | Shared | `text_input` for the contact call, RSV, serial number, and received RSV |
 | Station dialog | Modal | `text_input` for the callsign, QTH, and grid locator |
+| Template variable dialog | Modal | Rows of `text_input` naming and valuing `${custom.*}` |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
 | Status bar | Shared | Text row: devices, decoded callsigns, and faults |
@@ -411,6 +418,14 @@ keystroke: half a callsign is not one, and uppercasing the text under the cursor
 while it is still being typed fights the operator. The callsign is required to transmit whether or not the identifier is
 being sent, because it is the only thing that names the station making the
 transmission, and it is the first thing the transmit check reports.
+
+Names the operator invents for their own templates are edited in a second
+dialog under the same menu. Everything else a template can read is something
+the application already knows; these are the ones only the operator does, so
+this is the one place where both the name and the value are typed. A name a
+`${...}` expression could not hold is marked and left in the dialog to be
+corrected, but is kept out of the composition rather than becoming a
+missing-variable error against a template that never asked for it.
 
 Settings that are chosen once and then left alone live in the menu rather than
 beside the image: whether a transmission ends with the station identifier,

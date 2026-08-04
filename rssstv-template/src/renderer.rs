@@ -16,6 +16,8 @@ mod asset;
 mod svg;
 pub(crate) mod variable;
 
+pub use variable::valid_variable_name;
+
 /// PNG bytes returned by an [`AssetProvider`].
 #[derive(Clone, Debug)]
 pub struct EncodedAsset {

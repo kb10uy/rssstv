@@ -36,7 +36,8 @@ cargo run -p encode-wav -- [--callsign CALLSIGN] <TEMPLATE.kdl> <BACKGROUND_IMAG
 ```
 
 The callsign defaults to `N0CALL`, is uppercased, replaces `${station.callsign}`
-in the template, and is sent as the trailing FSKID. The prepared background is also
+in the template, and is sent as the trailing FSKID. `${tx.timestamp.utc}` and
+`${tx.timestamp.local}` are set from the clock. The prepared background is also
 available to `rximage` layers. Backgrounds are resized to cover the selected
 mode and center-cropped. Template image assets are resolved relative to the
 template file.

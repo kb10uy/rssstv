@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -10,6 +11,7 @@ use std::{
 };
 
 use image::imageops::FilterType;
+use jiff::{Zoned, tz::TimeZone};
 use rssstv_sstv::{
     image::{ImageSize, Rgb8, RgbImage},
     mode::Mode,
@@ -28,18 +30,29 @@ pub struct ComposeRequest {
     pub mode: Mode,
     /// The image `rximage` layers show.
     pub received_image: Arc<RgbImage>,
+    /// When that image was adopted, which `${rx.timestamp...}` reads.
+    pub received_at: Zoned,
     pub station_callsign: String,
     pub station_qth: String,
     pub station_grid: String,
     pub contact_callsign: String,
     pub report: String,
     pub number: String,
+    pub report_received: String,
+    /// Names the operator defined, offered as `${custom.<name>}`.
+    pub custom: BTreeMap<String, String>,
 }
 
 #[derive(Debug)]
 pub struct ComposeResult {
     pub generation: u64,
     pub frame: Result<Arc<RgbImage>, String>,
+    /// Whether the template that produced this frame shows the time.
+    ///
+    /// Such a frame is only true for as long as the clock agrees with it, so
+    /// the interface composes again as the minute changes rather than leaving
+    /// a stale time on the transmit tab.
+    pub uses_timestamps: bool,
 }
 
 struct ComposeControl {
@@ -124,9 +137,15 @@ fn compose_loop(control: Arc<ComposeControl>, result: Arc<Mutex<Option<ComposeRe
             continue;
         };
         let generation = request.generation;
-        let frame = compose_frame(&request, &mut renderer, &mut backgrounds).map(Arc::new);
+        let composed = compose_frame(&request, &mut renderer, &mut backgrounds);
+        let uses_timestamps = composed.as_ref().is_ok_and(|(_, timed)| *timed);
+        let frame = composed.map(|(frame, _)| Arc::new(frame));
         if let Ok(mut output) = result.lock() {
-            *output = Some(ComposeResult { generation, frame });
+            *output = Some(ComposeResult {
+                generation,
+                frame,
+                uses_timestamps,
+            });
         }
     }
 }
@@ -135,7 +154,7 @@ fn compose_frame(
     request: &ComposeRequest,
     renderer: &mut Renderer,
     backgrounds: &mut BackgroundCache,
-) -> Result<RgbImage, String> {
+) -> Result<(RgbImage, bool), String> {
     let source = fs::read_to_string(&request.template_path)
         .map_err(|error| format!("{}: {error}", request.template_path.display()))?;
     let template = Template::parse(&source).map_err(|error| error.to_string())?;
@@ -154,12 +173,14 @@ fn compose_frame(
         assets_dir: request.assets_dir.clone(),
     };
     let variables = variables(request);
+    let uses_timestamps = template.uses_timestamps(&variables);
     let mut context = RenderContext::new(&variables, &assets);
     context.received_image = Some(&request.received_image);
     let overlay = renderer
         .render(&template, size, &context)
         .map_err(|error| error.to_string())?;
-    composite(background, &overlay).map_err(|error| error.to_string())
+    let frame = composite(background, &overlay).map_err(|error| error.to_string())?;
+    Ok((frame, uses_timestamps))
 }
 
 /// The prepared background the last composition used.
@@ -272,6 +293,14 @@ fn cover_image(source: &image::RgbImage, width: u32, height: u32) -> image::RgbI
     .to_image()
 }
 
+/// What `${radio.frequency}` and `${radio.band}` say until rig control speaks.
+///
+/// A fixed pair rather than an absent one: a template that prints the
+/// frequency has to compose to something on the transmit tab before there is a
+/// radio to ask, and a missing variable would refuse to render at all.
+const PLACEHOLDER_FREQUENCY_MHZ: f64 = 7.178;
+const PLACEHOLDER_BAND: &str = "40m";
+
 fn variables(request: &ComposeRequest) -> Variables {
     let mut variables = Variables::new();
     for (name, value) in [
@@ -281,10 +310,42 @@ fn variables(request: &ComposeRequest) -> Variables {
         ("contact.callsign", &request.contact_callsign),
         ("report.sent", &request.report),
         ("report.number", &request.number),
+        ("report.received", &request.report_received),
     ] {
         variables.insert(name, VariableValue::Text(value.clone()));
     }
+    for (name, value) in [
+        ("radio.band", PLACEHOLDER_BAND),
+        ("application.version", env!("CARGO_PKG_VERSION")),
+    ] {
+        variables.insert(name, VariableValue::Text(value.to_owned()));
+    }
+    variables.insert(
+        "radio.frequency",
+        VariableValue::Decimal(PLACEHOLDER_FREQUENCY_MHZ),
+    );
+    // An operator-defined name cannot collide with a built-in one: it only
+    // ever appears under `custom.`, and the interface refuses a name no
+    // template could reference.
+    for (name, value) in &request.custom {
+        variables.insert(format!("custom.{name}"), VariableValue::Text(value.clone()));
+    }
+    insert_timestamp(&mut variables, "tx.timestamp", &Zoned::now());
+    insert_timestamp(&mut variables, "rx.timestamp", &request.received_at);
     variables
+}
+
+/// Offers one instant in both the zone the operator reads and the zone the
+/// band works in, so a template chooses rather than converts.
+fn insert_timestamp(variables: &mut Variables, name: &str, instant: &Zoned) {
+    variables.insert(
+        format!("{name}.local"),
+        VariableValue::Timestamp(instant.clone()),
+    );
+    variables.insert(
+        format!("{name}.utc"),
+        VariableValue::Timestamp(instant.with_time_zone(TimeZone::UTC)),
+    );
 }
 
 struct FileAssets {
@@ -318,6 +379,8 @@ impl AssetProvider for FileAssets {
 mod tests {
     use std::sync::atomic::AtomicUsize;
 
+    use jiff::civil::date;
+
     use super::*;
 
     #[test]
@@ -329,9 +392,8 @@ mod tests {
         assert!(result[(1, 0)][0] < 3);
     }
 
-    #[test]
-    fn template_variables_include_station_and_contact_fields() {
-        let request = ComposeRequest {
+    fn request() -> ComposeRequest {
+        ComposeRequest {
             generation: 1,
             template_path: PathBuf::new(),
             background_path: PathBuf::new(),
@@ -341,26 +403,54 @@ mod tests {
                 ImageSize::new(1, 1).unwrap(),
                 Rgb8::default(),
             )),
+            received_at: date(2026, 8, 4)
+                .at(18, 5, 0, 0)
+                .in_tz("Asia/Tokyo")
+                .unwrap(),
             station_callsign: "JA1ABC".to_owned(),
             station_qth: "Chiyoda, Tokyo".to_owned(),
             station_grid: "PM95uq".to_owned(),
             contact_callsign: "N0CALL".to_owned(),
             report: "595".to_owned(),
             number: "001".to_owned(),
+            report_received: "579".to_owned(),
+            custom: BTreeMap::from([("club".to_owned(), "JARL".to_owned())]),
+        }
+    }
+
+    #[test]
+    fn template_variables_include_station_and_contact_fields() {
+        let variables = variables(&request());
+        for (name, text) in [
+            ("station.callsign", "JA1ABC"),
+            ("station.grid", "PM95uq"),
+            ("contact.callsign", "N0CALL"),
+            ("report.sent", "595"),
+            ("report.received", "579"),
+            ("custom.club", "JARL"),
+        ] {
+            assert_eq!(
+                variables.get(name),
+                Some(&VariableValue::Text(text.to_owned())),
+                "{name} should be offered to the template"
+            );
+        }
+    }
+
+    /// A reception is timed once, and a template chooses the zone it prints
+    /// rather than converting one itself.
+    #[test]
+    fn a_reception_is_offered_in_both_zones() {
+        let variables = variables(&request());
+        let Some(VariableValue::Timestamp(local)) = variables.get("rx.timestamp.local") else {
+            panic!("the local reception time should be offered");
         };
-        let variables = variables(&request);
-        assert_eq!(
-            variables.get("station.callsign"),
-            Some(&VariableValue::Text("JA1ABC".to_owned()))
-        );
-        assert_eq!(
-            variables.get("contact.callsign"),
-            Some(&VariableValue::Text("N0CALL".to_owned()))
-        );
-        assert_eq!(
-            variables.get("station.grid"),
-            Some(&VariableValue::Text("PM95uq".to_owned()))
-        );
+        let Some(VariableValue::Timestamp(utc)) = variables.get("rx.timestamp.utc") else {
+            panic!("the UTC reception time should be offered");
+        };
+        assert_eq!(local.timestamp(), utc.timestamp());
+        assert_eq!(local.hour(), 18);
+        assert_eq!(utc.hour(), 9);
     }
 
     /// Composing again for a new template or callsign must not pay for the

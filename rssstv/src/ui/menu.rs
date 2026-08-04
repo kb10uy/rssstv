@@ -31,6 +31,7 @@ pub enum Action {
     SelectOutputDevice(String),
     SelectLocale(Locale),
     ShowStation,
+    ShowCustomVariables,
     ToggleSendFskid,
     ToggleVisRestart,
     ToggleAutoHistory,
@@ -108,6 +109,10 @@ pub fn model(app: &App) -> Vec<Menu> {
                 Item::Command {
                     label: text("menu-station"),
                     action: Action::ShowStation,
+                },
+                Item::Command {
+                    label: text("menu-custom-variables"),
+                    action: Action::ShowCustomVariables,
                 },
                 Item::Separator,
                 Item::Submenu {
@@ -252,6 +257,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::SelectOutputDevice(name) => app.select_output_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
         Action::ShowStation => app.station_open = true,
+        Action::ShowCustomVariables => app.open_custom_variables(),
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,

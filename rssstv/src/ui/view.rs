@@ -2,6 +2,7 @@ use egui::{Align, Color32, ComboBox, Id, Layout, Panel, ProgressBar, RichText, U
 use egui_extras::{Column, TableBuilder};
 
 use rssstv_audio::FaultKind;
+use rssstv_template::valid_variable_name;
 
 use crate::{
     app::{App, Dsp, Entry, Tab},
@@ -56,6 +57,7 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
         .show(ui, |ui| library(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
     station_dialog(ui, app);
+    custom_variable_dialog(ui, app);
     device_fault_modal(ui, app);
     action
 }
@@ -104,6 +106,78 @@ fn station_dialog(ui: &mut Ui, app: &mut App) {
     }
     if closing {
         app.station_open = false;
+    }
+}
+
+/// Edits the variables the operator invented for their own templates.
+///
+/// Everything else a template can read is something the application already
+/// knows; these are the ones only the operator does, so this is the one place
+/// where both the name and the value are typed.
+fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
+    if !app.custom_open {
+        return;
+    }
+
+    let title = app.i18n.text("custom-title");
+    let note = app.i18n.text("custom-note");
+    let invalid = app.i18n.text("custom-invalid");
+    let add = app.i18n.text("custom-add");
+    let close = app.i18n.text("station-close");
+
+    let mut changed = false;
+    let mut removed = None;
+    let mut done = false;
+    let response = egui::Modal::new(Id::new("custom-variables")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.heading(title);
+        ui.add_space(8.0);
+        let remove_width = ui.spacing().interact_size.y;
+        let gaps = ui.spacing().item_spacing.x * 2.0;
+        let name_width = (ui.available_width() - remove_width - gaps) * 0.4;
+        let value_width = ui.available_width() - remove_width - gaps - name_width;
+        for (index, (name, value)) in app.custom_draft.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                let usable = valid_variable_name(name);
+                let field = egui::TextEdit::singleline(name)
+                    .desired_width(name_width)
+                    .text_color_opt((!usable).then_some(Color32::from_rgb(220, 96, 96)));
+                let mut response = ui.add(field);
+                if !usable {
+                    response = response.on_hover_text(invalid.clone());
+                }
+                // A name is taken up once the field is left rather than on
+                // every keystroke: half a name is a different variable, and
+                // composing against each one in turn is work for nothing.
+                changed |= response.lost_focus();
+                changed |= ui
+                    .add(egui::TextEdit::singleline(value).desired_width(value_width))
+                    .changed();
+                if ui.button("×").clicked() {
+                    removed = Some(index);
+                }
+            });
+        }
+        ui.add_space(4.0);
+        if ui.button(add).clicked() {
+            app.add_custom_variable();
+        }
+        ui.add_space(4.0);
+        ui.label(RichText::new(note).size(LABEL).weak());
+        ui.add_space(16.0);
+        done = ui.button(close).clicked();
+    });
+
+    if let Some(index) = removed {
+        app.custom_draft.remove(index);
+        changed = true;
+    }
+    let closing = done || response.should_close();
+    if changed || closing {
+        app.commit_custom_variables();
+    }
+    if closing {
+        app.custom_open = false;
     }
 }
 
@@ -477,6 +551,7 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
     let report_label = app.i18n.text("qso-rsv-nr");
+    let received_label = app.i18n.text("qso-rsv-received");
 
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
@@ -495,6 +570,16 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         let number =
             ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
         if rsv.changed() || number.changed() {
+            app.qso_changed();
+        }
+    });
+    // The report the other station gave sits on its own row rather than beside
+    // the one being sent: the two are read off the air in opposite directions,
+    // and a template usually prints one or the other.
+    ui.horizontal(|ui| {
+        field_label(ui, &received_label);
+        let edit = egui::TextEdit::singleline(&mut app.qso.rsv_received).desired_width(fields);
+        if ui.add(edit).changed() {
             app.qso_changed();
         }
     });

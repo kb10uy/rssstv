@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use jiff::Zoned;
 use rssstv_audio::CaptureReader;
 use rssstv_demodulator::{DemodulatedChunk, Demodulator, SyncStart, sync_detector_delay};
 use rssstv_sstv::{
@@ -43,14 +44,29 @@ const REFINEMENT_TAIL_SECONDS: usize = 15;
 
 /// Longest a reception may stall before the worker stops it.
 ///
-/// `auto_stop` is left off because its live scoring aborts real receptions
-/// early, so a signal that simply disappears is caught by this timeout instead.
-///
 /// The window has to outlast startup acquisition, which fixes the raster phase
 /// over five periods and reports no progress while it does. That is a little
 /// over five seconds for the slowest mode, so this leaves ample room rather
 /// than racing acquisition on a signal that is arriving perfectly well.
 const STALL_TIMEOUT: Duration = Duration::from_secs(20);
+
+const FSK_HISTORY_WAIT: Duration = Duration::from_secs(4);
+
+fn live_rx_config(mode: Mode, sample_rate_hz: u32, slant: bool) -> RxConfig {
+    RxConfig {
+        live_sync: true,
+        live_slant: slant,
+        auto_stop: true,
+        sync_detector_delay: sync_detector_delay(mode),
+        staging: if slant {
+            Staging::Memory {
+                max_samples: (sample_rate_hz as usize).saturating_mul(STAGING_SECONDS),
+            }
+        } else {
+            Staging::Disabled
+        },
+    }
+}
 
 /// Decoded image published to the interface.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,6 +74,14 @@ pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryCandidate {
+    pub mode: Mode,
+    pub frame: Frame,
+    pub received_at: String,
+    pub fsk_ids: Vec<String>,
 }
 
 impl Frame {
@@ -118,8 +142,10 @@ impl Progress {
 pub struct Snapshot {
     pub mode: Option<Mode>,
     pub progress: Progress,
+    pub display_fraction: f32,
     pub level: f32,
     pub frame: Option<Frame>,
+    pub history: Option<HistoryCandidate>,
     pub callsigns: Vec<String>,
     pub dropped_samples: u64,
     pub error: Option<String>,
@@ -145,6 +171,9 @@ impl Mailbox {
             }
             if snapshot.error.is_none() {
                 snapshot.error = previous.error;
+            }
+            if snapshot.history.is_none() {
+                snapshot.history = previous.history;
             }
         }
         *slot = Some(snapshot);
@@ -263,6 +292,8 @@ struct Session {
     /// Staged length beyond which refinement is abandoned. Zero until the
     /// first trailing block arrives.
     refine_limit_len: usize,
+    received_at: Option<String>,
+    fsk_ids: Vec<String>,
 }
 
 impl Session {
@@ -280,6 +311,8 @@ impl Session {
             refinement: Refinement::NotApplicable,
             refine_next_len: 0,
             refine_limit_len: 0,
+            received_at: None,
+            fsk_ids: Vec::new(),
         })
     }
 
@@ -317,19 +350,55 @@ impl Session {
         }
     }
 
-    /// Ends a reception that stopped arriving, keeping what was decoded.
-    ///
-    /// The decoder is stopped rather than discarded: the rows already decoded
-    /// are the whole point of a partial reception, and dropping the decoder
-    /// would take the image with it and report the reception as never having
-    /// happened. Refinement is abandoned at the same time, because it is
-    /// waiting for a tail that is not coming.
-    fn stop(&mut self) {
+    fn display_fraction(&self) -> Option<f32> {
+        let decoder = self.decoder.as_ref()?;
+        let total = usize::from(decoder.mode().spec().active_rows());
+        let rows = match decoder.state() {
+            RxState::Acquiring => 0,
+            RxState::Decoding { completed_rows } | RxState::Stopped { completed_rows, .. } => {
+                completed_rows
+            }
+            RxState::Complete => total,
+        };
+        Some(if total == 0 {
+            0.0
+        } else {
+            (rows as f32 / total as f32).clamp(0.0, 1.0)
+        })
+    }
+
+    fn interrupt(&mut self) -> Result<Option<(Frame, Option<HistoryCandidate>)>, String> {
         let Some(decoder) = self.decoder.as_mut() else {
-            return;
+            return Ok(None);
         };
         decoder.stop(StopReason::SynchronizationLost);
-        self.refinement = Refinement::NotApplicable;
+        let frame = Frame::from_image(decoder.image());
+        let history = Self::history_candidate(decoder, &self.received_at, &self.fsk_ids);
+        self.reset()?;
+        Ok(Some((frame, history)))
+    }
+
+    fn history_candidate(
+        decoder: &RxDecoder,
+        received_at: &Option<String>,
+        fsk_ids: &[String],
+    ) -> Option<HistoryCandidate> {
+        let mode = decoder.mode();
+        let completed_rows = match decoder.state() {
+            RxState::Decoding { completed_rows } | RxState::Stopped { completed_rows, .. } => {
+                completed_rows
+            }
+            RxState::Complete => usize::from(mode.spec().active_rows()),
+            RxState::Acquiring => 0,
+        };
+        history_eligible(completed_rows, usize::from(mode.spec().active_rows())).then(|| {
+            HistoryCandidate {
+                mode,
+                frame: Frame::from_image(decoder.image()),
+                received_at: received_at.clone().unwrap_or_else(receive_time),
+                fsk_ids: fsk_ids.to_vec(),
+            }
+        })
     }
 
     fn restart_search(&mut self) -> Result<(), String> {
@@ -368,22 +437,7 @@ impl Session {
                 RxDecoder::with_config(
                     mode,
                     self.sample_rate_hz,
-                    RxConfig {
-                        live_sync: true,
-                        live_slant: slant,
-                        // Live scoring aborts real receptions early, so the
-                        // worker's stall timeout ends dead signals instead.
-                        auto_stop: false,
-                        sync_detector_delay: sync_detector_delay(mode),
-                        staging: if slant {
-                            Staging::Memory {
-                                max_samples: (self.sample_rate_hz as usize)
-                                    .saturating_mul(STAGING_SECONDS),
-                            }
-                        } else {
-                            Staging::Disabled
-                        },
-                    },
+                    live_rx_config(mode, self.sample_rate_hz, slant),
                 )
                 .map_err(|error| error.to_string())?,
             );
@@ -396,6 +450,8 @@ impl Session {
             };
             self.refine_next_len = 0;
             self.refine_limit_len = 0;
+            self.received_at = Some(receive_time());
+            self.fsk_ids.clear();
         }
         if chunk.frequency_hz().is_empty() {
             return Ok(());
@@ -525,6 +581,8 @@ fn run(
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut error = None;
     let mut last_progress = Progress::Idle;
+    let mut display_fraction = 0.0;
+    let mut history_deadline = None;
     let mut progress_changed_at = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
@@ -543,15 +601,18 @@ fn run(
 
         match session.demodulator.process(samples) {
             Ok(chunk) => {
-                for id in chunk.fsk_ids() {
-                    let text = id.as_str().to_owned();
-                    if !callsigns.contains(&text) {
-                        callsigns.push(text);
-                    }
-                }
                 if let Err(reason) = session.decode(&chunk, slant.load(Ordering::Relaxed)) {
                     error = Some(reason);
                     let _ = session.reset();
+                }
+                for id in chunk.fsk_ids() {
+                    let text = id.as_str().to_owned();
+                    if !callsigns.contains(&text) {
+                        callsigns.push(text.clone());
+                    }
+                    if !session.fsk_ids.contains(&text) {
+                        session.fsk_ids.push(text);
+                    }
                 }
                 if error.is_none() {
                     error = session.take_refinement_error();
@@ -563,14 +624,27 @@ fn run(
             }
         }
 
+        let mut interrupted = None;
         let mut progress = session.progress();
-        if progress == last_progress {
-            // A reception that stops arriving is stopped rather than reset:
-            // this is a normal outcome with a partial image to show, not a
-            // fault, so it is reported through the progress state and not as
-            // an error on the status line.
+        if let Some(fraction) = session.display_fraction() {
+            display_fraction = fraction;
+        }
+        if progress == Progress::Stopped {
+            match session.interrupt() {
+                Ok(result) => interrupted = result,
+                Err(reason) => error = Some(reason),
+            }
+            history_deadline = None;
+            progress = session.progress();
+            last_progress = progress;
+            progress_changed_at = Instant::now();
+        } else if progress == last_progress {
             if progress.is_active() && progress_changed_at.elapsed() >= STALL_TIMEOUT {
-                session.stop();
+                match session.interrupt() {
+                    Ok(result) => interrupted = result,
+                    Err(reason) => error = Some(reason),
+                }
+                history_deadline = None;
                 progress = session.progress();
                 last_progress = progress;
                 progress_changed_at = Instant::now();
@@ -580,26 +654,56 @@ fn run(
             progress_changed_at = Instant::now();
         }
         let reception_finished = session.reception_finished();
-        let frame = (reception_finished || last_frame.elapsed() >= FRAME_INTERVAL)
-            .then(|| session.frame())
-            .flatten();
+        let (interrupted_frame, mut history) = interrupted
+            .map(|(frame, history)| (Some(frame), history))
+            .unwrap_or_default();
+        let history_ready = if reception_finished {
+            let deadline =
+                *history_deadline.get_or_insert_with(|| Instant::now() + FSK_HISTORY_WAIT);
+            !session.fsk_ids.is_empty() || Instant::now() >= deadline
+        } else {
+            false
+        };
+        if history.is_none() && history_ready {
+            history = session.decoder.as_ref().and_then(|decoder| {
+                Session::history_candidate(decoder, &session.received_at, &session.fsk_ids)
+            });
+        }
+        let frame = interrupted_frame.or_else(|| {
+            (reception_finished || last_frame.elapsed() >= FRAME_INTERVAL)
+                .then(|| session.frame())
+                .flatten()
+        });
         if frame.is_some() {
             last_frame = Instant::now();
         }
         let snapshot = Snapshot {
             mode: session.decoder.as_ref().map(RxDecoder::mode),
             progress,
+            display_fraction,
             level,
             frame,
+            history,
             callsigns: callsigns.clone(),
             dropped_samples: reader.dropped_samples(),
             error: error.take(),
         };
         mailbox.publish(snapshot);
-        if reception_finished && let Err(reason) = session.restart_search() {
-            error = Some(reason);
+        if history_ready {
+            history_deadline = None;
+            if let Err(reason) = session.restart_search() {
+                error = Some(reason);
+            }
         }
     }
+}
+
+fn history_eligible(completed_rows: usize, total_rows: usize) -> bool {
+    total_rows > 0 && completed_rows.saturating_mul(100) >= total_rows.saturating_mul(65)
+}
+
+fn receive_time() -> String {
+    Zoned::now().strftime("%Y-%m-%dT%H:%M:%S%:z").to_string()
 }
 
 /// Samples of trailing audio between staged-refinement attempts.
@@ -672,6 +776,13 @@ mod tests {
         assert!(!Progress::Stopped.is_active());
     }
 
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn live_receptions_enable_automatic_stop(#[case] slant: bool) {
+        assert!(live_rx_config(Mode::Robot36, 8_000, slant).auto_stop);
+    }
+
     #[test]
     fn frames_carry_opaque_rgba_pixels() {
         use rssstv_sstv::image::{ImageSize, Rgb8};
@@ -682,6 +793,19 @@ mod tests {
         assert_eq!(frame.width, 2);
         assert_eq!(frame.height, 1);
         assert_eq!(frame.rgba, vec![10, 20, 30, 255, 10, 20, 30, 255]);
+    }
+
+    #[rstest]
+    #[case(155, 240, false)]
+    #[case(156, 240, true)]
+    #[case(240, 240, true)]
+    #[case(0, 0, false)]
+    fn history_starts_at_sixty_five_percent(
+        #[case] completed_rows: usize,
+        #[case] total_rows: usize,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(history_eligible(completed_rows, total_rows), expected);
     }
 
     #[test]
@@ -706,6 +830,27 @@ mod tests {
         assert_eq!(snapshot.progress, Progress::Decoding { rows: 3, total: 10 });
         assert_eq!(snapshot.frame, Some(frame));
         assert_eq!(snapshot.error.as_deref(), Some("capture gap"));
+    }
+
+    #[test]
+    fn overwriting_the_mailbox_preserves_uncollected_history() {
+        let mailbox = Mailbox::default();
+        let history = HistoryCandidate {
+            mode: Mode::Robot36,
+            frame: Frame {
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 255],
+            },
+            received_at: "2026-08-04T12:34:56+09:00".to_owned(),
+            fsk_ids: vec!["JA1ABC".to_owned()],
+        };
+        mailbox.publish(Snapshot {
+            history: Some(history.clone()),
+            ..Snapshot::default()
+        });
+        mailbox.publish(Snapshot::default());
+        assert_eq!(mailbox.take().unwrap().history, Some(history));
     }
 
     #[test]
@@ -736,8 +881,9 @@ mod pipeline_tests {
     use std::f64::consts::TAU;
 
     use rssstv_audio::synthetic_capture;
+    use rssstv_fskid::FskId;
     use rssstv_sstv::{
-        TxEncoder,
+        TransmissionEncoder, TxEncoder,
         image::{ImageSize, Rgb8, RgbImage},
     };
 
@@ -777,6 +923,21 @@ mod pipeline_tests {
             while pcm.len() < deadline {
                 pcm.push((phase.sin() * 0.8) as f32);
                 phase = (phase + TAU * f64::from(tone.frequency().as_hz()) / transmit_rate)
+                    .rem_euclid(TAU);
+            }
+        }
+        pcm
+    }
+
+    fn complete_transmission(mode: Mode, image: RgbImage, callsign: &str) -> Vec<f32> {
+        let mut pcm = Vec::new();
+        let mut phase = 0.0_f64;
+        for tone in TransmissionEncoder::new(mode, image, FskId::new(callsign).unwrap()).unwrap() {
+            let deadline =
+                (tone.until().as_picos() as f64 * f64::from(RATE) / 1.0e12).round() as usize;
+            while pcm.len() < deadline {
+                pcm.push((phase.sin() * 0.8) as f32);
+                phase = (phase + TAU * f64::from(tone.frequency().as_hz()) / f64::from(RATE))
                     .rem_euclid(TAU);
             }
         }
@@ -837,8 +998,40 @@ mod pipeline_tests {
             if let Some(new) = latest.frame.take() {
                 *frame = Some(new);
             }
+            if latest.history.is_none() {
+                latest.history = snapshot.history.take();
+            }
             *snapshot = latest;
         }
+    }
+
+    #[test]
+    fn completed_history_carries_the_reception_fskid() {
+        let mode = Mode::Robot36;
+        let pcm = complete_transmission(mode, source_image(mode), "JA1ABC");
+
+        let (snapshot, _) = receive(&pcm, RATE as usize);
+
+        let history = snapshot.history.expect("a history candidate");
+        assert_eq!(history.mode, mode);
+        assert_eq!(history.fsk_ids, ["JA1ABC"]);
+        assert!(history.received_at.contains('T'));
+    }
+
+    #[test]
+    fn automatic_stop_keeps_the_partial_frame_visible_while_waiting() {
+        let mode = Mode::Robot36;
+        let pcm = transmission(mode, source_image(mode), 0.0);
+        let truncated = &pcm[..pcm.len() * 3 / 4];
+
+        let (snapshot, frame) = receive(truncated, RATE as usize * 3);
+
+        assert_eq!(snapshot.progress, Progress::Idle, "{snapshot:?}");
+        assert!(frame.is_some());
+        assert!(
+            (0.65..1.0).contains(&snapshot.display_fraction),
+            "{snapshot:?}"
+        );
     }
 
     fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (Snapshot, f64) {

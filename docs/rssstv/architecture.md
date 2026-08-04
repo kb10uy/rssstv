@@ -464,7 +464,7 @@ implementations:
 - Transmit and receive raster processing for the remaining modes.
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
-- PTT, CAT, logging, history, and template editing.
+- PTT, CAT, history browsing, and template editing.
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

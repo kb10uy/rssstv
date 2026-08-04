@@ -312,11 +312,11 @@ impl ModeSpec {
     pub const fn family(&self) -> ModeFamily {
         self.family
     }
-    /// Returns MMSSTV's transport bitmap width.
+    /// Returns the decoded image width.
     pub const fn width(&self) -> u16 {
         self.width
     }
-    /// Returns MMSSTV's transport bitmap height.
+    /// Returns the decoded image height.
     pub const fn height(&self) -> u16 {
         self.height
     }
@@ -414,7 +414,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "Robot 36",
         ModeFamily::Robot,
         320,
-        256,
+        240,
         240,
         1,
         150_000_000_000,
@@ -428,7 +428,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "Robot 72",
         ModeFamily::Robot,
         320,
-        256,
+        240,
         240,
         1,
         300_000_000_000,
@@ -442,7 +442,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "AVT 90",
         ModeFamily::Avt,
         320,
-        256,
+        240,
         240,
         1,
         375_000_000_000,
@@ -890,7 +890,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "Robot 24",
         ModeFamily::Robot,
         320,
-        256,
+        240,
         240,
         2,
         200_000_000_000,
@@ -904,7 +904,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "B/W 8",
         ModeFamily::Robot,
         320,
-        256,
+        240,
         240,
         2,
         66_897_090_000,
@@ -918,7 +918,7 @@ const MODE_SPECS: [ModeSpec; 43] = [
         "B/W 12",
         ModeFamily::Robot,
         320,
-        256,
+        240,
         240,
         2,
         100_000_000_000,
@@ -1022,9 +1022,9 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(Mode::Robot36, "Robot 36", 320, 256, 240, 1, 150_000_000_000)]
-    #[case(Mode::Robot72, "Robot 72", 320, 256, 240, 1, 300_000_000_000)]
-    #[case(Mode::Avt90, "AVT 90", 320, 256, 240, 1, 375_000_000_000)]
+    #[case(Mode::Robot36, "Robot 36", 320, 240, 240, 1, 150_000_000_000)]
+    #[case(Mode::Robot72, "Robot 72", 320, 240, 240, 1, 300_000_000_000)]
+    #[case(Mode::Avt90, "AVT 90", 320, 240, 240, 1, 375_000_000_000)]
     #[case(Mode::Scottie1, "Scottie 1", 320, 256, 256, 1, 428_220_000_000)]
     #[case(Mode::Scottie2, "Scottie 2", 320, 256, 256, 1, 277_692_000_000)]
     #[case(Mode::ScottieDx, "ScottieDX", 320, 256, 256, 1, 1_050_300_000_000)]
@@ -1056,9 +1056,9 @@ mod tests {
     #[case(Mode::Ml240, "ML240", 640, 496, 496, 1, 483_300_000_000)]
     #[case(Mode::Ml280, "ML280", 640, 496, 496, 1, 565_300_000_000)]
     #[case(Mode::Ml320, "ML320", 640, 496, 496, 1, 645_300_000_000)]
-    #[case(Mode::Robot24, "Robot 24", 320, 256, 240, 2, 200_000_000_000)]
-    #[case(Mode::Bw8, "B/W 8", 320, 256, 240, 2, 66_897_090_000)]
-    #[case(Mode::Bw12, "B/W 12", 320, 256, 240, 2, 100_000_000_000)]
+    #[case(Mode::Robot24, "Robot 24", 320, 240, 240, 2, 200_000_000_000)]
+    #[case(Mode::Bw8, "B/W 8", 320, 240, 240, 2, 66_897_090_000)]
+    #[case(Mode::Bw12, "B/W 12", 320, 240, 240, 2, 100_000_000_000)]
     #[case(Mode::Mp73N, "MP73-N", 320, 256, 256, 2, 570_000_000_000)]
     #[case(Mode::Mp110N, "MP110-N", 320, 256, 256, 2, 858_000_000_000)]
     #[case(Mode::Mp140N, "MP140-N", 320, 256, 256, 2, 1_090_000_000_000)]

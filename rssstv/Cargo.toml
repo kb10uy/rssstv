@@ -14,6 +14,7 @@ egui_extras.workspace = true
 fluent-bundle.workspace = true
 fontdb.workspace = true
 image.workspace = true
+image-webp.workspace = true
 jiff.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
@@ -21,6 +22,7 @@ rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-modulator = { path = "../rssstv-modulator" }
 rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
 rssstv-template = { path = "../rssstv-template" }
+png.workspace = true
 toml_edit.workspace = true
 unic-langid.workspace = true
 

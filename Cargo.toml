@@ -33,10 +33,12 @@ hound = "3.5"
 muda = { version = "0.19", default-features = false }
 raw-window-handle = "0.6"
 jiff = "0.2"
-image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "jpeg", "png", "webp"] }
+image-webp = "0.2"
 kdl = "6.7"
 libm = "0.2"
 proptest = "1.7"
+png = "0.18"
 resvg = "0.47"
 rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }

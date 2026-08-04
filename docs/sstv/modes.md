@@ -40,9 +40,8 @@ resolutions.
 
 ### Dimensions
 
-The inventory below reports the bitmap a receiver allocates. Families often
-reserve top rows for grayscale or identification in conventional operation;
-the transport bitmap can therefore be taller than the active source image.
+The inventory below reports the conventional decoded image geometry. Internal
+storage used by a particular application is not part of the on-air protocol.
 
 ### Conventional VIS
 
@@ -84,9 +83,9 @@ one period.
 
 | Mode | Identification | Bitmap | Period | Color organization |
 | --- | --- | ---: | ---: | --- |
-| Robot 36 | VIS `08` / `88` | 320x256, 240 picture rows | 150.000 ms | Y plus alternating R-Y/B-Y |
-| Robot 72 | VIS `0c` / `0c` | 320x256, 240 picture rows | 300.000 ms | Y, R-Y, B-Y |
-| AVT 90 | VIS `44` / `44`, then AVT sync | 320x256, 240 picture rows | 375.000 ms | R, G, B; no line sync in image body |
+| Robot 36 | VIS `08` / `88` | 320x240 | 150.000 ms | Y plus alternating R-Y/B-Y |
+| Robot 72 | VIS `0c` / `0c` | 320x240 | 300.000 ms | Y, R-Y, B-Y |
+| AVT 90 | VIS `44` / `44`, then AVT sync | 320x240 | 375.000 ms | R, G, B; no line sync in image body |
 | Scottie 1 | VIS `3c` / `3c` | 320x256 | 428.220 ms | G, B, sync, R |
 | Scottie 2 | VIS `38` / `b8` | 320x256 | 277.692 ms | G, B, sync, R |
 | Scottie DX | VIS `4c` / `cc` | 320x256 | 1050.300 ms | G, B, sync, R |
@@ -118,9 +117,9 @@ one period.
 | ML240 | Ext `23 86` | 640x496 | 483.3 ms | Y, half-length R-Y, half-length B-Y |
 | ML280 | Ext `23 89` | 640x496 | 565.3 ms | Y, half-length R-Y, half-length B-Y |
 | ML320 | Ext `23 8a` | 640x496 | 645.3 ms | Y, half-length R-Y, half-length B-Y |
-| Robot 24 | VIS `04` / `84` | 320x256, 240 picture rows | 200.000 ms | Y, R-Y, B-Y; one scan represents two rows |
-| B/W 8 | VIS `02` / `82` | 320x256, 240 picture rows | 66.89709 ms | Luminance only; averages two source rows |
-| B/W 12 | VIS `06` / `86` | 320x256, 240 picture rows | 100.000 ms | Luminance only; averages two source rows |
+| Robot 24 | VIS `04` / `84` | 320x240 | 200.000 ms | Y, R-Y, B-Y; one scan represents two rows |
+| B/W 8 | VIS `02` / `82` | 320x240 | 66.89709 ms | Luminance only; averages two source rows |
+| B/W 12 | VIS `06` / `86` | 320x240 | 100.000 ms | Luminance only; averages two source rows |
 | MP73-N | N-VIS `02` | 320x256 | 570.0 ms | Narrow two-row Y0, R-Y, B-Y, Y1 |
 | MP110-N | N-VIS `04` | 320x256 | 858.0 ms | Narrow two-row Y0, R-Y, B-Y, Y1 |
 | MP140-N | N-VIS `05` | 320x256 | 1090.0 ms | Narrow two-row Y0, R-Y, B-Y, Y1 |

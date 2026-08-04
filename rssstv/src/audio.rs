@@ -3,7 +3,7 @@ use rssstv_audio::{
 };
 use rssstv_demodulator::SyncStart;
 
-use crate::receive::{Snapshot, Worker};
+use crate::receive::{HistoryCandidate, Snapshot, Worker};
 
 /// One second of queue at the preferred capture rate.
 const QUEUE_CAPACITY_SAMPLES: usize = 48_000;
@@ -164,6 +164,10 @@ impl AudioState {
 
     pub const fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    pub fn take_history(&mut self) -> Option<HistoryCandidate> {
+        self.snapshot.history.take()
     }
 
     pub fn set_slant(&mut self, enabled: bool) {

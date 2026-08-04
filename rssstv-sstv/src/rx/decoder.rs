@@ -188,7 +188,7 @@ impl RxDecoder {
         self.decode.state
     }
 
-    /// Returns the image, including decoded rows and untouched inactive rows.
+    /// Returns the decoded image.
     pub const fn image(&self) -> &RgbImage {
         &self.decode.image
     }
@@ -1302,12 +1302,6 @@ mod tests {
         let expected_epoch = 40_000 + padding as u64 + if mode == Mode::Scottie2 { 90 } else { 0 };
         assert!(epoch.abs_diff(expected_epoch) <= 1);
         assert_ne!(image.get(0, 0), Some(Rgb8::default()));
-        if mode.spec().active_rows() < mode.spec().height() {
-            assert_eq!(
-                image.get(0, mode.spec().active_rows() as usize),
-                Some(Rgb8::default())
-            );
-        }
     }
 
     #[rstest]
@@ -1432,7 +1426,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
         #[test]
-        fn arbitrary_valid_blocks_never_panic_or_write_inactive_rows(
+        fn arbitrary_valid_blocks_never_panic(
             frequency in prop::collection::vec(0.0_f32..=3_000.0, 0..8_000),
             sync in prop::collection::vec(0.0_f32..=1.0, 0..8_000),
             chunks in prop::collection::vec(1_usize..512, 1..32),
@@ -1465,9 +1459,6 @@ mod tests {
                 }
                 chunk += 1;
                 steps += 1;
-            }
-            for row in Mode::Robot36.spec().active_rows() as usize..decoder.image().size().height() {
-                prop_assert!(decoder.image().row(row).unwrap().iter().all(|pixel| *pixel == Rgb8::default()));
             }
         }
     }
@@ -2126,7 +2117,7 @@ mod tests {
         );
         assert_eq!(
             image.get(0, Mode::Robot36.spec().active_rows() as usize),
-            Some(Rgb8::default())
+            None
         );
     }
 

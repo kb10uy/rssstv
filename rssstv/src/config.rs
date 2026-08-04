@@ -12,7 +12,7 @@ use std::{
 use rssstv_sstv::mode::Mode;
 use toml_edit::{DocumentMut, Item, Table, value};
 
-use crate::{app::DspFlags, i18n::Locale};
+use crate::{app::DspFlags, history::HistoryFormat, i18n::Locale};
 
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;
@@ -41,6 +41,7 @@ pub struct Settings {
     pub auto_mode: bool,
     pub dsp: DspFlags,
     pub auto_history: bool,
+    pub history_format: HistoryFormat,
     pub ui_scale: f32,
 }
 
@@ -58,6 +59,7 @@ impl Default for Settings {
             auto_mode: true,
             dsp: DspFlags::default(),
             auto_history: true,
+            history_format: HistoryFormat::default(),
             ui_scale: DEFAULT_UI_SCALE,
         }
     }
@@ -146,6 +148,9 @@ impl Config {
             },
             auto_history: boolean(&self.document, Some("receive"), "auto-history")
                 .unwrap_or(defaults.auto_history),
+            history_format: string(&self.document, Some("receive"), "history-format")
+                .and_then(HistoryFormat::from_config)
+                .unwrap_or(defaults.history_format),
             ui_scale: float(&self.document, None, "ui-scale")
                 .map(|scale| scale.clamp(*UI_SCALE_RANGE.start(), *UI_SCALE_RANGE.end()))
                 .unwrap_or(defaults.ui_scale),
@@ -239,6 +244,12 @@ impl Config {
             Some("receive"),
             "auto-history",
             Some(value(settings.auto_history)),
+        );
+        set(
+            document,
+            Some("receive"),
+            "history-format",
+            Some(value(settings.history_format.config_name())),
         );
         set(
             document,
@@ -373,6 +384,7 @@ mod tests {
                 slant: false,
             },
             auto_history: false,
+            history_format: HistoryFormat::Jpeg,
             ui_scale: 1.5,
         }
     }

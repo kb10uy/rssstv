@@ -150,6 +150,7 @@ pub struct App {
     pub tx_modes: Vec<Mode>,
     pub dsp: DspFlags,
     pub auto_history: bool,
+    pub history_format: crate::history::HistoryFormat,
     pub qso: Qso,
     pub station_callsign: String,
     pub templates: Vec<Entry>,
@@ -262,6 +263,7 @@ impl App {
             tx_modes: modes(|mode| mode.spec().encode_support()),
             dsp: settings.dsp,
             auto_history: settings.auto_history,
+            history_format: settings.history_format,
             qso: Qso::default(),
             station_callsign: settings.station_callsign.trim().to_ascii_uppercase(),
             templates: Vec::new(),
@@ -327,6 +329,7 @@ impl App {
             auto_mode: self.auto_mode,
             dsp: self.dsp,
             auto_history: self.auto_history,
+            history_format: self.history_format,
             ui_scale: self.ui_scale,
         }
     }
@@ -509,6 +512,13 @@ impl App {
         {
             self.rx_raster = raster;
         }
+        if let Some(candidate) = self.audio.take_history()
+            && self.auto_history
+            && let Err(error) =
+                crate::history::save(self.paths.received_dir(), candidate, self.history_format)
+        {
+            crate::log::note(&format!("failed to save receive history: {error}"));
+        }
         self.adopt_decoded_callsign();
         self.audio.set_sync_start(self.sync_start());
         // A detected mode only takes over the selection while automatic
@@ -635,7 +645,7 @@ impl App {
     /// Fraction of the active tab's raster that is drawn as decoded.
     pub fn decoded_fraction(&self) -> f32 {
         match self.tab {
-            Tab::Receive => self.audio.snapshot().progress.fraction(),
+            Tab::Receive => self.audio.snapshot().display_fraction,
             Tab::Transmit => {
                 if self.tx_snapshot.phase.is_active() {
                     self.tx_progress().fraction()
@@ -929,7 +939,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::receive::Snapshot;
+    use crate::receive::{Frame, HistoryCandidate, Snapshot};
 
     static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -1004,6 +1014,7 @@ mod tests {
     fn decoding(rows: usize, total: usize) -> Snapshot {
         Snapshot {
             progress: Progress::Decoding { rows, total },
+            display_fraction: Progress::Decoding { rows, total }.fraction(),
             ..Snapshot::default()
         }
     }
@@ -1013,6 +1024,37 @@ mod tests {
             callsigns: calls.iter().map(|call| (*call).to_owned()).collect(),
             ..Snapshot::default()
         }
+    }
+
+    #[rstest]
+    #[case(true, 1)]
+    #[case(false, 0)]
+    fn automatic_history_follows_its_setting(#[case] enabled: bool, #[case] expected_files: usize) {
+        let root = TestDirectory::new();
+        let paths = library(&root);
+        let received = paths.received_dir().to_owned();
+        let settings = Settings {
+            auto_history: enabled,
+            ..Settings::default()
+        };
+        let mut app = disconnected(paths, &settings);
+        app.audio.set_snapshot(Snapshot {
+            history: Some(HistoryCandidate {
+                mode: Mode::Robot36,
+                frame: Frame {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![10, 20, 30, 255],
+                },
+                received_at: "2026-08-04T12:34:56+09:00".to_owned(),
+                fsk_ids: vec!["JA1ABC".to_owned()],
+            }),
+            ..Snapshot::default()
+        });
+
+        app.poll_audio();
+
+        assert_eq!(fs::read_dir(received).unwrap().count(), expected_files);
     }
 
     #[test]
@@ -1194,6 +1236,16 @@ mod tests {
     }
 
     #[test]
+    fn waiting_receiver_keeps_the_retained_frame_fraction() {
+        let mut app = App::headless();
+        app.audio.set_snapshot(Snapshot {
+            display_fraction: 0.65,
+            ..Snapshot::default()
+        });
+        assert_eq!(app.decoded_fraction(), 0.65);
+    }
+
+    #[test]
     fn selecting_a_mode_replaces_the_raster() {
         let mut app = App::headless();
         app.select_rx_mode(Mode::Robot36);
@@ -1259,6 +1311,7 @@ mod tests {
         app.toggle_dsp(Dsp::Lms);
         app.auto_mode = false;
         app.auto_history = false;
+        app.history_format = crate::history::HistoryFormat::Jpeg;
         app.select_tx_mode(Mode::Martin1);
         app.station_callsign = "JA1ABC".to_owned();
         app.template = Some(1);
@@ -1277,6 +1330,7 @@ mod tests {
         assert!(next.dsp.lms);
         assert!(!next.auto_mode);
         assert!(!next.auto_history);
+        assert_eq!(next.history_format, crate::history::HistoryFormat::Jpeg);
         assert_eq!(next.station_callsign, "JA1ABC");
         assert_eq!(next.templates[next.template.unwrap()].name, "beta.kdl");
         assert_eq!(next.stocks[next.stock.unwrap()].name, "second.png");

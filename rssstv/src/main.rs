@@ -10,6 +10,7 @@ mod app;
 mod audio;
 mod canvas;
 mod config;
+mod history;
 mod i18n;
 mod log;
 mod menu;

@@ -171,14 +171,24 @@ operator's choice instead of overriding it. The scope is pushed to the worker
 whenever it changes and is reapplied to every demodulator the worker builds,
 including after a restarted search.
 
-A reception whose signal stops arriving is stopped rather than discarded. The
-worker watches for progress that has not moved for the stall window and calls
-`RxDecoder::stop`, which leaves the decoder holding the rows it managed to
-decode. The reception then reads as stopped rather than as never having
-happened: the partial image stays on the canvas undimmed, the badge says so,
-and the demodulator restarts its search for the next signal. This is a normal
-outcome with something to show, so it is reported through the progress state
-and not as an error on the status line.
+A reception whose signal stops arriving returns to signal search without
+discarding its partial image. The worker watches for progress that has not
+moved for the stall window, captures the decoder image, and starts a fresh
+receive session. The captured frame stays on the canvas while the badge reads
+as waiting for the next signal. When at least 65 percent of the rows were
+decoded, the frame is also offered to automatic history; with automatic
+history enabled it is stored in the received-image directory. Earlier
+interruptions remain visible but are not retained in history. This is a normal
+outcome and is not reported as an error on the status line.
+
+History encoding is selectable between lossless WebP, PNG, and JPEG, with
+lossless WebP as the default. Every format carries the same XMP packet: the
+reception start time with its local UTC offset, the SSTV mode, and any FSKID
+values decoded for that reception. After a complete raster, the worker waits
+up to four seconds for the trailing FSKID before finalizing history, proceeding
+immediately when an identifier arrives. The file name uses the reception time
+through seconds and the mode. A second reception of the same mode in the same
+second replaces that path instead of adding a sequence number.
 
 Progressive image display uses the existing decoder API. The worker tracks
 `RxDecoder::image_revision`, and when it changes, converts `RxDecoder::image`
@@ -240,10 +250,14 @@ behind it. Recorded audio pushed through it drives the receive worker over
 exactly the code path a live device uses, which is what makes the pipeline
 testable without hardware.
 
-`auto_stop` is left disabled. Its live synchronization scoring aborts genuine
-receptions part way through, which loses both the remaining rows and the
-refinement that would have corrected the slant. A reception whose signal simply
-disappears is ended by a worker-side stall timeout instead.
+`auto_stop` is enabled to match MMSSTV's live synchronization-loss decision.
+When it fires, the worker handles the stopped decoder exactly like a stalled
+input: the partial frame is retained, the 65-percent history rule is applied,
+and a fresh signal search begins. The displayed row fraction is retained
+separately from the new search's idle progress, so returning to the waiting
+state does not conceal the partial frame. The worker-side stall timeout remains
+as the fallback for a signal that stops producing decodable progress without
+giving AutoStop further lines to score.
 
 Raster phase acquisition collects four recurring synchronization pulses, as
 MMSSTV does, buffering at most five periods when the first post-VIS pulse is
@@ -457,8 +471,9 @@ exactly the modes the core can encode or decode.
 
 ## Prerequisites
 
-The next application subsystem is history: retaining completed receptions and
-implementing the receive controls that act on them.
+Automatic history retains completed receptions and interrupted receptions that
+reached at least 65 percent. History browsing and the receive controls that act
+on stored entries remain to be implemented.
 
 The application storage directories and an empty default configuration file
 are initialized at startup as described in [architecture.md](architecture.md).

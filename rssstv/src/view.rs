@@ -218,6 +218,18 @@ fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
                 pending(ui, app, "action-resync");
                 let label = app.i18n.text("action-auto-history");
                 ui.checkbox(&mut app.auto_history, label);
+                ui.label(app.i18n.text("history-format"));
+                ComboBox::from_id_salt("receive-history-format")
+                    .selected_text(app.i18n.text(app.history_format.label_key()))
+                    .show_ui(ui, |ui| {
+                        for format in crate::history::HistoryFormat::ALL {
+                            ui.selectable_value(
+                                &mut app.history_format,
+                                format,
+                                app.i18n.text(format.label_key()),
+                            );
+                        }
+                    });
             }
             Tab::Transmit => {
                 let active = app.tx_snapshot.phase.is_active();

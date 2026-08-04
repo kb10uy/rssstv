@@ -121,6 +121,10 @@ impl AppPaths {
         &self.stocks_dir
     }
 
+    pub fn received_dir(&self) -> &Path {
+        &self.received_dir
+    }
+
     pub fn log_file(&self) -> &Path {
         &self.log_file
     }

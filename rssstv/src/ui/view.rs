@@ -335,13 +335,13 @@ fn tx_level(ui: &mut Ui, app: &mut App) {
     };
     let bar = ui.add(ProgressBar::new(app.tx_volume).fill(color));
     let dragged = bar.interact(egui::Sense::click_and_drag());
-    let (start, span) = fader_travel(dragged.rect);
+    let rect = dragged.rect;
     if let Some(pointer) = dragged.interact_pointer_pos() {
-        app.tx_volume = ((pointer.x - start) / span).clamp(0.0, 1.0);
+        app.tx_volume = ((pointer.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
     }
     ui.painter().circle(
-        egui::pos2(start + app.tx_volume * span, dragged.rect.center().y),
-        dragged.rect.height() * 0.5,
+        egui::pos2(fill_edge(rect, app.tx_volume), rect.center().y),
+        rect.height() * 0.5,
         Color32::WHITE,
         egui::Stroke::new(1.0, Color32::from_gray(40)),
     );
@@ -354,14 +354,15 @@ fn tx_level(ui: &mut Ui, app: &mut App) {
     ));
 }
 
-/// The span a fader handle's center may move over, inset by its own radius so
-/// the handle stays inside the track at both ends.
-fn fader_travel(rect: egui::Rect) -> (f32, f32) {
-    let radius = rect.height() * 0.5;
-    (
-        rect.left() + radius,
-        (rect.width() - rect.height()).max(1.0),
-    )
+/// Where the fill ends, which is where the handle marking it belongs.
+///
+/// The travel spans the whole track rather than the track inset by the
+/// handle's radius. Insetting it would keep the handle within the track at
+/// both ends, but the fill behind it starts at the edge regardless, so the
+/// handle would sit ahead of the end it marks — most visibly near zero, where
+/// the bar is empty and the handle would already be a radius along it.
+fn fill_edge(rect: egui::Rect, travel: f32) -> f32 {
+    rect.left() + travel.clamp(0.0, 1.0) * rect.width()
 }
 
 /// The level as an amplitude ratio in decibels, which is the unit the setting
@@ -872,6 +873,17 @@ mod tests {
         }
 
         assert_eq!(app.stock, Some(0));
+    }
+
+    /// The handle marks the end of the fill, so it tracks the same edge at
+    /// every position including the ends, rather than a track inset by its own
+    /// radius.
+    #[test]
+    fn the_level_handle_sits_on_the_end_of_the_fill() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 0.0), egui::vec2(100.0, 20.0));
+        assert_eq!(fill_edge(rect, 0.0), rect.left());
+        assert_eq!(fill_edge(rect, 0.5), 60.0);
+        assert_eq!(fill_edge(rect, 1.0), rect.right());
     }
 
     /// Decibels are the unit the level is heard in, so the readout is what

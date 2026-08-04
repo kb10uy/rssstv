@@ -415,7 +415,10 @@ transmit trigger. The output level is drawn as the same bar rather than as a
 slider, and is dragged to set it; it fills red while a transmission is running,
 for the reason the receive meter fills green. A round handle rides the end of
 the fill, because a bar that can be dragged has to look unlike one that only
-reports, and hovering reads the level back as a percentage and in decibels.
+reports, and hovering reads the level back as a percentage and in decibels. Its
+travel spans the whole track rather than the track inset by its own radius: the
+fill starts at the edge regardless, so an inset handle would sit ahead of the
+end it marks.
 
 The fader's travel is squared to reach the amplitude a transmission is scaled
 by. Loudness follows amplitude by a power law rather than in step with it, so a

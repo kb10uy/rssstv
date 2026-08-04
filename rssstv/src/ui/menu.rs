@@ -6,7 +6,11 @@
 //! platform-independent [model](model) that the native and in-window renderers
 //! both consume, so the two paths cannot drift apart.
 
-use crate::{app::App, i18n::Locale, storage::paths::Folder};
+use crate::{
+    app::App,
+    i18n::Locale,
+    storage::{history::HistoryFormat, paths::Folder},
+};
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 mod native;
@@ -26,6 +30,10 @@ pub enum Action {
     SelectDevice(String),
     SelectOutputDevice(String),
     SelectLocale(Locale),
+    ToggleSendFskid,
+    ToggleVisRestart,
+    ToggleAutoHistory,
+    SelectHistoryFormat(HistoryFormat),
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -74,13 +82,6 @@ pub fn model(app: &App) -> Vec<Menu> {
             items: folder_items(app),
         },
         Menu {
-            label: text("menu-edit"),
-            items: vec![
-                Item::Pending(text("action-copy")),
-                Item::Pending(text("action-paste")),
-            ],
-        },
-        Menu {
             label: text("menu-view"),
             items: vec![
                 Item::Command {
@@ -111,6 +112,27 @@ pub fn model(app: &App) -> Vec<Menu> {
                     label: text("output-device"),
                     items: output_device_items(app),
                 },
+                Item::Submenu {
+                    label: text("menu-transmit"),
+                    items: vec![Item::Check {
+                        label: text("action-send-fskid"),
+                        checked: app.send_fskid,
+                        action: Action::ToggleSendFskid,
+                    }],
+                },
+                Item::Submenu {
+                    label: text("menu-receive"),
+                    items: vec![Item::Check {
+                        label: text("action-vis-restart"),
+                        checked: app.vis_restart,
+                        action: Action::ToggleVisRestart,
+                    }],
+                },
+                Item::Submenu {
+                    label: text("menu-history"),
+                    items: history_items(app),
+                },
+                Item::Separator,
                 Item::Submenu {
                     label: text("menu-language"),
                     items: locale_items(app),
@@ -148,6 +170,24 @@ fn folder_items(app: &App) -> Vec<Item> {
             },
         ])
         .collect()
+}
+
+/// The received-image settings: whether to keep receptions, and in what.
+fn history_items(app: &App) -> Vec<Item> {
+    let mut items = vec![
+        Item::Check {
+            label: app.i18n.text("action-auto-history"),
+            checked: app.auto_history,
+            action: Action::ToggleAutoHistory,
+        },
+        Item::Separator,
+    ];
+    items.extend(HistoryFormat::ALL.into_iter().map(|format| Item::Check {
+        label: app.i18n.text(format.label_key()),
+        checked: app.history_format == format,
+        action: Action::SelectHistoryFormat(format),
+    }));
+    items
 }
 
 fn ui_scale_percent(app: &App) -> f32 {
@@ -205,6 +245,10 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::SelectDevice(name) => app.select_device_named(&name),
         Action::SelectOutputDevice(name) => app.select_output_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
+        Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
+        Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
+        Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
+        Action::SelectHistoryFormat(format) => app.history_format = format,
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
         Action::ZoomReset => app.set_ui_scale(crate::storage::config::DEFAULT_UI_SCALE),

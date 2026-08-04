@@ -160,24 +160,32 @@ pub struct Worker {
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
     slant: Arc<AtomicBool>,
+    vis_restart: Arc<AtomicBool>,
     sync_start: Arc<Mutex<SyncStart>>,
 }
 
 impl Worker {
     /// Starts decoding everything `reader` produces.
-    pub fn spawn(reader: CaptureReader, slant: bool, sync_start: SyncStart) -> Self {
+    pub fn spawn(
+        reader: CaptureReader,
+        slant: bool,
+        vis_restart: bool,
+        sync_start: SyncStart,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
+        let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::default());
         let join = {
             let stop = Arc::clone(&stop);
             let slant = Arc::clone(&slant);
+            let vis_restart = Arc::clone(&vis_restart);
             let sync_start = Arc::clone(&sync_start);
             let mailbox = Arc::clone(&mailbox);
             thread::Builder::new()
                 .name("rssstv-receive".to_owned())
-                .spawn(move || run(reader, &mailbox, &stop, &slant, &sync_start))
+                .spawn(move || run(reader, &mailbox, &stop, &slant, &vis_restart, &sync_start))
                 .ok()
         };
         Self {
@@ -185,12 +193,17 @@ impl Worker {
             join,
             mailbox,
             slant,
+            vis_restart,
             sync_start,
         }
     }
 
     pub fn set_slant(&self, enabled: bool) {
         self.slant.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_vis_restart(&self, enabled: bool) {
+        self.vis_restart.store(enabled, Ordering::Relaxed);
     }
 
     pub fn set_sync_start(&self, scope: SyncStart) {
@@ -421,7 +434,7 @@ mod pipeline_tests {
         sync_start: SyncStart,
     ) -> (Snapshot, Option<Frame>) {
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = Worker::spawn(reader, true, sync_start);
+        let worker = Worker::spawn(reader, true, true, sync_start);
         let mut snapshot = Snapshot::default();
         let mut frame = None;
         let silence = vec![0.0_f32; trailing_silence];

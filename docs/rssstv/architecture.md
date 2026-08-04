@@ -245,6 +245,8 @@ until a modulator chooses a physical sample rate.
 `TxEncoder` emits conventional VIS framing and mode raster data.
 `TransmissionEncoder` wraps it with MMSSTV's built-in conventional VOX framing,
 a 300 ms footer, a validated callsign FSKID, and 500 ms of trailing silence.
+`TransmissionEncoder::without_identifier` sends the same transmission with
+neither the FSKID nor the footer, which exists only to introduce it.
 PCM conversion remains a separate modulator responsibility.
 
 ### FSK Identification

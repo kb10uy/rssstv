@@ -40,6 +40,8 @@ pub struct Settings {
     pub tx_mode: Mode,
     pub auto_mode: bool,
     pub dsp: DspFlags,
+    pub vis_restart: bool,
+    pub send_fskid: bool,
     pub auto_history: bool,
     pub history_format: HistoryFormat,
     pub ui_scale: f32,
@@ -58,6 +60,8 @@ impl Default for Settings {
             tx_mode: DEFAULT_TX_MODE,
             auto_mode: true,
             dsp: DspFlags::default(),
+            vis_restart: true,
+            send_fskid: true,
             auto_history: true,
             history_format: HistoryFormat::default(),
             ui_scale: DEFAULT_UI_SCALE,
@@ -146,6 +150,10 @@ impl Config {
                 slant: boolean(&self.document, Some("receive"), "slant")
                     .unwrap_or(defaults.dsp.slant),
             },
+            vis_restart: boolean(&self.document, Some("receive"), "vis-restart")
+                .unwrap_or(defaults.vis_restart),
+            send_fskid: boolean(&self.document, Some("transmit"), "fskid")
+                .unwrap_or(defaults.send_fskid),
             auto_history: boolean(&self.document, Some("receive"), "auto-history")
                 .unwrap_or(defaults.auto_history),
             history_format: string(&self.document, Some("receive"), "history-format")
@@ -238,6 +246,18 @@ impl Config {
             Some("receive"),
             "slant",
             Some(value(settings.dsp.slant)),
+        );
+        set(
+            document,
+            Some("receive"),
+            "vis-restart",
+            Some(value(settings.vis_restart)),
+        );
+        set(
+            document,
+            Some("transmit"),
+            "fskid",
+            Some(value(settings.send_fskid)),
         );
         set(
             document,
@@ -378,6 +398,8 @@ mod tests {
             rx_mode: Mode::Robot36,
             tx_mode: Mode::Martin1,
             auto_mode: false,
+            vis_restart: false,
+            send_fskid: false,
             dsp: DspFlags {
                 afc: false,
                 lms: true,

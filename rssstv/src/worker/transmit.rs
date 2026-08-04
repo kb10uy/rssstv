@@ -118,7 +118,7 @@ impl TxWorker {
         writer: PlaybackWriter,
         mode: Mode,
         frame: Arc<RgbImage>,
-        station_id: FskId,
+        station_id: Option<FskId>,
     ) -> Self {
         let snapshot = Arc::new(Mutex::new(TxSnapshot {
             phase: TxPhase::Priming,
@@ -178,11 +178,14 @@ fn transmit_loop(
     mut writer: PlaybackWriter,
     mode: Mode,
     frame: Arc<RgbImage>,
-    station_id: FskId,
+    station_id: Option<FskId>,
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
 ) {
-    let transmission = match TransmissionEncoder::new(mode, (*frame).clone(), station_id) {
+    let transmission = match station_id.map_or_else(
+        || TransmissionEncoder::without_identifier(mode, (*frame).clone()),
+        |station_id| TransmissionEncoder::new(mode, (*frame).clone(), station_id),
+    ) {
         Ok(transmission) => transmission,
         Err(error) => return fail(&snapshot, error.to_string()),
     };
@@ -321,7 +324,7 @@ mod tests {
         let size = ImageSize::new(mode.spec().width().into(), mode.spec().height().into()).unwrap();
         let frame = Arc::new(RgbImage::new(size, Rgb8::new(80, 140, 200)));
         let (writer, mut reader) = synthetic_playback(8_000, 512).unwrap();
-        let worker = TxWorker::spawn(writer, mode, frame, FskId::new("N0CALL").unwrap());
+        let worker = TxWorker::spawn(writer, mode, frame, Some(FskId::new("N0CALL").unwrap()));
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut received = 0_u64;
         let mut block = [0.0_f32; 512];

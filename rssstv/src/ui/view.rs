@@ -18,6 +18,11 @@ const SIDE_PANEL_WIDTH: f32 = 320.0;
 /// Default height of the library row; the operator can drag it.
 const LIBRARY_HEIGHT: f32 = 260.0;
 const LIST_WIDTH: f32 = 260.0;
+/// Width of a DSP toggle, which the transmit button matches.
+///
+/// The toggles divide the side panel three ways, so this is what one of them
+/// measures at the panel's default width.
+const TOGGLE_WIDTH: f32 = 96.0;
 const FIELD_LABEL_WIDTH: f32 = 64.0;
 
 const SMALL: f32 = 12.0;
@@ -217,69 +222,37 @@ fn geometry_label(app: &App) -> String {
 
 fn action_bar(ui: &mut Ui, app: &mut App, geometry: &str) {
     ui.horizontal(|ui| {
-        match app.tab {
-            Tab::Receive => {
-                pending(ui, app, "action-lock");
-                pending(ui, app, "action-resync");
-                let label = app.i18n.text("action-auto-history");
-                ui.checkbox(&mut app.auto_history, label);
-                ui.label(app.i18n.text("history-format"));
-                ComboBox::from_id_salt("receive-history-format")
-                    .selected_text(app.i18n.text(app.history_format.label_key()))
-                    .show_ui(ui, |ui| {
-                        for format in crate::storage::history::HistoryFormat::ALL {
-                            ui.selectable_value(
-                                &mut app.history_format,
-                                format,
-                                app.i18n.text(format.label_key()),
-                            );
-                        }
-                    });
-            }
-            Tab::Transmit => {
-                let active = app.tx_snapshot.phase.is_active();
-                let label = app.i18n.text(if active {
-                    "action-stop-transmit"
-                } else {
-                    "action-transmit"
-                });
-                let mut response = ui.add(
-                    egui::Button::new(RichText::new(label).size(SMALL))
-                        .fill(Color32::from_rgb(140, 40, 40)),
-                );
-                if !active && let Some(problem) = app.transmit_problem() {
-                    response = response.on_hover_text(problem);
-                }
-                if response.clicked() {
-                    if active {
-                        app.stop_transmit();
-                    } else {
-                        app.start_transmit();
-                    }
-                }
-                pending(ui, app, "action-edit");
-                pending(ui, app, "action-tone");
-                pending(ui, app, "action-cw");
-                pending(ui, app, "action-fskid");
-            }
+        if app.tab == Tab::Transmit {
+            transmit_button(ui, app);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            pending(ui, app, "action-zoom");
-            match app.tab {
-                Tab::Receive => pending(ui, app, "action-save"),
-                Tab::Transmit => pending(ui, app, "action-paste"),
-            }
             ui.label(RichText::new(geometry).size(SMALL));
         });
     });
 }
 
-/// A control whose behavior arrives with a later feature.
-fn pending(ui: &mut Ui, app: &App, key: &str) {
-    ui.add_enabled(
-        false,
-        egui::Button::new(RichText::new(app.i18n.text(key)).size(SMALL)),
+fn transmit_button(ui: &mut Ui, app: &mut App) {
+    let active = app.tx_snapshot.phase.is_active();
+    let label = app.i18n.text(if active {
+        "action-stop-transmit"
+    } else {
+        "action-transmit"
+    });
+    let mut response = ui.add(
+        egui::Button::new(RichText::new(label).size(SMALL))
+            .min_size(egui::vec2(TOGGLE_WIDTH, 0.0))
+            .fill(Color32::from_rgb(140, 40, 40)),
     );
+    if !active && let Some(problem) = app.transmit_problem() {
+        response = response.on_hover_text(problem);
+    }
+    if response.clicked() {
+        if active {
+            app.stop_transmit();
+        } else {
+            app.start_transmit();
+        }
+    }
 }
 
 fn side_panel(ui: &mut Ui, app: &mut App) {
@@ -358,7 +331,7 @@ fn dsp_panel(ui: &mut Ui, app: &mut App) {
     let mut toggled = None;
     ui.horizontal(|ui| {
         let gaps = ui.spacing().item_spacing.x * (Dsp::ALL.len() - 1) as f32;
-        let width = (ui.available_width() - gaps) / Dsp::ALL.len() as f32;
+        let width = ((ui.available_width() - gaps) / Dsp::ALL.len() as f32).max(TOGGLE_WIDTH);
         for dsp in Dsp::ALL {
             let label = RichText::new(app.i18n.text(dsp.label_key())).size(SMALL);
             let button = egui::Button::new(label)
@@ -412,7 +385,6 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         }
     });
     ui.horizontal(|ui| {
-        pending(ui, app, "qso-record");
         if ui
             .button(RichText::new(app.i18n.text("qso-clear")).size(SMALL))
             .clicked()

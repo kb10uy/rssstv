@@ -152,6 +152,10 @@ pub struct App {
     pub rx_modes: Vec<Mode>,
     pub tx_modes: Vec<Mode>,
     pub dsp: DspFlags,
+    /// Whether a VIS header may start a reception over.
+    pub vis_restart: bool,
+    /// Whether a transmission ends with the station identifier.
+    pub send_fskid: bool,
     pub auto_history: bool,
     pub history_format: crate::storage::history::HistoryFormat,
     pub qso: Qso,
@@ -226,6 +230,7 @@ impl App {
             settings.input_device.as_deref(),
             settings.output_device.as_deref(),
             settings.dsp.slant,
+            settings.vis_restart,
         );
         let mut app = Self::from_parts(audio, paths, config, &settings, platform::host());
         app.refresh_library();
@@ -276,6 +281,8 @@ impl App {
             rx_modes: modes(|mode| mode.spec().decode_support()),
             tx_modes: modes(|mode| mode.spec().encode_support()),
             dsp: settings.dsp,
+            vis_restart: settings.vis_restart,
+            send_fskid: settings.send_fskid,
             auto_history: settings.auto_history,
             history_format: settings.history_format,
             qso: Qso::default(),
@@ -342,6 +349,8 @@ impl App {
             tx_mode: self.tx_mode,
             auto_mode: self.auto_mode,
             dsp: self.dsp,
+            vis_restart: self.vis_restart,
+            send_fskid: self.send_fskid,
             auto_history: self.auto_history,
             history_format: self.history_format,
             ui_scale: self.ui_scale,
@@ -427,6 +436,15 @@ impl App {
             self.prepared_frame = None;
             self.request_composition();
         }
+    }
+
+    /// Chooses whether a VIS header may start a reception over.
+    ///
+    /// Pushed to the receive worker at once rather than on the next frame, so
+    /// the change applies to the reception in progress.
+    pub fn set_vis_restart(&mut self, enabled: bool) {
+        self.vis_restart = enabled;
+        self.audio.set_vis_restart(enabled);
     }
 
     pub fn toggle_dsp(&mut self, dsp: Dsp) {
@@ -526,6 +544,7 @@ impl App {
         }
         self.adopt_decoded_callsign();
         self.audio.set_sync_start(self.sync_start());
+        self.audio.set_vis_restart(self.vis_restart);
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.
         if self.auto_mode
@@ -806,7 +825,10 @@ impl App {
         if self.audio.output_device.is_none() {
             return Some(self.i18n.text("error-no-output-device"));
         }
-        if let Err(error) = FskId::new(self.station_callsign.trim()) {
+        // The callsign only has to be sendable as an identifier when one is
+        // being sent. With the identifier off it is a template variable like
+        // any other, and nothing about it can stop a transmission.
+        if let Err(error) = self.station_id().transpose() {
             return Some(self.i18n.text_with(
                 "error-invalid-station-call",
                 &[("error", error.to_string().into())],
@@ -815,12 +837,18 @@ impl App {
         None
     }
 
+    /// Returns the identifier a transmission would end with, if any.
+    fn station_id(&self) -> Option<Result<FskId, rssstv_fskid::FskIdError>> {
+        self.send_fskid
+            .then(|| FskId::new(self.station_callsign.trim()))
+    }
+
     pub fn start_transmit(&mut self) {
         if let Some(error) = self.transmit_problem() {
             self.tx_error = Some(error);
             return;
         }
-        let station_id = match FskId::new(self.station_callsign.trim()) {
+        let station_id = match self.station_id().transpose() {
             Ok(station_id) => station_id,
             Err(error) => {
                 self.tx_error = Some(error.to_string());
@@ -1358,6 +1386,34 @@ mod tests {
         let app = App::headless();
         assert!(app.dsp.slant);
         assert!(app.audio.slant());
+    }
+
+    /// The setting reaches the receive worker rather than only the menu mark,
+    /// or turning it off would leave the reception restarting anyway.
+    #[test]
+    fn the_vis_restart_setting_reaches_the_receive_worker() {
+        let mut app = App::headless();
+        assert!(app.vis_restart);
+        assert!(app.audio.vis_restart());
+
+        app.set_vis_restart(false);
+
+        assert!(!app.audio.vis_restart());
+    }
+
+    /// The callsign only has to be sendable as an identifier while one is being
+    /// sent, so turning the identifier off stops it from blocking transmission.
+    #[test]
+    fn the_identifier_setting_decides_whether_the_callsign_must_be_sendable() {
+        let mut app = App::headless();
+        app.station_callsign = "!".to_owned();
+
+        assert!(app.send_fskid);
+        assert!(matches!(app.station_id(), Some(Err(_))));
+
+        app.send_fskid = false;
+
+        assert!(app.station_id().is_none());
     }
 
     #[test]

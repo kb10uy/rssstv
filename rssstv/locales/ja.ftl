@@ -1,7 +1,6 @@
 app-title = rssstv
 
 menu-file = ファイル
-menu-edit = 編集
 menu-view = 表示
 menu-settings = 設定
 menu-rig = リグコントロール
@@ -16,6 +15,9 @@ menu-open-assets = アセットフォルダーを開く
 menu-open-config = 設定フォルダーを開く
 menu-quit = 終了
 menu-language = 言語
+menu-transmit = 送信
+menu-receive = 受信
+menu-history = 受信画像
 menu-help = ヘルプ
 
 tab-receive = 受信
@@ -39,26 +41,16 @@ section-qso = QSO
 qso-call = コール
 qso-station-call = 自局コール
 qso-rsv-nr = RSV/NR
-qso-record = 記録
 qso-clear = クリア
 
-action-lock = ロック
-action-resync = 再同期
 action-auto-history = 自動履歴
-history-format = 形式
 history-format-webp = WebP（可逆）
 history-format-png = PNG
 history-format-jpeg = JPEG
-action-save = 保存
-action-copy = コピー
-action-zoom = 拡大
-action-paste = 貼付
-action-edit = 編集
+action-send-fskid = FSKID を送出
+action-vis-restart = 受信中も VIS を検出して再スタート
 action-transmit = TX
 action-stop-transmit = TX停止
-action-tone = 1750
-action-cw = CW
-action-fskid = FSKID
 action-open-folder = フォルダーを開く
 action-refresh = 再読み込み
 

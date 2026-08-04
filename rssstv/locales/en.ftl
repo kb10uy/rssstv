@@ -1,7 +1,6 @@
 app-title = rssstv
 
 menu-file = File
-menu-edit = Edit
 menu-view = View
 menu-settings = Settings
 menu-rig = Rig Control
@@ -16,6 +15,9 @@ menu-open-assets = Open Assets Folder
 menu-open-config = Open Config Folder
 menu-quit = Quit
 menu-language = Language
+menu-transmit = Transmit
+menu-receive = Reception
+menu-history = Received Images
 menu-help = Help
 
 tab-receive = Receive
@@ -39,26 +41,16 @@ section-qso = QSO
 qso-call = Call
 qso-station-call = My call
 qso-rsv-nr = RSV/NR
-qso-record = Record
 qso-clear = Clear
 
-action-lock = Lock
-action-resync = Resync
 action-auto-history = Auto history
-history-format = Format
 history-format-webp = WebP (lossless)
 history-format-png = PNG
 history-format-jpeg = JPEG
-action-save = Save
-action-copy = Copy
-action-zoom = Zoom
-action-paste = Paste
-action-edit = Edit
+action-send-fskid = Send FSKID
+action-vis-restart = Restart on a new VIS header
 action-transmit = TX
 action-stop-transmit = Stop TX
-action-tone = 1750
-action-cw = CW
-action-fskid = FSKID
 action-open-folder = Open folder
 action-refresh = Refresh
 

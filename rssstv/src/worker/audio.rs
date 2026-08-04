@@ -23,6 +23,7 @@ pub struct AudioState {
     worker: Option<Worker>,
     snapshot: Snapshot,
     slant: bool,
+    vis_restart: bool,
     sync_start: SyncStart,
 }
 
@@ -32,7 +33,12 @@ impl AudioState {
     /// The name is matched rather than an identifier because the host assigns
     /// identifiers per run; a device that disappeared since the last session
     /// falls back to the host default.
-    pub fn new(preferred: Option<&str>, preferred_output: Option<&str>, slant: bool) -> Self {
+    pub fn new(
+        preferred: Option<&str>,
+        preferred_output: Option<&str>,
+        slant: bool,
+        vis_restart: bool,
+    ) -> Self {
         let host = AudioHost::new();
         let (devices, input_error) = match host.input_devices() {
             Ok(devices) => (devices, None),
@@ -76,6 +82,7 @@ impl AudioState {
             worker: None,
             snapshot: Snapshot::default(),
             slant,
+            vis_restart,
             sync_start: SyncStart::default(),
         };
         if let Some(device) = device {
@@ -101,6 +108,7 @@ impl AudioState {
             worker: None,
             snapshot: Snapshot::default(),
             slant: true,
+            vis_restart: true,
             sync_start: SyncStart::default(),
         }
     }
@@ -142,7 +150,12 @@ impl AudioState {
         self.snapshot = Snapshot::default();
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
-                self.worker = Some(Worker::spawn(reader, self.slant, self.sync_start));
+                self.worker = Some(Worker::spawn(
+                    reader,
+                    self.slant,
+                    self.vis_restart,
+                    self.sync_start,
+                ));
                 self.capture = Some(capture);
                 self.error = None;
             }
@@ -177,6 +190,17 @@ impl AudioState {
         }
     }
 
+    /// Chooses whether a VIS header may start a reception over.
+    pub fn set_vis_restart(&mut self, enabled: bool) {
+        if self.vis_restart == enabled {
+            return;
+        }
+        self.vis_restart = enabled;
+        if let Some(worker) = self.worker.as_ref() {
+            worker.set_vis_restart(enabled);
+        }
+    }
+
     /// Chooses whether a reception may start without a VIS header.
     ///
     /// Kept here as well as pushed to the worker, because a device opened
@@ -199,6 +223,11 @@ impl AudioState {
     #[cfg(test)]
     pub const fn slant(&self) -> bool {
         self.slant
+    }
+
+    #[cfg(test)]
+    pub const fn vis_restart(&self) -> bool {
+        self.vis_restart
     }
 
     /// Returns the physical capture rate, if a device is open.
@@ -266,7 +295,7 @@ impl AudioState {
 
 impl Default for AudioState {
     fn default() -> Self {
-        Self::new(None, None, true)
+        Self::new(None, None, true, true)
     }
 }
 

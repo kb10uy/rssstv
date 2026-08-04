@@ -212,7 +212,7 @@ enum TransmissionStage {
 #[derive(Debug)]
 pub struct TransmissionEncoder {
     image: TxEncoder,
-    fsk: FskEncoder,
+    fsk: Option<FskEncoder>,
     stage: TransmissionStage,
     voice_activation: usize,
     deadline_ps: u64,
@@ -223,7 +223,22 @@ impl TransmissionEncoder {
     pub fn new(mode: Mode, image: RgbImage, station_id: FskId) -> Result<Self, SstvError> {
         Ok(Self {
             image: TxEncoder::new(mode, image)?,
-            fsk: station_id.encoder(),
+            fsk: Some(station_id.encoder()),
+            stage: TransmissionStage::VoiceActivation,
+            voice_activation: 0,
+            deadline_ps: 0,
+        })
+    }
+
+    /// Constructs the same transmission with no station identifier.
+    ///
+    /// The identifier footer goes with it: the 1500 Hz tone exists to introduce
+    /// the FSK symbols, so sending it alone would announce an identifier that
+    /// never arrives.
+    pub fn without_identifier(mode: Mode, image: RgbImage) -> Result<Self, SstvError> {
+        Ok(Self {
+            image: TxEncoder::new(mode, image)?,
+            fsk: None,
             stage: TransmissionStage::VoiceActivation,
             voice_activation: 0,
             deadline_ps: 0,
@@ -232,16 +247,16 @@ impl TransmissionEncoder {
 
     /// Returns the exact duration of this complete transmission.
     pub fn duration(&self) -> SstvDuration {
-        let fsk = self
-            .fsk
-            .clone()
-            .map(|event| u64::from(event.duration_micros()) * 1_000_000)
-            .sum::<u64>();
+        let identification = self.fsk.clone().map_or(0, |fsk| {
+            300 * PS_PER_MS
+                + fsk
+                    .map(|event| u64::from(event.duration_micros()) * 1_000_000)
+                    .sum::<u64>()
+        });
         SstvDuration::from_picos(
             self.raster_start().as_picos()
                 + self.raster_duration().as_picos()
-                + 300 * PS_PER_MS
-                + fsk
+                + identification
                 + 500 * PS_PER_MS,
         )
     }
@@ -324,11 +339,15 @@ impl Iterator for TransmissionEncoder {
                     self.stage = TransmissionStage::Footer;
                 }
                 TransmissionStage::Footer => {
+                    if self.fsk.is_none() {
+                        self.stage = TransmissionStage::Silence;
+                        continue;
+                    }
                     self.stage = TransmissionStage::StationIdentification;
                     return Some(self.emit(TxComponent::Footer, 1500, 300 * PS_PER_MS));
                 }
                 TransmissionStage::StationIdentification => {
-                    if let Some(event) = self.fsk.next() {
+                    if let Some(event) = self.fsk.as_mut().and_then(Iterator::next) {
                         return Some(self.emit(
                             TxComponent::StationIdentification,
                             u32::from(event.tone().frequency_hz()),
@@ -714,6 +733,30 @@ mod tests {
         );
         assert_eq!(duration.as_picos(), silence.until().as_picos());
         assert_eq!(transmission.next(), None);
+    }
+
+    /// An operator who turns the identifier off gets neither the FSK symbols
+    /// nor the footer that introduces them, and the transmission is exactly
+    /// that much shorter.
+    #[test]
+    fn a_transmission_without_an_identifier_ends_after_the_raster() {
+        let mode = Mode::Robot36;
+        let station_id = FskId::new("N0CALL").unwrap();
+        let identified =
+            TransmissionEncoder::new(mode, image(mode, Rgb8::default()), station_id).unwrap();
+        let anonymous =
+            TransmissionEncoder::without_identifier(mode, image(mode, Rgb8::default())).unwrap();
+
+        assert!(anonymous.duration() < identified.duration());
+        assert_eq!(
+            anonymous.raster_start(),
+            identified.raster_start(),
+            "the picture itself is unchanged"
+        );
+        let components: Vec<TxComponent> = anonymous.map(|tone| tone.component()).collect();
+        assert!(!components.contains(&TxComponent::Footer));
+        assert!(!components.contains(&TxComponent::StationIdentification));
+        assert_eq!(components.last(), Some(&TxComponent::Silence));
     }
 
     /// Progress reported by row needs the raster's exact place in the stream:

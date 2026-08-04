@@ -97,6 +97,8 @@ struct Session {
     /// Held here because every demodulator the session builds has to be given
     /// it again: a restarted search is still looking for the same signals.
     sync_start: SyncStart,
+    /// Whether a VIS header may start a reception over, for the same reason.
+    vis_restart: bool,
     refinement: Refinement,
     /// Staged length at which the next refinement attempt is worthwhile.
     refine_next_len: usize,
@@ -110,14 +112,11 @@ struct Session {
 }
 
 impl Session {
-    fn new(sample_rate_hz: u32, sync_start: SyncStart) -> Result<Self, String> {
+    fn new(sample_rate_hz: u32, sync_start: SyncStart, vis_restart: bool) -> Result<Self, String> {
         let mut demodulator =
             Demodulator::new(sample_rate_hz).map_err(|error| error.to_string())?;
         demodulator.set_sync_start(sync_start);
-        // A live receiver has to hear a station starting over, which it cannot
-        // do if the header that starts the new picture is spent on the one
-        // being abandoned.
-        demodulator.set_header_restart(true);
+        demodulator.set_header_restart(vis_restart);
         Ok(Self {
             demodulator,
             decoder: None,
@@ -125,6 +124,7 @@ impl Session {
             published_revision: None,
             searching: true,
             sync_start,
+            vis_restart,
             refinement: Refinement::NotApplicable,
             refine_next_len: 0,
             refine_limit_len: 0,
@@ -143,12 +143,22 @@ impl Session {
         self.demodulator.set_sync_start(scope);
     }
 
+    /// Chooses whether a VIS header may start a reception over, for this
+    /// reception and later ones.
+    fn set_vis_restart(&mut self, enabled: bool) {
+        if self.vis_restart == enabled {
+            return;
+        }
+        self.vis_restart = enabled;
+        self.demodulator.set_header_restart(enabled);
+    }
+
     /// Discards all protocol state.
     ///
     /// Capture overrun breaks the contiguity the demodulator requires, so the
     /// pipeline restarts rather than decoding across the gap.
     fn reset(&mut self) -> Result<(), String> {
-        *self = Self::new(self.sample_rate_hz, self.sync_start)?;
+        *self = Self::new(self.sample_rate_hz, self.sync_start, self.vis_restart)?;
         Ok(())
     }
 
@@ -223,6 +233,7 @@ impl Session {
         self.demodulator =
             Demodulator::new(self.sample_rate_hz).map_err(|error| error.to_string())?;
         self.demodulator.set_sync_start(self.sync_start);
+        self.demodulator.set_header_restart(self.vis_restart);
         self.searching = true;
         Ok(())
     }
@@ -387,11 +398,16 @@ pub(super) fn run(
     mailbox: &Mailbox,
     stop: &AtomicBool,
     slant: &AtomicBool,
+    vis_restart: &AtomicBool,
     sync_start: &Mutex<SyncStart>,
 ) {
     let sample_rate_hz = reader.sample_rate_hz();
     let initial_sync_start = *sync_start.lock().unwrap_or_else(PoisonError::into_inner);
-    let mut session = match Session::new(sample_rate_hz, initial_sync_start) {
+    let mut session = match Session::new(
+        sample_rate_hz,
+        initial_sync_start,
+        vis_restart.load(Ordering::Relaxed),
+    ) {
         Ok(session) => session,
         Err(error) => {
             mailbox.publish(Snapshot {
@@ -420,6 +436,7 @@ pub(super) fn run(
         let samples = &pcm[..reading.count];
         level = follow_peak(level, block_peak(samples), RELEASE);
         session.set_sync_start(*sync_start.lock().unwrap_or_else(PoisonError::into_inner));
+        session.set_vis_restart(vis_restart.load(Ordering::Relaxed));
 
         if reading.is_discontinuous() && session.reset().is_err() {
             error = Some("failed to restart after a capture overrun".to_owned());

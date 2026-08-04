@@ -386,8 +386,8 @@ marked shared are built once and reused across tabs.
 | Tab selector | Shared | Button row with the active tab styled differently |
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
-| Receive action bar | Receive | Buttons, `checkbox`, mode and size text |
-| Transmit action bar | Transmit | Buttons including the transmit trigger |
+| Receive action bar | Receive | Mode and size text |
+| Transmit action bar | Transmit | The transmit trigger, mode and size text |
 | Input level meter | Shared | Signal-colored `progress_bar` |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | DSP panel | Shared | Three toggle buttons |
@@ -395,6 +395,17 @@ marked shared are built once and reused across tabs.
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
 | Status bar | Shared | Text row |
+
+Only controls that do something are built. A feature that has not arrived yet
+is absent rather than shown disabled: a dead button occupies the place its
+working version will take and says nothing the operator can act on. The menu is
+the exception, where a disabled entry names a whole area still to be filled in.
+
+Settings that are chosen once and then left alone live in the menu rather than
+beside the image: whether a transmission ends with the station identifier,
+whether a VIS header may start a reception over, whether receptions are kept,
+and in what format. Each is a check entry under Settings, grouped by what it
+affects.
 
 The input level meter, mode panel, and DSP controls share one bordered
 container. The mode dropdown fills the container width and no tab shows helper

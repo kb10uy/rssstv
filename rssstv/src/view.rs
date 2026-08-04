@@ -1,6 +1,8 @@
 use egui::{Align, Color32, ComboBox, Id, Layout, Panel, ProgressBar, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 
+use rssstv_audio::FaultKind;
+
 use crate::{
     app::{App, Dsp, Entry, Tab},
     canvas,
@@ -47,7 +49,64 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
         .size_range(260.0..=560.0)
         .show(ui, |ui| side_panel(ui, app));
     egui::CentralPanel::default().show(ui, |ui| main_pane(ui, app));
+    device_fault_modal(ui, app);
     action
+}
+
+/// Reports a device that stopped, and offers to open it again.
+///
+/// Shown as a modal because losing the device stops reception outright: the
+/// interface behind it is describing a session that is no longer running, and
+/// the operator has to act before any of it means anything again.
+fn device_fault_modal(ui: &mut Ui, app: &mut App) {
+    let Some(fault) = app.device_fault.clone() else {
+        return;
+    };
+
+    let reason = match fault.kind {
+        FaultKind::Disconnected => app.i18n.text_with(
+            "device-lost-disconnected",
+            &[("device", arg(&fault.device))],
+        ),
+        FaultKind::Invalidated => app
+            .i18n
+            .text_with("device-lost-invalidated", &[("device", arg(&fault.device))]),
+        FaultKind::Backend => app.i18n.text_with(
+            "device-lost-backend",
+            &[
+                ("device", arg(&fault.device)),
+                ("detail", arg(&fault.detail)),
+            ],
+        ),
+    };
+
+    let mut retry = false;
+    let mut dismiss = false;
+    let response = egui::Modal::new(Id::new("device-fault")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.heading(app.i18n.text("device-lost-title"));
+        ui.add_space(8.0);
+        ui.label(reason);
+        ui.add_space(8.0);
+        ui.label(app.i18n.text("device-lost-reception-stopped"));
+        ui.add_space(16.0);
+        ui.horizontal(|ui| {
+            retry = ui
+                .button(app.i18n.text("device-lost-retry"))
+                .on_hover_text(fault.detail.clone())
+                .clicked();
+            dismiss = ui.button(app.i18n.text("device-lost-dismiss")).clicked();
+        });
+    });
+
+    // A click outside the modal is the same acknowledgement as the button:
+    // the report has been read, and the interface should not trap the
+    // operator in it.
+    if retry {
+        app.retry_device();
+    } else if dismiss || response.should_close() {
+        app.dismiss_device_fault();
+    }
 }
 
 fn toolbar(ui: &mut Ui, app: &mut App) {
@@ -622,6 +681,54 @@ mod tests {
         for label in &labels {
             harness.get_by_label(label);
         }
+    }
+
+    fn lost_device() -> rssstv_audio::StreamFault {
+        rssstv_audio::StreamFault {
+            device: "USB Audio CODEC".to_owned(),
+            kind: FaultKind::Disconnected,
+            detail: "the device is not available".to_owned(),
+        }
+    }
+
+    /// A lost device has to name itself: "an audio device stopped" leaves the
+    /// operator guessing which of several is unplugged.
+    #[test]
+    fn a_lost_device_is_named_in_the_report() {
+        let mut app = App::headless();
+        app.device_fault = Some(lost_device());
+
+        let harness = render(&mut app);
+
+        harness.get_by_label_contains("USB Audio CODEC");
+        harness.get_by_label("Retry");
+        harness.get_by_label("Close");
+    }
+
+    /// Closing the report has to clear it, or it returns on the next frame and
+    /// the operator cannot reach the interface behind it.
+    #[test]
+    fn closing_the_report_clears_it() {
+        let mut app = App::headless();
+        app.device_fault = Some(lost_device());
+
+        {
+            let mut harness = render(&mut app);
+            harness.get_by_label("Close").click();
+            harness.run();
+        }
+
+        assert!(app.device_fault.is_none());
+    }
+
+    /// Nothing of the report may be drawn while no device has been lost.
+    #[test]
+    fn no_report_is_drawn_without_a_fault() {
+        let mut app = App::headless();
+
+        let harness = render(&mut app);
+
+        assert!(harness.query_by_label("Retry").is_none());
     }
 
     /// A populated library exercises the entry rows, which an interface built

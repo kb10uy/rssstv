@@ -21,7 +21,7 @@ use cpal::{
 use ringbuf::{HeapRb, traits::Split};
 
 pub use capture::{Capture, CaptureFeed, CaptureReader, Reading, synthetic_capture};
-pub use error::AudioError;
+pub use error::{AudioError, FaultKind, FaultSlot, StreamFault};
 pub use playback::{Playback, PlaybackReader, PlaybackWriter, synthetic_playback};
 
 /// Capture rate preferred by the rest of the project.
@@ -159,7 +159,8 @@ impl AudioHost {
         };
         let (producer, consumer) = HeapRb::<f32>::new(capacity_samples).split();
         let dropped = Arc::new(AtomicU64::new(0));
-        let report = |error: cpal::Error| eprintln!("audio capture error: {error}");
+        let faults = FaultSlot::default();
+        let report = fault_reporter(&faults, &device.name);
         let lanes = channels as usize;
 
         let stream = match sample_format {
@@ -193,7 +194,7 @@ impl AudioHost {
         }
         .map_err(|error| AudioError::Backend(error.to_string()))?;
 
-        let capture = Capture::new(stream, sample_rate, channels);
+        let capture = Capture::new(stream, sample_rate, channels, faults);
         capture.play()?;
         Ok((capture, CaptureReader::new(consumer, dropped, sample_rate)))
     }
@@ -224,7 +225,8 @@ impl AudioHost {
             sample_rate,
             buffer_size: cpal::BufferSize::Default,
         };
-        let report = |error: cpal::Error| eprintln!("audio playback error: {error}");
+        let faults = FaultSlot::default();
+        let report = fault_reporter(&faults, &device.name);
         let lanes = channels as usize;
         let callback_state = Arc::clone(&state);
         let stream = match sample_format {
@@ -255,13 +257,51 @@ impl AudioHost {
             _ => return Err(AudioError::UnsupportedConfiguration(device.name.clone())),
         }
         .map_err(|error| AudioError::Backend(error.to_string()))?;
-        Ok((Playback::new(stream, sample_rate, channels, state), writer))
+        Ok((
+            Playback::new(stream, sample_rate, channels, state, faults),
+            writer,
+        ))
     }
 }
 
 impl Default for AudioHost {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Builds the error callback a stream reports through.
+///
+/// The device name is captured because the callback outlives the borrow of
+/// the device, and because a report is only useful if it says which device
+/// stopped.
+fn fault_reporter(faults: &FaultSlot, device: &str) -> impl FnMut(cpal::Error) + Send + 'static {
+    let faults = faults.clone();
+    let device = device.to_owned();
+    move |error| {
+        let Some(kind) = classify(error.kind()) else {
+            return;
+        };
+        faults.report(StreamFault {
+            device: device.clone(),
+            kind,
+            detail: error.to_string(),
+        });
+    }
+}
+
+/// Decides whether an error ends the stream, and how.
+///
+/// Returning `None` means the stream is still running: a reroute is handled
+/// by the host and an overrun costs samples but not the device, so neither is
+/// worth interrupting the operator for. The samples an overrun dropped are
+/// already counted and reported separately.
+const fn classify(kind: cpal::ErrorKind) -> Option<FaultKind> {
+    match kind {
+        cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::Xrun => None,
+        cpal::ErrorKind::DeviceNotAvailable => Some(FaultKind::Disconnected),
+        cpal::ErrorKind::StreamInvalidated => Some(FaultKind::Invalidated),
+        _ => Some(FaultKind::Backend),
     }
 }
 
@@ -320,5 +360,70 @@ fn preferred_output_rate(
         PREFERRED_SAMPLE_RATE_HZ
     } else {
         fallback
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    /// A reroute and an overrun leave the stream running, so neither may be
+    /// reported as a fault: the interface would tell the operator the device
+    /// was lost while it was still delivering samples.
+    #[rstest]
+    #[case(cpal::ErrorKind::DeviceChanged, None)]
+    #[case(cpal::ErrorKind::Xrun, None)]
+    #[case(cpal::ErrorKind::DeviceNotAvailable, Some(FaultKind::Disconnected))]
+    #[case(cpal::ErrorKind::StreamInvalidated, Some(FaultKind::Invalidated))]
+    #[case(cpal::ErrorKind::HostUnavailable, Some(FaultKind::Backend))]
+    #[case(cpal::ErrorKind::PermissionDenied, Some(FaultKind::Backend))]
+    fn stream_errors_are_classified(
+        #[case] kind: cpal::ErrorKind,
+        #[case] expected: Option<FaultKind>,
+    ) {
+        assert_eq!(classify(kind), expected);
+    }
+
+    #[test]
+    fn a_reporter_names_the_device_that_stopped() {
+        let faults = FaultSlot::default();
+        let mut report = fault_reporter(&faults, "USB Audio CODEC");
+
+        report(cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable));
+
+        let fault = faults.take().expect("the fault should have been recorded");
+        assert_eq!(fault.device, "USB Audio CODEC");
+        assert_eq!(fault.kind, FaultKind::Disconnected);
+        assert!(faults.take().is_none(), "the report should be taken once");
+    }
+
+    /// A failing stream keeps failing; the first report is the one that says
+    /// why, so a later one must not push it out.
+    #[test]
+    fn the_first_report_is_the_one_kept() {
+        let faults = FaultSlot::default();
+        let mut report = fault_reporter(&faults, "device");
+
+        report(cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable));
+        report(cpal::Error::new(cpal::ErrorKind::BackendError));
+
+        assert_eq!(
+            faults.take().map(|fault| fault.kind),
+            Some(FaultKind::Disconnected)
+        );
+    }
+
+    /// An error the stream survives must leave nothing behind for the
+    /// interface to find later.
+    #[test]
+    fn a_survivable_error_records_nothing() {
+        let faults = FaultSlot::default();
+        let mut report = fault_reporter(&faults, "device");
+
+        report(cpal::Error::new(cpal::ErrorKind::Xrun));
+
+        assert!(faults.take().is_none());
     }
 }

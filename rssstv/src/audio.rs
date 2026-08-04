@@ -1,4 +1,6 @@
-use rssstv_audio::{AudioHost, Capture, InputDevice, OutputDevice, Playback, PlaybackWriter};
+use rssstv_audio::{
+    AudioHost, Capture, InputDevice, OutputDevice, Playback, PlaybackWriter, StreamFault,
+};
 
 use crate::receive::{Snapshot, Worker};
 
@@ -180,6 +182,58 @@ impl AudioState {
     /// Returns whether a device is currently delivering samples.
     pub const fn is_capturing(&self) -> bool {
         self.capture.is_some()
+    }
+
+    /// Takes the report the capture stream left if it stopped on its own.
+    ///
+    /// The stream is dropped along with the worker reading from it: a device
+    /// that reported a fault will not deliver again, and leaving the handle in
+    /// place would let the interface keep claiming to be capturing.
+    pub fn take_capture_fault(&mut self) -> Option<StreamFault> {
+        let fault = self.capture.as_ref()?.take_fault()?;
+        self.worker = None;
+        self.capture = None;
+        self.snapshot = Snapshot::default();
+        Some(fault)
+    }
+
+    /// Enumerates devices again, keeping the selection when it survived.
+    ///
+    /// Called after a device is lost, so the lists the operator picks from
+    /// describe what is actually attached now.
+    pub fn rescan(&mut self) {
+        if let Ok(devices) = self.host.input_devices() {
+            self.devices = devices;
+        }
+        if let Ok(devices) = self.host.output_devices() {
+            self.output_devices = devices;
+        }
+        if !self
+            .device
+            .as_ref()
+            .is_some_and(|device| self.devices.contains(device))
+        {
+            self.device = None;
+        }
+        if !self
+            .output_device
+            .as_ref()
+            .is_some_and(|device| self.output_devices.contains(device))
+        {
+            self.output_device = None;
+        }
+    }
+
+    /// Opens the selected device again after a fault.
+    ///
+    /// Returns whether capture is running afterwards, so the caller can leave
+    /// the report in front of the operator when it is not.
+    pub fn reopen(&mut self) -> bool {
+        let Some(device) = self.device.clone() else {
+            return false;
+        };
+        self.open(&device);
+        self.is_capturing()
     }
 }
 

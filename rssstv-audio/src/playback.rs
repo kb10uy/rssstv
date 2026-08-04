@@ -9,7 +9,10 @@ use ringbuf::{
     traits::{Consumer, Observer, Producer, Split},
 };
 
-use crate::AudioError;
+use crate::{
+    AudioError,
+    error::{FaultSlot, StreamFault},
+};
 
 #[derive(Debug, Default)]
 pub(crate) struct PlaybackState {
@@ -29,6 +32,7 @@ pub struct Playback {
     sample_rate_hz: u32,
     channels: u16,
     state: Arc<PlaybackState>,
+    faults: FaultSlot,
 }
 
 impl Playback {
@@ -37,13 +41,20 @@ impl Playback {
         sample_rate_hz: u32,
         channels: u16,
         state: Arc<PlaybackState>,
+        faults: FaultSlot,
     ) -> Self {
         Self {
             stream,
             sample_rate_hz,
             channels,
             state,
+            faults,
         }
+    }
+
+    /// Takes the report the stream left if it stopped on its own.
+    pub fn take_fault(&self) -> Option<StreamFault> {
+        self.faults.take()
     }
 
     /// Returns the physical playback rate in hertz.

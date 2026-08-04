@@ -86,3 +86,11 @@ error-no-output-device = Select an output device first
 error-invalid-station-call = Invalid station callsign: { $error }
 
 geometry = { $mode } · { $width }×{ $height }
+
+device-lost-title = Audio device stopped
+device-lost-disconnected = { $device } is no longer available. It may have been unplugged or switched off.
+device-lost-invalidated = The stream on { $device } has to be started again.
+device-lost-backend = { $device } stopped: { $detail }
+device-lost-reception-stopped = Reception has stopped. Reconnect the device and retry, or choose another from the Settings menu.
+device-lost-retry = Retry
+device-lost-dismiss = Close

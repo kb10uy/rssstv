@@ -4,6 +4,8 @@ use std::sync::{
 };
 
 use cpal::{FromSample, Sample, Stream, traits::StreamTrait};
+
+use crate::error::{FaultSlot, StreamFault};
 use ringbuf::{
     HeapCons, HeapProd,
     traits::{Consumer, Observer, Producer, Split},
@@ -72,15 +74,30 @@ pub struct Capture {
     stream: Stream,
     sample_rate_hz: u32,
     channels: u16,
+    faults: FaultSlot,
 }
 
 impl Capture {
-    pub(crate) const fn new(stream: Stream, sample_rate_hz: u32, channels: u16) -> Self {
+    pub(crate) const fn new(
+        stream: Stream,
+        sample_rate_hz: u32,
+        channels: u16,
+        faults: FaultSlot,
+    ) -> Self {
         Self {
             stream,
             sample_rate_hz,
             channels,
+            faults,
         }
+    }
+
+    /// Takes the report the stream left if it stopped on its own.
+    ///
+    /// The device is not usable again after one of these; the caller has to
+    /// open it anew, or pick another.
+    pub fn take_fault(&self) -> Option<StreamFault> {
+        self.faults.take()
     }
 
     /// Returns the physical capture rate in hertz.

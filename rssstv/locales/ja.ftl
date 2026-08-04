@@ -86,3 +86,11 @@ error-no-output-device = 出力デバイスを選択してください
 error-invalid-station-call = 自局コールが不正です: { $error }
 
 geometry = { $mode } · { $width }×{ $height }
+
+device-lost-title = オーディオデバイスが停止しました
+device-lost-disconnected = { $device } が利用できなくなりました。取り外されたか、電源が切れた可能性があります。
+device-lost-invalidated = { $device } のストリームを開き直す必要があります。
+device-lost-backend = { $device } が停止しました: { $detail }
+device-lost-reception-stopped = 受信は停止しています。デバイスを接続し直して再試行するか、設定メニューから別のデバイスを選んでください。
+device-lost-retry = 再試行
+device-lost-dismiss = 閉じる

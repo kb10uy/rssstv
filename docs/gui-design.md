@@ -33,6 +33,17 @@ The menu bar is the one deliberate exception and stays in `menu`, because its
 split is between two renderers of a shared model rather than between operating
 systems.
 
+A device that stops on its own is reported in front of the interface. The
+stream error callback runs on the host's thread and cannot wait for anything,
+so it leaves a `StreamFault` in a shared slot that the interface takes on its
+next frame; the first report is kept, because a failing stream keeps failing
+and the first one says why. A reroute and an overrun are deliberately not
+faults: the stream survives both, and the samples an overrun dropped are
+already counted separately. Taking a fault drops the capture handle and the
+receive worker, enumerates the devices again so the menu offers what is
+actually attached, and raises a modal naming the device, offering to open it
+again or to dismiss the report.
+
 Diagnostics are appended to a log file, and echoed to standard error when
 there is a console to read it. A release build is linked as a Windows GUI
 subsystem executable and has no console, so the reports that matter most would

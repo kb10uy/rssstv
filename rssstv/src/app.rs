@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use rssstv_audio::{InputDevice, OutputDevice, Playback};
+use rssstv_audio::{InputDevice, OutputDevice, Playback, StreamFault};
 use rssstv_fskid::FskId;
 use rssstv_sstv::{
     image::RgbImage,
@@ -160,6 +160,12 @@ pub struct App {
     pub composite_raster: Raster,
     pub tx_snapshot: TxSnapshot,
     pub tx_error: Option<String>,
+    /// The device fault waiting to be acknowledged, if one is.
+    ///
+    /// A lost device is reported in front of the interface rather than on the
+    /// status line: it stops reception outright, and the operator has to
+    /// choose a device before anything works again.
+    pub device_fault: Option<StreamFault>,
     /// How much the whole interface is scaled.
     ///
     /// Held here rather than read from egui because it has to be restored
@@ -260,6 +266,7 @@ impl App {
             composite_raster: Raster::test_pattern(settings.tx_mode),
             tx_snapshot: TxSnapshot::default(),
             tx_error: None,
+            device_fault: None,
             ui_scale: settings.ui_scale,
             paths,
             config,
@@ -487,6 +494,7 @@ impl App {
 
     /// Adopts anything the receive worker produced since the last frame.
     pub fn poll_audio(&mut self) {
+        self.poll_device_fault();
         if let Some(frame) = self.audio.poll()
             && let Some(raster) = Raster::from_frame(frame)
         {
@@ -501,6 +509,34 @@ impl App {
         }
         self.poll_transmit();
         self.report_activity();
+    }
+
+    /// Picks up a device that stopped and puts it in front of the operator.
+    ///
+    /// The device lists are enumerated again at the same time, so whatever the
+    /// operator reaches for next describes what is attached now rather than
+    /// what was attached when the application started.
+    fn poll_device_fault(&mut self) {
+        let Some(fault) = self.audio.take_capture_fault() else {
+            return;
+        };
+        crate::log::note(&format!("capture stopped: {fault}"));
+        self.audio.rescan();
+        self.device_fault = Some(fault);
+    }
+
+    /// Opens the device again after a fault, keeping the report up if it is
+    /// still not there.
+    pub fn retry_device(&mut self) {
+        self.audio.rescan();
+        if self.audio.reopen() {
+            self.device_fault = None;
+        }
+    }
+
+    /// Acknowledges the fault without opening anything.
+    pub fn dismiss_device_fault(&mut self) {
+        self.device_fault = None;
     }
 
     /// Tells the platform what the application is doing, when that changes.

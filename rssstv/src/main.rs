@@ -85,6 +85,17 @@ fn load_face(database: &fontdb::Database, family: &str) -> Option<(Vec<u8>, u32)
     Some((data, index))
 }
 
+/// The name the desktop environment knows this application by.
+///
+/// Set explicitly because eframe otherwise derives it from the window title,
+/// which carries the version, so the identity would change with every release.
+/// On Wayland this becomes the surface's `app_id`, which is the only thing a
+/// compositor can match a window against a desktop entry with, and therefore
+/// the only route to a window icon there: winit's Wayland backend discards the
+/// pixels [`platform::window_icon`] provides. It has to equal the base name of
+/// the installed `rssstv.desktop`.
+const APP_ID: &str = env!("CARGO_PKG_NAME");
+
 /// The window size the interface is laid out for, in points.
 const DEFAULT_WINDOW_SIZE: [f32; 2] = [1024.0, 768.0];
 
@@ -117,6 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // opens at a fraction of the size asked for. `fit_to_monitor` does the
     // same job once the real scale has arrived.
     let mut viewport = egui::ViewportBuilder::default()
+        .with_app_id(APP_ID)
         .with_clamp_size_to_monitor_size(false)
         .with_inner_size(DEFAULT_WINDOW_SIZE);
     match platform::window_icon() {

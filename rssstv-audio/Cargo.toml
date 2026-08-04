@@ -6,7 +6,14 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-cpal = "0.18.1"
+# The PulseAudio host is asked for on the platforms that have one. Raw ALSA
+# names every device after its card, which leaves a laptop offering a dozen
+# devices called `sof-hda-dsp`; a sound server names the endpoint the operator
+# plugged in, so a rig appears as `FTDX10 Input`. The feature is a pure-Rust
+# client, adds no system build dependency, and is ignored on other platforms.
+# PipeWire answers on the same socket, and ALSA remains the fallback for a
+# machine running no server at all.
+cpal = { version = "0.18.1", features = ["pulseaudio"] }
 ringbuf = "0.5.1"
 thiserror.workspace = true
 

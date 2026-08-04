@@ -103,6 +103,16 @@ does Windows when the build had no resource compiler. The executable also
 carries a `VERSIONINFO` resource generated from `Cargo.toml`, so the version
 Explorer reports cannot drift from the version the application reports.
 
+Wayland is the exception, and no icon the application supplies reaches it:
+winit's Wayland backend implements `set_window_icon` as a no-op, because the
+protocol has no way to carry one. There a window is identified by its `app_id`,
+which the compositor matches against an installed desktop entry and takes the
+icon from that. The application therefore sets an explicit `app_id` of
+`rssstv`, rather than letting eframe derive one from the window title — the
+title carries the version, so the derived identity would change with every
+release and match no entry at all. `rssstv/assets/rssstv.desktop` is the entry
+that name expects; README records where it and the icon are installed.
+
 Reproducing a specific visual style is not a goal. The design mock defines
 placement and information hierarchy only.
 
@@ -120,6 +130,22 @@ not add SSTV or DSP behavior.
 `CaptureReader`, and an output device into a `Playback` and `PlaybackWriter`.
 The device handles stay on the thread that opened them because host streams are
 not `Send` on every platform. The queue halves move into the workers.
+
+The operator picks a device by reading its name, so the list is taken from the
+sound server where there is one. On Linux that means the PulseAudio protocol,
+which PipeWire also answers: it names the endpoint that was plugged in, so a
+rig reads as `FTDX10 Input`. Raw ALSA names every entry after its card
+instead — one card appears once per PCM and once per plugin, all of them called
+`sof-hda-dsp` — and is used only on a machine running no server at all. The
+PulseAudio client is pure Rust, so asking for it costs the Linux build no
+system dependency.
+
+Enumeration then gives every device a name no other device in the list carries.
+A device is chosen by name — by the menu, and by the configuration that
+remembers the choice — so a shared name would leave the second device
+unreachable. A shared name takes the host's own identifier beside it, which is
+the ALSA PCM name, as in `sof-hda-dsp (hw:CARD=0,DEV=6)`, or the WASAPI
+interface. Namesakes that even that cannot separate are numbered.
 
 `rssstv-audio` is a new crate. It owns device enumeration, stream formats, and
 callback scheduling, and exposes only normalized mono `f32` blocks with sample

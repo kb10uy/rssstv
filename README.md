@@ -33,6 +33,24 @@ sent at each moment — keying, unkeying, connecting, or arriving on a band — 
 written in `config.toml` and defaults to plain PTT. See
 [docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
 
+On Linux the window icon comes from a desktop entry rather than from the
+application, because a Wayland compositor has no other way to learn one. The
+application names itself `rssstv`, and the compositor looks for the entry of
+the same name; installing it and the icon it points at is what makes the icon
+appear in the task switcher and the dock:
+
+```text
+install -Dm644 rssstv/assets/rssstv.desktop \
+  ~/.local/share/applications/rssstv.desktop
+install -Dm644 rssstv/assets/icon.png \
+  ~/.local/share/icons/hicolor/512x512/apps/rssstv.png
+update-desktop-database ~/.local/share/applications
+```
+
+The entry's `Exec=rssstv` expects the executable on `PATH`, which
+`cargo install --path rssstv` arranges; point it at the build directory
+instead if you are running from `cargo run`.
+
 [templates/](templates) holds the five templates MMSSTV ships, ported to the
 KDL format. Copy the ones you want into the application's templates directory;
 each file records in a comment what its original did that this format cannot.

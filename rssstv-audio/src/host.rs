@@ -12,7 +12,7 @@ use ringbuf::{HeapRb, traits::Split};
 use crate::{
     AudioError, Capture, CaptureReader, FaultKind, FaultSlot, InputDevice, MINIMUM_SAMPLE_RATE_HZ,
     OutputDevice, Playback, PlaybackWriter, StreamFault, capture,
-    device::{describe, describe_output, preferred_output_rate, preferred_rate},
+    device::{describe, named, preferred_output_rate, preferred_rate},
     playback,
 };
 
@@ -39,15 +39,27 @@ impl AudioHost {
             .host
             .input_devices()
             .map_err(|error| AudioError::Backend(error.to_string()))?;
-        Ok(devices
+        let described = devices
             .filter(|device| device.default_input_config().is_ok())
             .filter_map(|device| describe(&device))
+            .collect();
+        Ok(named(described)
+            .map(|(id, name)| InputDevice { id, name })
             .collect())
     }
 
     /// Returns the host's default input device.
+    ///
+    /// The default is looked up in the enumeration rather than described on
+    /// its own, because a name is only distinct against the rest of the list
+    /// and one described alone would not match the entry the operator sees.
+    /// A default the crate cannot open is reported as no default at all.
     pub fn default_input_device(&self) -> Option<InputDevice> {
-        describe(&self.host.default_input_device()?)
+        let id = self.host.default_input_device()?.id().ok()?;
+        self.input_devices()
+            .ok()?
+            .into_iter()
+            .find(|device| device.id == id)
     }
 
     /// Lists usable playback devices.
@@ -56,15 +68,22 @@ impl AudioHost {
             .host
             .output_devices()
             .map_err(|error| AudioError::Backend(error.to_string()))?;
-        Ok(devices
+        let described = devices
             .filter(|device| device.default_output_config().is_ok())
-            .filter_map(|device| describe_output(&device))
+            .filter_map(|device| describe(&device))
+            .collect();
+        Ok(named(described)
+            .map(|(id, name)| OutputDevice { id, name })
             .collect())
     }
 
     /// Returns the host's default playback device.
     pub fn default_output_device(&self) -> Option<OutputDevice> {
-        describe_output(&self.host.default_output_device()?)
+        let id = self.host.default_output_device()?.id().ok()?;
+        self.output_devices()
+            .ok()?
+            .into_iter()
+            .find(|device| device.id == id)
     }
 
     /// Opens `device` for capture and starts delivery.

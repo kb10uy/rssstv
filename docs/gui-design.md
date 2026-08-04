@@ -33,6 +33,16 @@ The menu bar is the one deliberate exception and stays in `menu`, because its
 split is between two renderers of a shared model rather than between operating
 systems.
 
+Diagnostics are appended to a log file, and echoed to standard error when
+there is a console to read it. A release build is linked as a Windows GUI
+subsystem executable and has no console, so the reports that matter most would
+otherwise be discarded exactly when nobody can see them. The file is kept
+under the state directory — `XDG_STATE_HOME` on Linux and the local half of
+the data directory elsewhere — rather than alongside the configuration, which
+on Windows is the roaming profile and would synchronize a log describing
+hardware the other machine does not have. It is started again once it passes a
+megabyte, keeping one turnover.
+
 Sleep is held off while a picture is moving. The application reports an
 `Activity` of `Receiving` while a raster is being acquired or decoded, and
 `Transmitting` while a transmission is priming, producing, or draining;

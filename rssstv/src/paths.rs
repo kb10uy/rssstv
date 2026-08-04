@@ -21,6 +21,7 @@ pub struct AppPaths {
     stocks_dir: PathBuf,
     sent_dir: PathBuf,
     received_dir: PathBuf,
+    log_file: PathBuf,
 }
 
 impl AppPaths {
@@ -35,10 +36,20 @@ impl AppPaths {
             .and_then(|directories| directories.picture_dir().map(Path::to_path_buf))
             .unwrap_or_else(|| base_dirs.home_dir().join("Pictures"));
 
+        // The log belongs to the machine it was written on, not to the
+        // account: on Windows `data_dir` is the roaming profile, which would
+        // synchronize a log describing hardware the other machine does not
+        // have. Linux keeps a directory for exactly this; elsewhere the local
+        // half of the data directory is the closest equivalent.
+        let state_dir = base_dirs
+            .state_dir()
+            .unwrap_or_else(|| base_dirs.data_local_dir());
+
         Ok(Self::from_roots(
             base_dirs.config_dir().join(APP_DIRECTORY),
             base_dirs.data_dir().join(APP_DIRECTORY),
             pictures_dir.join("RSSSTV"),
+            state_dir.join(APP_DIRECTORY),
         ))
     }
 
@@ -46,6 +57,7 @@ impl AppPaths {
         config_dir: PathBuf,
         data_dir: PathBuf,
         pictures_dir: PathBuf,
+        state_dir: PathBuf,
     ) -> Self {
         Self {
             config_file: config_dir.join("config.toml"),
@@ -54,6 +66,7 @@ impl AppPaths {
             stocks_dir: pictures_dir.join("Stocks"),
             sent_dir: pictures_dir.join("Sent"),
             received_dir: pictures_dir.join("Received"),
+            log_file: state_dir.join("logs").join("rssstv.log"),
         }
     }
 
@@ -65,8 +78,16 @@ impl AppPaths {
             )
         })?;
 
+        let log_dir = self.log_file.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the log file has no parent directory",
+            )
+        })?;
+
         for directory in [
             config_dir,
+            log_dir,
             &self.templates_dir,
             &self.assets_dir,
             &self.stocks_dir,
@@ -98,6 +119,10 @@ impl AppPaths {
 
     pub fn stocks_dir(&self) -> &Path {
         &self.stocks_dir
+    }
+
+    pub fn log_file(&self) -> &Path {
+        &self.log_file
     }
 }
 
@@ -151,6 +176,7 @@ mod tests {
             root.0.join("config"),
             root.0.join("data"),
             root.0.join("pictures"),
+            root.0.join("state"),
         );
 
         paths.initialize().unwrap();
@@ -168,6 +194,25 @@ mod tests {
         ] {
             assert!(directory.is_dir());
         }
+        assert!(
+            paths.log_file.parent().unwrap().is_dir(),
+            "the log has to have somewhere to be written before anything reports"
+        );
+    }
+
+    /// The log describes one machine's hardware, so it must not be written
+    /// where the account's roaming profile would synchronize it.
+    #[test]
+    fn the_log_is_kept_apart_from_the_roaming_data_directory() {
+        let paths = AppPaths::from_roots(
+            PathBuf::from("config"),
+            PathBuf::from("data"),
+            PathBuf::from("pictures"),
+            PathBuf::from("state"),
+        );
+
+        assert!(paths.log_file.starts_with("state"));
+        assert!(!paths.log_file.starts_with("data"));
     }
 
     #[test]
@@ -177,6 +222,7 @@ mod tests {
             root.0.join("config"),
             root.0.join("data"),
             root.0.join("pictures"),
+            root.0.join("state"),
         );
         fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
         fs::write(&paths.config_file, "callsign = \"JA1ABC\"\n").unwrap();

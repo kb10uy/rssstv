@@ -14,6 +14,7 @@ egui_extras.workspace = true
 fluent-bundle.workspace = true
 fontdb.workspace = true
 image.workspace = true
+jiff.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
 rssstv-fskid = { path = "../rssstv-fskid" }

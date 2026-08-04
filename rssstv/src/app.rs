@@ -218,7 +218,12 @@ impl App {
     pub(crate) fn headless_on(platform: Box<dyn Platform>) -> Self {
         Self::from_parts(
             AudioState::disconnected(),
-            AppPaths::from_roots(PathBuf::new(), PathBuf::new(), PathBuf::new()),
+            AppPaths::from_roots(
+                PathBuf::new(),
+                PathBuf::new(),
+                PathBuf::new(),
+                PathBuf::new(),
+            ),
             Config::detached(),
             &Settings::default(),
             platform,
@@ -865,6 +870,7 @@ mod tests {
             root.0.join("config"),
             root.0.join("data"),
             root.0.join("pictures"),
+            root.0.join("state"),
         );
         paths.initialize().unwrap();
         fs::write(paths.templates_dir().join("alpha.kdl"), "").unwrap();
@@ -1146,6 +1152,7 @@ mod tests {
             root.0.join("config"),
             root.0.join("data"),
             root.0.join("pictures"),
+            root.0.join("state"),
         );
         paths.initialize().unwrap();
         fs::write(paths.templates_dir().join("beta.kdl"), "").unwrap();

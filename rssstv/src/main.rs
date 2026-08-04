@@ -11,6 +11,7 @@ mod audio;
 mod canvas;
 mod config;
 mod i18n;
+mod log;
 mod menu;
 mod paths;
 mod platform;
@@ -58,7 +59,7 @@ fn font_definitions(database: &fontdb::Database) -> FontDefinitions {
     }
 
     if installed.is_empty() {
-        eprintln!("no system UI font matched; using the bundled fonts");
+        log::note("no system UI font matched; using the bundled fonts");
     }
     for family in installed.iter().rev() {
         for target in [FontFamily::Proportional, FontFamily::Monospace] {
@@ -111,6 +112,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let paths = paths::AppPaths::discover()?;
     paths.initialize()?;
+    if let Err(error) = log::open(paths.log_file()) {
+        eprintln!("could not open the log file: {error}");
+    }
 
     // eframe's own clamp converts the monitor to points with the scale factor
     // winit reports before the window exists. A Wayland compositor only sends
@@ -123,7 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_inner_size(DEFAULT_WINDOW_SIZE);
     match platform::window_icon() {
         Some(icon) => viewport = viewport.with_icon(icon),
-        None => eprintln!("could not load the application icon; using the platform default"),
+        None => log::note("could not load the application icon; using the platform default"),
     }
 
     let options = eframe::NativeOptions {
@@ -194,7 +198,7 @@ impl Interface {
         let menu = match menu::Native::install(cc, &model) {
             Ok(menu) => Some(menu),
             Err(error) => {
-                eprintln!("could not install the platform menu bar: {error}");
+                log::note(&format!("could not install the platform menu bar: {error}"));
                 None
             }
         };

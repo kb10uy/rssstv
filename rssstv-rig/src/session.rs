@@ -170,22 +170,16 @@ mod tests {
     const NO_VFO: &str = "chk_vfo:\nChkVFO: 0\nRPRT 0\n";
     const DONE: &str = "RPRT 0\n";
 
-    fn script_with(event: Event, words: &[&[&str]]) -> Script {
+    fn script_with(event: Event, commands: &str) -> Script {
         let mut script = Script::default();
-        script.set(
-            event,
-            words
-                .iter()
-                .map(|command| Command::new(command.iter().copied()).unwrap())
-                .collect(),
-        );
+        script.set(event, Command::parse_script(commands));
         script
     }
 
     #[test]
     fn opening_sends_what_the_operator_attached_to_it() {
         let fake = FakeRig::spawn(&[NO_VFO, DONE, DONE]);
-        let script = script_with(Event::Open, &[&["M", "USB", "0"], &["L", "RFPOWER", "0.4"]]);
+        let script = script_with(Event::Open, "M USB 0\nL RFPOWER 0.4");
 
         let session = Session::open(&fake.address, TEST_TIMEOUT, script).unwrap();
         drop(session);
@@ -212,7 +206,7 @@ mod tests {
     #[test]
     fn a_refused_command_abandons_the_rest_of_the_event() {
         let fake = FakeRig::spawn(&[NO_VFO, "RPRT -1\n", DONE]);
-        let script = script_with(Event::Transmit, &[&["M", "PKTUSB", "0"], &["T", "1"]]);
+        let script = script_with(Event::Transmit, "M PKTUSB 0\nT 1");
         let mut session = Session::open(&fake.address, TEST_TIMEOUT, script).unwrap();
 
         let error = session.fire(Event::Transmit).unwrap_err();
@@ -251,11 +245,11 @@ mod tests {
         let mut script = Script::default();
         script.set_band(
             Band::from_name("40m").unwrap(),
-            vec![Command::new(["\\set_ant", "1", "0"]).unwrap()],
+            Command::parse_script("\\set_ant 1 0"),
         );
         script.set_band(
             Band::from_name("20m").unwrap(),
-            vec![Command::new(["\\set_ant", "2", "0"]).unwrap()],
+            Command::parse_script("\\set_ant 2 0"),
         );
         let mut session = Session::open(&fake.address, TEST_TIMEOUT, script).unwrap();
 
@@ -291,7 +285,7 @@ mod tests {
         let mut script = Script::default();
         script.set_band(
             Band::from_name("40m").unwrap(),
-            vec![Command::new(["\\set_ant", "1", "0"]).unwrap()],
+            Command::parse_script("\\set_ant 1 0"),
         );
         let mut session = Session::open(&fake.address, TEST_TIMEOUT, script).unwrap();
 

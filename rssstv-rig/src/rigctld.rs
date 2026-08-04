@@ -107,7 +107,7 @@ impl Rigctld {
     /// one is a property of the command, and the operator writing them knows
     /// how their own `rigctld` was started better than a guess here would.
     pub fn run(&mut self, command: &Command) -> Result<Response, RigError> {
-        self.send(command.words())
+        self.send(command.line())
     }
 
     /// Asks what the rig is tuned to.
@@ -120,11 +120,11 @@ impl Rigctld {
 
     /// Sends one of this crate's own commands, addressed as `rigctld` wants.
     fn query(&mut self, name: &str) -> Result<Response, RigError> {
-        let mut words = vec![name.to_owned()];
         if self.vfo_argument {
-            words.push("currVFO".to_owned());
+            self.send(&format!("{name} currVFO"))
+        } else {
+            self.send(name)
         }
-        self.send(&words)
     }
 
     /// Asks whether `rigctld` was started expecting a VFO on every command.
@@ -132,14 +132,13 @@ impl Rigctld {
     /// A failure here is not one: an installation too old to know the question
     /// is also one that does not want the argument, so the answer is no.
     fn asks_for_a_vfo(&mut self) -> bool {
-        self.send(&["\\chk_vfo".to_owned()])
+        self.send("\\chk_vfo")
             .ok()
             .and_then(|response| response.number())
             .is_some_and(|answer| answer == 1)
     }
 
-    fn send(&mut self, words: &[String]) -> Result<Response, RigError> {
-        let line = words.join(" ");
+    fn send(&mut self, line: &str) -> Result<Response, RigError> {
         writeln!(self.writer, "+{line}")
             .and_then(|()| self.writer.flush())
             .map_err(|error| RigError::Transport(error.to_string()))?;
@@ -156,18 +155,20 @@ impl Rigctld {
             let trimmed = raw.trim_end_matches(['\r', '\n']);
             if let Some(status) = trimmed.strip_prefix("RPRT ") {
                 let code: i32 = status.trim().parse().map_err(|_| RigError::Unreadable {
-                    command: line.clone(),
+                    command: line.to_owned(),
                 })?;
                 if code != 0 {
                     return Err(RigError::Refused {
-                        command: line,
+                        command: line.to_owned(),
                         code,
                     });
                 }
                 return Ok(Response { lines });
             }
             if lines.len() >= MAXIMUM_RESPONSE_LINES {
-                return Err(RigError::Unreadable { command: line });
+                return Err(RigError::Unreadable {
+                    command: line.to_owned(),
+                });
             }
             lines.push(trimmed.to_owned());
         }
@@ -272,7 +273,7 @@ mod tests {
         let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 1\nRPRT 0\n", "set_level:\nRPRT 0\n"]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        let command = Command::new(["L", "MONITOR_GAIN", "0.15"]).unwrap();
+        let command = Command::parse("L MONITOR_GAIN 0.15").unwrap();
         assert!(rig.run(&command).is_ok());
         assert_eq!(fake.received()[1], "+L MONITOR_GAIN 0.15");
     }
@@ -282,7 +283,7 @@ mod tests {
         let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 0\nRPRT 0\n", "set_ptt:\nRPRT -11\n"]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        let command = Command::new(["T", "1"]).unwrap();
+        let command = Command::parse("T 1").unwrap();
         assert_eq!(
             rig.run(&command),
             Err(RigError::Refused {

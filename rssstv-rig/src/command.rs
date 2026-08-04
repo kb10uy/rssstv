@@ -2,46 +2,57 @@ use std::collections::BTreeMap;
 
 use crate::{band::Band, error::RigError};
 
-/// One `rigctld` command, held as the words it is sent as.
+/// One `rigctld` command, as the line it is sent as.
 ///
-/// Split rather than kept as a line because the operator writes these in the
-/// configuration file. A level name and its value are separate arguments, and
-/// storing them apart means neither this crate nor the operator has to know a
-/// quoting rule for the ones that contain spaces.
+/// A line rather than a list of arguments, because that is what `rigctld`
+/// reads and what the operator writes: the protocol splits the line on
+/// whitespace itself, so an argument this crate could keep separate is not one
+/// the far end could tell apart anyway.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Command(Vec<String>);
+pub struct Command(String);
 
 impl Command {
-    /// Builds a command from its words, rejecting one that names nothing.
-    pub fn new<I, S>(words: I) -> Result<Self, RigError>
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        let words: Vec<String> = words
-            .into_iter()
-            .map(Into::into)
-            .filter(|word| !word.is_empty())
-            .collect();
-        if words.is_empty() {
+    /// Reads one command, rejecting a line that names nothing.
+    ///
+    /// Whitespace is normalized on the way in, so a line spaced out to read
+    /// well in the configuration file is sent as the protocol wants it.
+    pub fn parse(line: &str) -> Result<Self, RigError> {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() {
             return Err(RigError::EmptyCommand);
         }
-        Ok(Self(words))
+        Ok(Self(line))
     }
 
-    pub fn words(&self) -> &[String] {
-        &self.0
+    /// Reads a command per line, skipping the ones that name nothing.
+    ///
+    /// A blank line is spacing rather than a command, so it is passed over
+    /// instead of being refused: the operator is writing a script, and how it
+    /// is laid out is theirs.
+    pub fn parse_script(text: &str) -> Vec<Self> {
+        text.lines()
+            .filter_map(|line| Self::parse(line).ok())
+            .collect()
+    }
+
+    /// Writes `commands` back out as the script they were read from.
+    pub fn script(commands: &[Self]) -> String {
+        commands
+            .iter()
+            .map(Self::line)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// The command as `rigctld` reads it, without the protocol's own framing.
-    pub fn line(&self) -> String {
-        self.0.join(" ")
+    pub fn line(&self) -> &str {
+        &self.0
     }
 }
 
 impl core::fmt::Display for Command {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str(&self.line())
+        formatter.write_str(&self.0)
     }
 }
 
@@ -86,11 +97,11 @@ impl Event {
     /// Keying is the one thing rig control exists for here, so transmit and
     /// receive have to work before anything is configured. The rest of the
     /// events are the operator's own and start out empty.
-    fn default_words(self) -> &'static [&'static [&'static str]] {
+    const fn default_script(self) -> &'static str {
         match self {
-            Self::Transmit => &[&["T", "1"]],
-            Self::Receive => &[&["T", "0"]],
-            Self::Open | Self::Close => &[],
+            Self::Transmit => "T 1",
+            Self::Receive => "T 0",
+            Self::Open | Self::Close => "",
         }
     }
 }
@@ -112,14 +123,7 @@ impl Default for Script {
         Self {
             events: Event::ALL
                 .into_iter()
-                .map(|event| {
-                    let commands = event
-                        .default_words()
-                        .iter()
-                        .map(|words| Command::new(words.iter().copied()).expect("a named default"))
-                        .collect();
-                    (event, commands)
-                })
+                .map(|event| (event, Command::parse_script(event.default_script())))
                 .collect(),
             bands: BTreeMap::new(),
         }
@@ -171,18 +175,41 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn a_command_keeps_the_words_it_was_given() {
-        let command = Command::new(["L", "MONITOR_GAIN", "0.15"]).unwrap();
-        assert_eq!(command.words(), ["L", "MONITOR_GAIN", "0.15"]);
-        assert_eq!(command.line(), "L MONITOR_GAIN 0.15");
+    /// A line laid out to read in the configuration file has to reach the rig
+    /// as the protocol wants it, which is one space between words.
+    #[rstest]
+    #[case("L MONITOR_GAIN 0.15", "L MONITOR_GAIN 0.15")]
+    #[case("  T   1  ", "T 1")]
+    #[case("\\set_ptt 1", "\\set_ptt 1")]
+    fn a_command_is_read_as_the_line_it_is_sent_as(#[case] written: &str, #[case] expected: &str) {
+        assert_eq!(Command::parse(written).unwrap().line(), expected);
     }
 
     #[rstest]
-    #[case::nothing(vec![])]
-    #[case::only_empty_words(vec!["", ""])]
-    fn a_command_that_names_nothing_is_refused(#[case] words: Vec<&str>) {
-        assert_eq!(Command::new(words), Err(RigError::EmptyCommand));
+    #[case::nothing("")]
+    #[case::only_spacing("   \t ")]
+    fn a_command_that_names_nothing_is_refused(#[case] written: &str) {
+        assert_eq!(Command::parse(written), Err(RigError::EmptyCommand));
+    }
+
+    /// The operator is writing a script, so how it is laid out is theirs: a
+    /// blank line between two commands is spacing rather than a third command.
+    #[test]
+    fn a_script_is_one_command_per_line_and_survives_a_round_trip() {
+        let script = "M PKTUSB 0\n\nL MONITOR_GAIN 0.15\nT 1\n";
+        let commands = Command::parse_script(script);
+
+        assert_eq!(commands.len(), 3);
+        assert_eq!(
+            Command::script(&commands),
+            "M PKTUSB 0\nL MONITOR_GAIN 0.15\nT 1"
+        );
+    }
+
+    #[test]
+    fn a_script_with_nothing_in_it_holds_no_commands() {
+        assert!(Command::parse_script("").is_empty());
+        assert!(Command::parse_script("\n \n").is_empty());
     }
 
     /// Keying has to work out of the box, and everything else has to stay
@@ -192,11 +219,11 @@ mod tests {
         let script = Script::default();
         assert_eq!(
             script.commands(Event::Transmit),
-            [Command::new(["T", "1"]).unwrap()]
+            [Command::parse("T 1").unwrap()]
         );
         assert_eq!(
             script.commands(Event::Receive),
-            [Command::new(["T", "0"]).unwrap()]
+            [Command::parse("T 0").unwrap()]
         );
         assert!(script.commands(Event::Open).is_empty());
         assert!(script.commands(Event::Close).is_empty());
@@ -215,7 +242,7 @@ mod tests {
     #[test]
     fn band_commands_are_kept_under_the_band_they_were_written_for() {
         let mut script = Script::default();
-        let command = Command::new(["\\set_ant", "1", "0"]).unwrap();
+        let command = Command::parse("\\set_ant 1 0").unwrap();
         script.set_band(Band::from_name("40m").unwrap(), vec![command.clone()]);
 
         assert_eq!(

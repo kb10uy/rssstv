@@ -13,7 +13,7 @@ use std::{
 use rssstv_rig::{Band, Command, DEFAULT_ADDRESS, Event, Script};
 use rssstv_sstv::mode::Mode;
 use rssstv_template::valid_variable_name;
-use toml_edit::{Array, DocumentMut, Item, Table, Value, value};
+use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::{app::DspFlags, i18n::Locale, storage::history::HistoryFormat};
 
@@ -473,7 +473,7 @@ fn seconds(
 ///
 /// A key that is absent leaves the default in place, and one that is present
 /// replaces it outright, including with nothing: an operator whose rig is
-/// keyed by VOX writes `transmit = []` and means it.
+/// keyed by VOX writes `transmit = ""` and means it.
 fn rig_script(document: &DocumentMut) -> Script {
     let mut script = Script::default();
     if let Some(table) = subtable(document, "rig", "commands") {
@@ -495,20 +495,13 @@ fn rig_script(document: &DocumentMut) -> Script {
     script
 }
 
-/// Reads a list of commands, each written as the words it is sent as.
+/// Reads the commands attached to one event or band, one per line.
 ///
-/// An entry that is not a list of words is dropped rather than refused, which
-/// is how every other unusable value in this file is treated. What is left is
-/// still what the operator meant by the rest of the list.
+/// A value that is not text says nothing about the event and leaves the
+/// default in place, which is how every other unusable value in this file is
+/// treated.
 fn command_list(item: &Item) -> Option<Vec<Command>> {
-    Some(
-        item.as_array()?
-            .iter()
-            .filter_map(|entry| {
-                Command::new(entry.as_array()?.iter().filter_map(Value::as_str)).ok()
-            })
-            .collect(),
-    )
+    item.as_str().map(Command::parse_script)
 }
 
 /// Writes the rig section back, commands and all.
@@ -540,7 +533,7 @@ fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
     }
     let commands = subtable_mut(document, "rig", "commands");
     for event in Event::ALL {
-        commands[event.config_name()] = value(command_array(rig.script.commands(event)));
+        commands[event.config_name()] = command_value(rig.script.commands(event));
     }
     store_rig_bands(document, &rig.script);
 }
@@ -557,20 +550,13 @@ fn store_rig_bands(document: &mut DocumentMut, script: &Script) {
     let table = subtable_mut(document, "rig", "bands");
     table.retain(|name, _| named.contains(&name));
     for (band, commands) in script.bands() {
-        table[band.name()] = value(command_array(commands));
+        table[band.name()] = command_value(commands);
     }
 }
 
-fn command_array(commands: &[Command]) -> Value {
-    let mut array = Array::new();
-    for command in commands {
-        let mut words = Array::new();
-        for word in command.words() {
-            words.push(word.as_str());
-        }
-        array.push(words);
-    }
-    Value::Array(array)
+/// Writes commands out as the script the operator reads them back as.
+fn command_value(commands: &[Command]) -> Item {
+    value(Command::script(commands))
 }
 
 /// Resolves a stored mode name, tolerating a hand-edited difference in case.
@@ -723,16 +709,10 @@ mod tests {
                 tail_seconds: 0.1,
                 script: {
                     let mut script = Script::default();
-                    script.set(
-                        Event::Transmit,
-                        vec![
-                            Command::new(["M", "PKTUSB", "0"]).unwrap(),
-                            Command::new(["T", "1"]).unwrap(),
-                        ],
-                    );
+                    script.set(Event::Transmit, Command::parse_script("M PKTUSB 0\nT 1"));
                     script.set_band(
                         Band::from_name("40m").unwrap(),
-                        vec![Command::new(["\\set_ant", "1", "0"]).unwrap()],
+                        Command::parse_script("\\set_ant 1 0"),
                     );
                     script
                 },
@@ -866,23 +846,49 @@ mod tests {
 
         let stored = fs::read_to_string(root.config()).unwrap();
         assert!(stored.contains("[rig.commands]"), "{stored}");
-        assert!(stored.contains(r#"transmit = [["T", "1"]]"#), "{stored}");
-        assert!(stored.contains(r#"receive = [["T", "0"]]"#), "{stored}");
-        assert!(stored.contains("open = []"), "{stored}");
+        assert!(stored.contains(r#"transmit = "T 1""#), "{stored}");
+        assert!(stored.contains(r#"receive = "T 0""#), "{stored}");
+        assert!(stored.contains(r#"open = """#), "{stored}");
         // Nothing was attached to a band, so no band table was invented.
         assert!(!stored.contains("[rig.bands]"), "{stored}");
     }
 
+    /// A Hamlib command written in full begins with a backslash, so a script
+    /// holding one has to be written as a literal string: a basic string would
+    /// come back with every backslash escaped, which is not what the operator
+    /// typed and not what the next hand edit would follow.
     #[test]
-    fn a_hand_written_command_list_replaces_the_default() {
+    fn a_multi_line_script_is_written_as_a_literal_string() {
+        let root = TestDirectory::new();
+        let mut config = Config::load(&root.config());
+        let mut settings = Settings::default();
+        settings.rig.script.set(
+            Event::Transmit,
+            Command::parse_script("\\set_mode PKTUSB 3000\nT 1"),
+        );
+        config.store(&settings);
+
+        let stored = fs::read_to_string(root.config()).unwrap();
+        assert!(
+            stored.contains("transmit = '''\n\\set_mode PKTUSB 3000\nT 1'''"),
+            "{stored}"
+        );
+        assert_eq!(Config::load(&root.config()).settings(), settings);
+    }
+
+    #[test]
+    fn a_hand_written_script_replaces_the_default() {
         let root = TestDirectory::new();
         fs::write(
             root.config(),
             concat!(
                 "[rig.commands]\n",
-                "transmit = [[\"L\", \"MONITOR_GAIN\", \"0.15\"], [\"T\", \"1\"]]\n",
+                "transmit = '''\n",
+                "L MONITOR_GAIN 0.15\n",
+                "T 1\n",
+                "'''\n",
                 "[rig.bands]\n",
-                "\"20m\" = [[\"\\\\set_ant\", \"2\", \"0\"]]\n",
+                "\"20m\" = '\\set_ant 2 0'\n",
             ),
         )
         .unwrap();
@@ -891,69 +897,54 @@ mod tests {
 
         assert_eq!(
             script.commands(Event::Transmit),
-            [
-                Command::new(["L", "MONITOR_GAIN", "0.15"]).unwrap(),
-                Command::new(["T", "1"]).unwrap(),
-            ]
+            Command::parse_script("L MONITOR_GAIN 0.15\nT 1").as_slice()
         );
         // Untouched keys keep the default that makes keying work at all.
         assert_eq!(
             script.commands(Event::Receive),
-            [Command::new(["T", "0"]).unwrap()]
+            [Command::parse("T 0").unwrap()]
         );
         assert_eq!(
             script.band_commands(Band::from_name("20m").unwrap()),
-            [Command::new(["\\set_ant", "2", "0"]).unwrap()]
+            [Command::parse("\\set_ant 2 0").unwrap()]
         );
     }
 
     /// A station keyed by VOX wants no keying command at all, which the
     /// default would otherwise send anyway.
-    #[test]
-    fn an_empty_command_list_means_nothing_is_sent() {
+    #[rstest]
+    #[case::nothing("transmit = ''")]
+    #[case::only_spacing("transmit = '''\n\n'''")]
+    fn an_empty_script_means_nothing_is_sent(#[case] written: &str) {
         let root = TestDirectory::new();
-        fs::write(root.config(), "[rig.commands]\ntransmit = []\n").unwrap();
+        fs::write(root.config(), format!("[rig.commands]\n{written}\n")).unwrap();
 
         let script = Config::load(&root.config()).settings().rig.script;
 
         assert!(script.commands(Event::Transmit).is_empty());
     }
 
-    /// A key that is not a list at all says nothing about the event and leaves
-    /// the default alone. A list whose entries are unusable is still a list,
-    /// and what the operator wrote is an empty one.
+    /// A value that is not text says nothing about the event, so the default
+    /// that makes keying work is left in place rather than being emptied.
     #[rstest]
-    #[case::not_a_list("transmit = \"T 1\"", &[&["T", "1"] as &[&str]])]
-    #[case::words_not_split("transmit = [\"T 1\"]", &[])]
-    #[case::a_command_naming_nothing("transmit = [[]]", &[])]
-    #[case::one_usable_command(
-        "transmit = [\"T 1\", [\"T\", \"1\"]]",
-        &[&["T", "1"] as &[&str]]
-    )]
-    fn a_command_that_is_not_a_list_of_words_is_dropped(
-        #[case] written: &str,
-        #[case] expected: &[&[&str]],
-    ) {
+    #[case::a_number("transmit = 1")]
+    #[case::a_list("transmit = [\"T 1\"]")]
+    fn a_script_that_is_not_text_leaves_the_default_alone(#[case] written: &str) {
         let root = TestDirectory::new();
         fs::write(root.config(), format!("[rig.commands]\n{written}\n")).unwrap();
 
         let script = Config::load(&root.config()).settings().rig.script;
 
-        let expected: Vec<Command> = expected
-            .iter()
-            .map(|words| Command::new(words.iter().copied()).unwrap())
-            .collect();
-        assert_eq!(script.commands(Event::Transmit), expected);
+        assert_eq!(
+            script.commands(Event::Transmit),
+            [Command::parse("T 1").unwrap()]
+        );
     }
 
     #[test]
     fn an_unknown_band_name_is_left_out_rather_than_carried_around() {
         let root = TestDirectory::new();
-        fs::write(
-            root.config(),
-            "[rig.bands]\n\"11m\" = [[\"\\\\set_ant\", \"1\", \"0\"]]\n",
-        )
-        .unwrap();
+        fs::write(root.config(), "[rig.bands]\n\"11m\" = '\\set_ant 1 0'\n").unwrap();
 
         let mut config = Config::load(&root.config());
         let settings = config.settings();

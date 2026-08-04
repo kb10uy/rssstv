@@ -431,7 +431,7 @@ mod tests {
     fn dropping_the_worker_runs_the_close_script() {
         let fake = FakeRig::spawn(14_230_000);
         let mut script = Script::default();
-        script.set(Event::Close, vec![Command::new(["T", "0"]).unwrap()]);
+        script.set(Event::Close, vec![Command::parse("T 0").unwrap()]);
         let worker = RigWorker::spawn(&RigSettings {
             script,
             ..settings(&fake.address)

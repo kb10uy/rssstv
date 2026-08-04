@@ -55,14 +55,16 @@ lead-in = 0.2
 tail = 0.05
 
 [rig.commands]
-open = []
-close = []
-transmit = [["T", "1"]]
-receive = [["T", "0"]]
+open = ""
+close = ""
+transmit = """
+L MONITOR_GAIN 0.15
+T 1"""
+receive = "T 0"
 
 [rig.bands]
-"40m" = [["\\set_ant", "1", "0"]]
-"20m" = [["\\set_ant", "2", "0"]]
+"40m" = '\set_ant 1 0'
+"20m" = '\set_ant 2 0'
 ```
 
 | Key | Meaning |
@@ -80,11 +82,26 @@ playing what it was handed.
 
 ### Commands
 
-A command is written as the list of words it is sent as, so that an argument
-containing a space needs no quoting rule this project would have to invent.
-`["L", "MONITOR_GAIN", "0.15"]` is sent as `L MONITOR_GAIN 0.15`. Both the
-short forms and the long `\set_level` forms work, because neither is
-interpreted here.
+An event holds one string: the commands to send, one per line, written exactly
+as they would be typed at `rigctl`. Both the short forms and the long
+`\set_level` forms work, because neither is interpreted here — the line is
+passed through, and `rigctld` splits it on whitespace itself. A blank line is
+spacing rather than a command.
+
+A single command needs no ceremony:
+
+```toml
+transmit = "T 1"
+```
+
+Several want TOML's multi-line form. Use the literal `'''` quoting for anything
+containing a backslash, which is every Hamlib command written in full:
+
+```toml
+transmit = '''
+\set_mode PKTUSB 3000
+\set_ptt 1'''
+```
 
 The commands attached to an event run in the order they are written and stop at
 the first one the rig refuses. A sequence that selects a data mode before keying
@@ -99,9 +116,9 @@ only means anything if the keying does not happen when the mode change failed.
 
 `transmit` and `receive` default to `T 1` and `T 0`, so keying works before
 anything is configured. A key that is present replaces the default outright,
-including with nothing: a station keyed by VOX writes `transmit = []` and means
-it. A key that is absent, or that holds something that is not a list of word
-lists, leaves the default in place.
+including with nothing: a station keyed by VOX writes `transmit = ""` and means
+it. A key that is absent, or that holds something that is not text, leaves the
+default in place.
 
 ### Bands
 

@@ -246,7 +246,8 @@ until a modulator chooses a physical sample rate.
 
 `TxEncoder` emits conventional VIS framing and mode raster data.
 `TransmissionEncoder` wraps it with MMSSTV's built-in conventional VOX framing,
-a 300 ms footer, a validated callsign FSKID, and 500 ms of trailing silence.
+a 300 ms footer, a validated callsign FSKID with an optional contest number
+after it, and 500 ms of trailing silence.
 `TransmissionEncoder::without_identifier` sends the same transmission with
 neither the FSKID nor the footer, which exists only to introduce it.
 PCM conversion remains a separate modulator responsibility.
@@ -276,10 +277,11 @@ The core accepts classified detector samples rather than audio amplitudes. It is
 therefore independent of audio backends and detector scaling, while preserving
 the protocol's timing.
 
-Callsign records are implemented in both directions, and contest records are
-decoded in both of their forms: text, and a twelve-bit count printed to at
-least three digits. Transmitting a contest record and N-VIS events remain
-future work. See [sstv/fskid.md](../sstv/fskid.md) for the
+Callsign and contest records are implemented in both directions, in both of the
+number's forms: text, and a twelve-bit count printed to at least three digits.
+The encoder chooses between them the way MMSSTV chooses, so a number that is
+three digits and fits twelve bits is counted and everything else is spelled.
+N-VIS events remain future work. See [sstv/fskid.md](../sstv/fskid.md) for the
 protocol definition and [mmsstv/fskid.md](../mmsstv/fskid.md) for the original
 detector this one follows.
 
@@ -323,7 +325,7 @@ The workspace currently contains eleven packages:
 | --- | --- | --- |
 | `rssstv-dsp` | Portable numerical layer | Implemented |
 | `rssstv-sstv` | Protocol model, images, transmit encoder, and receive decoder | 14 modes implemented |
-| `rssstv-fskid` | FSKID protocol encoding and decoding | Callsign transmit and receive, contest number receive implemented |
+| `rssstv-fskid` | FSKID protocol encoding and decoding | Callsign and contest number, transmit and receive, implemented |
 | `rssstv-modulator` | Timed-tone PCM modulation | Streaming phase-continuous modulation implemented |
 | `rssstv-demodulator` | Receive front end | Incremental conventional-VIS demodulation implemented |
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |

@@ -703,37 +703,48 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
             app.qso_changed();
         }
     });
+    // The serial number belongs to a contest, so it is worked only while the
+    // operator has said they are in one. The report beside it is not: every
+    // contact gets one.
+    let contest = app.contest_mode;
     ui.horizontal(|ui| {
         // The report being sent is two fields rather than one: the report
         // itself is set once and then left alone, while the serial number
         // moves with every contact.
         field_label(ui, &sent_label);
         let field_width = (fields - gap) / 2.0;
-        let rsv = ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
-        let number =
-            ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
-        if rsv.changed() || number.changed() {
+        let mut changed = ui
+            .add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width))
+            .changed();
+        changed |= ui
+            .add_enabled_ui(contest, |ui| {
+                ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width))
+                    .changed()
+            })
+            .inner;
+        if changed {
             app.qso_changed();
         }
     });
     ui.horizontal(|ui| {
-        let gaps = gap;
-        let width = (full - gaps) / 2.0;
+        let width = (full - gap) / 2.0;
         let height = ui.spacing().interact_size.y;
         let increment = RichText::new(app.i18n.text("qso-nr-increment")).size(SMALL);
         let reset = RichText::new(app.i18n.text("qso-nr-reset")).size(SMALL);
-        if ui
-            .add_sized([width, height], egui::Button::new(increment))
-            .clicked()
-        {
-            app.increment_number();
-        }
-        if ui
-            .add_sized([width, height], egui::Button::new(reset))
-            .clicked()
-        {
-            app.reset_number();
-        }
+        ui.add_enabled_ui(contest, |ui| {
+            if ui
+                .add_sized([width, height], egui::Button::new(increment))
+                .clicked()
+            {
+                app.increment_number();
+            }
+            if ui
+                .add_sized([width, height], egui::Button::new(reset))
+                .clicked()
+            {
+                app.reset_number();
+            }
+        });
     });
 }
 
@@ -953,7 +964,10 @@ fn status_bar(ui: &mut Ui, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::{Harness, kittest::Queryable as _};
+    use egui_kittest::{
+        Harness,
+        kittest::{NodeT as _, Queryable as _},
+    };
     use rstest::rstest;
 
     use super::*;
@@ -1109,6 +1123,7 @@ mod tests {
     #[test]
     fn the_serial_number_buttons_work_it() {
         let mut app = App::headless();
+        app.contest_mode = true;
         app.qso.number = "007".to_owned();
         let increment = app.i18n.text("qso-nr-increment");
         let reset = app.i18n.text("qso-nr-reset");
@@ -1126,6 +1141,25 @@ mod tests {
             harness.run();
         }
         assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+    }
+
+    /// The serial belongs to a contest, so nothing about it can be worked
+    /// until the operator has said they are in one.
+    #[test]
+    fn the_serial_number_is_inert_outside_contest_mode() {
+        let mut app = App::headless();
+        assert!(!app.contest_mode);
+        let increment = app.i18n.text("qso-nr-increment");
+        let reset = app.i18n.text("qso-nr-reset");
+
+        let harness = render(&mut app);
+
+        for label in [&increment, &reset] {
+            assert!(
+                harness.get_by_label(label).accesskit_node().is_disabled(),
+                "{label} is still clickable"
+            );
+        }
     }
 
     #[test]

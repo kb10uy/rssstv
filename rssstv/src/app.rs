@@ -7,7 +7,7 @@ use std::{
 
 use jiff::{Timestamp, Zoned};
 use rssstv_audio::{InputDevice, OutputDevice, Playback, StreamFault};
-use rssstv_fskid::FskId;
+use rssstv_fskid::{FskId, FskNumber};
 use rssstv_sstv::{
     image::RgbImage,
     mode::{Mode, Support},
@@ -30,7 +30,7 @@ use crate::{
         compose::{ComposeRequest, Composer},
         receive::{Frame, Progress},
         rig::{Reading, RigSnapshot, RigState, RigWorker, script},
-        transmit::{TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
+        transmit::{Identification, TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
 
@@ -192,6 +192,12 @@ pub struct App {
     pub vis_restart: bool,
     /// Whether a transmission ends with the station identifier.
     pub send_fskid: bool,
+    /// Whether the serial number is worked and sent with that identifier.
+    ///
+    /// One switch for the whole exchange: a station giving out numbers sends
+    /// them, and a station that is not has no serial to count either, so the
+    /// panel's number field and its buttons follow this too.
+    pub contest_mode: bool,
     /// How far along its travel the transmit level fader sits, in `0.0..=1.0`.
     ///
     /// Held here for the interface, and converted into the amplitude a
@@ -387,6 +393,7 @@ impl App {
             dsp: settings.dsp,
             vis_restart: settings.vis_restart,
             send_fskid: settings.send_fskid,
+            contest_mode: settings.contest_mode,
             tx_volume: settings.tx_volume,
             tx_gain: Arc::new(TxGain::from_travel(settings.tx_volume)),
             auto_history: settings.auto_history,
@@ -480,6 +487,7 @@ impl App {
             dsp: self.dsp,
             vis_restart: self.vis_restart,
             send_fskid: self.send_fskid,
+            contest_mode: self.contest_mode,
             tx_volume: self.tx_volume,
             auto_history: self.auto_history,
             history_format: self.history_format,
@@ -1302,13 +1310,36 @@ impl App {
             .then(|| FskId::new(self.station_callsign.trim()))
     }
 
+    /// Returns the contest number that identifier would carry, if any.
+    ///
+    /// Only in contest mode, and only for a number the record can hold. The
+    /// text is filtered and uppercased the way MMSSTV filters it, and a number
+    /// that still does not fit is left off rather than refused: the picture is
+    /// what the transmission is for.
+    fn contest_number(&self) -> Option<FskNumber> {
+        if !self.contest_mode {
+            return None;
+        }
+        let text: String = self
+            .qso
+            .number
+            .to_ascii_uppercase()
+            .chars()
+            .filter(|character| *character >= '0')
+            .collect();
+        FskNumber::new(&text).ok()
+    }
+
     pub fn start_transmit(&mut self) {
         if let Some(error) = self.transmit_problem() {
             self.tx_error = Some(error);
             return;
         }
-        let station_id = match self.station_id().transpose() {
-            Ok(station_id) => station_id,
+        let identification = match self.station_id().transpose() {
+            Ok(station_id) => station_id.map(|station_id| Identification {
+                station_id,
+                number: self.contest_number(),
+            }),
             Err(error) => {
                 self.tx_error = Some(error.to_string());
                 return;
@@ -1342,7 +1373,7 @@ impl App {
             writer,
             self.tx_mode,
             frame,
-            station_id,
+            identification,
             Arc::clone(&self.tx_gain),
         ));
         self.playback_started = false;
@@ -2157,6 +2188,42 @@ mod tests {
 
         app.reset_number();
         assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+    }
+
+    /// The number is filtered the way MMSSTV filters it, and one the record
+    /// cannot hold is left off rather than stopping the transmission.
+    #[rstest]
+    #[case("001", Some("001"))]
+    #[case("13h", Some("13H"))]
+    #[case(" 42 ", Some("42"))]
+    #[case("100-2", Some("1002"))]
+    #[case("", None)]
+    #[case("123456789", None)]
+    fn the_contest_number_is_sent_as_the_record_can_hold_it(
+        #[case] typed: &str,
+        #[case] expected: Option<&str>,
+    ) {
+        let mut app = App::headless();
+        app.contest_mode = true;
+        app.qso.number = typed.to_owned();
+
+        let number = app.contest_number();
+
+        assert_eq!(
+            number.map(|number| number.as_str().to_owned()).as_deref(),
+            expected
+        );
+    }
+
+    /// A station that is not in a contest gives out no number, whatever is left
+    /// in the field from the last one.
+    #[test]
+    fn no_contest_number_is_sent_outside_contest_mode() {
+        let mut app = App::headless();
+        app.qso.number = "001".to_owned();
+
+        assert!(!app.contest_mode);
+        assert_eq!(app.contest_number(), None);
     }
 
     /// A contest number arrives as digits alone, and is read as the report

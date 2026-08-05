@@ -611,6 +611,14 @@ always a serial: counting pads back to three digits and is allowed to grow past
 them, and a value that is not a number is left as it was typed. The serial
 survives a restart, because a contest outlives a session.
 
+Contest mode, under Settings, is the whole of the decision to give out numbers:
+it enables the serial field and its two buttons, and it is what appends the
+number to the identifier a transmission ends with. The report beside it stays
+editable either way, because every contact gets one. A number the FSKID record
+cannot hold is left off the transmission rather than refusing it, which is what
+MMSSTV does with it: the picture is what the transmission is for. The number
+rides on the identifier, so an operator who sends no FSKID sends no number.
+
 A contest number decoded from the same FSKID fills the received report, as
 `595` and the number the way MMSSTV composes it. It is followed the same way as
 the identifier beside it: only an arrival writes, and the count of numbers

@@ -33,6 +33,7 @@ pub enum Action {
     ShowStation,
     ShowCustomVariables,
     ToggleSendFskid,
+    ToggleContestMode,
     ToggleVisRestart,
     WriteRigScript,
     WriteBandPlan,
@@ -130,11 +131,18 @@ pub fn model(app: &App) -> Vec<Menu> {
                 },
                 Item::Submenu {
                     label: text("menu-transmit"),
-                    items: vec![Item::Check {
-                        label: text("action-send-fskid"),
-                        checked: app.send_fskid,
-                        action: Action::ToggleSendFskid,
-                    }],
+                    items: vec![
+                        Item::Check {
+                            label: text("action-send-fskid"),
+                            checked: app.send_fskid,
+                            action: Action::ToggleSendFskid,
+                        },
+                        Item::Check {
+                            label: text("action-contest-mode"),
+                            checked: app.contest_mode,
+                            action: Action::ToggleContestMode,
+                        },
+                    ],
                 },
                 Item::Submenu {
                     label: text("menu-receive"),
@@ -280,6 +288,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ShowStation => app.station_open = true,
         Action::ShowCustomVariables => app.open_custom_variables(),
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
+        Action::ToggleContestMode => app.contest_mode = !app.contest_mode,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
         Action::WriteRigScript => app.write_rig_script(),
         Action::WriteBandPlan => app.write_band_plan(),

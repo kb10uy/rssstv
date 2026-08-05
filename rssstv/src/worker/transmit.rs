@@ -8,7 +8,7 @@ use std::{
 };
 
 use rssstv_audio::PlaybackWriter;
-use rssstv_fskid::FskId;
+use rssstv_fskid::{FskId, FskNumber};
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{TransmissionEncoder, image::RgbImage, mode::Mode};
 
@@ -145,6 +145,17 @@ impl TxGain {
     }
 }
 
+/// What a transmission ends with, when it identifies itself at all.
+///
+/// The number rides on the identifier rather than being announced on its own,
+/// so the two travel together or not at all.
+#[derive(Clone, Copy, Debug)]
+pub struct Identification {
+    pub station_id: FskId,
+    /// The contest number appended to it, while contest mode is on.
+    pub number: Option<FskNumber>,
+}
+
 pub struct TxWorker {
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
@@ -156,7 +167,7 @@ impl TxWorker {
         writer: PlaybackWriter,
         mode: Mode,
         frame: Arc<RgbImage>,
-        station_id: Option<FskId>,
+        identification: Option<Identification>,
         gain: Arc<TxGain>,
     ) -> Self {
         let snapshot = Arc::new(Mutex::new(TxSnapshot {
@@ -171,7 +182,7 @@ impl TxWorker {
                 writer,
                 mode,
                 frame,
-                station_id,
+                identification,
                 gain,
                 worker_snapshot,
                 worker_cancel,
@@ -218,15 +229,23 @@ fn transmit_loop(
     mut writer: PlaybackWriter,
     mode: Mode,
     frame: Arc<RgbImage>,
-    station_id: Option<FskId>,
+    identification: Option<Identification>,
     gain: Arc<TxGain>,
     snapshot: Arc<Mutex<TxSnapshot>>,
     cancel: Arc<AtomicBool>,
 ) {
-    let transmission = match station_id.map_or_else(
-        || TransmissionEncoder::without_identifier(mode, (*frame).clone()),
-        |station_id| TransmissionEncoder::new(mode, (*frame).clone(), station_id),
-    ) {
+    let transmission = match identification {
+        None => TransmissionEncoder::without_identifier(mode, (*frame).clone()),
+        Some(Identification {
+            station_id,
+            number: None,
+        }) => TransmissionEncoder::new(mode, (*frame).clone(), station_id),
+        Some(Identification {
+            station_id,
+            number: Some(number),
+        }) => TransmissionEncoder::with_contest_number(mode, (*frame).clone(), station_id, number),
+    };
+    let transmission = match transmission {
         Ok(transmission) => transmission,
         Err(error) => return fail(&snapshot, error.to_string()),
     };
@@ -428,7 +447,10 @@ mod tests {
             writer,
             mode,
             frame,
-            Some(FskId::new("N0CALL").unwrap()),
+            Some(Identification {
+                station_id: FskId::new("N0CALL").unwrap(),
+                number: None,
+            }),
             Arc::new(TxGain::from_travel(1.0)),
         );
         let deadline = Instant::now() + Duration::from_secs(10);

@@ -64,6 +64,7 @@ history-format-webp = WebP (lossless)
 history-format-png = PNG
 history-format-jpeg = JPEG
 action-send-fskid = Send FSKID
+action-contest-mode = Contest mode (send number)
 action-vis-restart = Restart on a new VIS header
 action-transmit = TX
 action-stop-transmit = Stop TX

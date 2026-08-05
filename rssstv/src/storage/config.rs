@@ -90,6 +90,8 @@ pub struct Settings {
     pub dsp: DspFlags,
     pub vis_restart: bool,
     pub send_fskid: bool,
+    /// Whether the QSO panel's serial number is worked and sent.
+    pub contest_mode: bool,
     pub tx_volume: f32,
     pub auto_history: bool,
     pub history_format: HistoryFormat,
@@ -169,6 +171,9 @@ impl Default for Settings {
             dsp: DspFlags::default(),
             vis_restart: true,
             send_fskid: true,
+            // A station that is not in a contest has no number to give, and
+            // one that is says so once.
+            contest_mode: false,
             tx_volume: DEFAULT_TX_VOLUME,
             auto_history: true,
             history_format: HistoryFormat::default(),
@@ -272,6 +277,8 @@ impl Config {
                 .unwrap_or(defaults.vis_restart),
             send_fskid: boolean(&self.document, Some("transmit"), "fskid")
                 .unwrap_or(defaults.send_fskid),
+            contest_mode: boolean(&self.document, Some("transmit"), "contest")
+                .unwrap_or(defaults.contest_mode),
             tx_volume: float(&self.document, Some("transmit"), "volume")
                 .map(|volume| volume.clamp(0.0, 1.0))
                 .unwrap_or(defaults.tx_volume),
@@ -394,6 +401,12 @@ impl Config {
             Some("transmit"),
             "fskid",
             Some(value(settings.send_fskid)),
+        );
+        set(
+            document,
+            Some("transmit"),
+            "contest",
+            Some(value(settings.contest_mode)),
         );
         set(
             document,
@@ -710,6 +723,7 @@ mod tests {
             auto_mode: false,
             vis_restart: false,
             send_fskid: false,
+            contest_mode: true,
             tx_volume: 0.5,
             dsp: DspFlags {
                 afc: false,

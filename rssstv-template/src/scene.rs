@@ -138,6 +138,30 @@ pub(crate) struct Stroke {
     pub width: Length,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Paint {
+    Solid(Color),
+    Gradient(Gradient),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Gradient {
+    pub kind: GradientKind,
+    pub stops: Vec<GradientStop>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum GradientKind {
+    Linear { angle: f64 },
+    Radial,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GradientStop {
+    pub offset: f64,
+    pub color: Color,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum FontStyle {
     #[default]
@@ -202,7 +226,7 @@ pub struct TextLayer {
     pub(crate) text: String,
     pub(crate) position: Position,
     pub(crate) font: Font,
-    pub(crate) fill: Color,
+    pub(crate) fill: Paint,
     pub(crate) stroke: Option<Stroke>,
 }
 
@@ -211,7 +235,7 @@ pub struct TextLayer {
 pub struct RectangleLayer {
     pub(crate) position: Position,
     pub(crate) size: LayerSize,
-    pub(crate) fill: Option<Color>,
+    pub(crate) fill: Option<Paint>,
     pub(crate) stroke: Option<Stroke>,
 }
 
@@ -220,7 +244,7 @@ pub struct RectangleLayer {
 pub struct EllipseLayer {
     pub(crate) position: Position,
     pub(crate) size: LayerSize,
-    pub(crate) fill: Option<Color>,
+    pub(crate) fill: Option<Paint>,
     pub(crate) stroke: Option<Stroke>,
 }
 

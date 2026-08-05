@@ -111,6 +111,9 @@ fill color="#ffffff"
 stroke color="#182030" width=(em)0.08
 ```
 
+A `fill` states either one color or a gradient, described below. A `stroke` is
+always one color.
+
 `position.anchor` defaults to `top-left`. Image `fit` defaults to `contain` and
 accepts `contain`, `cover`, `stretch`, or `preserve`. `aspect="preserve"` is
 accepted as an equivalent spelling, but `fit` and `aspect` cannot both appear.
@@ -129,7 +132,46 @@ rasterization.
 Groups add their optional `position` to every nested layer. Child coordinates
 remain frame-relative rather than becoming percentages of a group bounding box.
 The initial implementation does not provide rotation, arbitrary transforms,
-clipping, shadows, gradients, rounded rectangles, or multiline text.
+clipping, shadows, rounded rectangles, or multiline text.
+
+### Gradient Fills
+
+A `fill` on a `rect`, an `ellipse`, or a `text` states one gradient instead of
+one color, as a `gradient` kind and a list of stops:
+
+```kdl
+rect {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)100 height=(fh)6
+    fill gradient="linear" angle=0 {
+        stop offset=0 color="#00ffff"
+        stop offset=1 color="#00ff00"
+    }
+}
+```
+
+`gradient` accepts `linear` and `radial`. A gradient requires at least two
+`stop` nodes; each carries an `offset` between 0 and 1 and a color, and the
+offsets must not decrease. A stop color may carry alpha, so a gradient can fade
+a layer out rather than only recolor it. `color` and `gradient` cannot both
+appear on one `fill`.
+
+A linear gradient's optional `angle` is in degrees, measured clockwise from the
+frame's positive x axis: 0 runs left to right, 90 runs top to bottom, and the
+default is 0. A radial gradient starts at the center of the layer and reaches
+its last stop at half the layer's width and height, so `angle` is an error on
+one.
+
+A gradient is laid out over the layer's own bounding box rather than over the
+frame, which is what lets a text gradient follow the text it paints without the
+template measuring glyphs. The box is normalized to a unit square first, so an
+angle other than a multiple of 90 degrees is sheared by the box's aspect ratio,
+in the same way an SVG `objectBoundingBox` gradient is. A `text` gradient spans
+the whole run of text, not each glyph.
+
+Strokes take one color. A gradient outline would have to resolve against the
+same box as the fill it surrounds, and nothing in the ported templates or the
+format's own use asks for one.
 
 ## Coordinate System
 
@@ -295,8 +337,10 @@ The ports follow one set of rules:
 - A right or bottom edge is taken from the text's own extent rather than from
   the stored rectangle, which includes an allowance for effects. An edge that
   falls outside the frame is placed on it.
-- A gradient fill becomes the color at the edge the gradient starts from, which
-  is what MMSSTV's own fast preview drew.
+- A gradient fill becomes a gradient. MMSSTV's two-color fill becomes two stops
+  at 0 and 1; its four-color fill becomes four stops at 0, 1/3, 2/3, and 1,
+  which is where its three equal segments meet. Its vertical flag becomes an
+  `angle` of 90.
 - An outline becomes a text stroke. A drop shadow, an extrusion, and an emboss
   have no equivalent, so each keeps the outline it was drawn with, or is
   approximated by one in the shadow color when it had none.

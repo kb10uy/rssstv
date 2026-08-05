@@ -8,8 +8,8 @@ use crate::{
         variable::interpolate,
     },
     scene::{
-        Anchor, Color, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length, Position,
-        ReceivedImageLayer, Stroke, TextLayer,
+        Anchor, Color, Gradient, GradientKind, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize,
+        Length, Paint, Position, ReceivedImageLayer, Stroke, TextLayer,
     },
 };
 
@@ -20,6 +20,8 @@ pub(super) struct SvgGenerator<'a> {
     asset_uris: HashMap<String, String>,
     received_uri: Option<String>,
     next_resource: usize,
+    definitions: String,
+    next_gradient: usize,
 }
 
 impl<'a> SvgGenerator<'a> {
@@ -31,10 +33,14 @@ impl<'a> SvgGenerator<'a> {
             asset_uris: HashMap::new(),
             received_uri: None,
             next_resource: 0,
+            definitions: String::new(),
+            next_gradient: 0,
         }
     }
 
     pub(super) fn generate(&mut self, layers: &[Layer]) -> Result<String, TemplateError> {
+        let mut body = String::new();
+        self.write_layers(&mut body, layers, 0.0, 0.0)?;
         let mut svg = format!(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">"#,
             self.size.width(),
@@ -42,7 +48,10 @@ impl<'a> SvgGenerator<'a> {
             self.size.width(),
             self.size.height()
         );
-        self.write_layers(&mut svg, layers, 0.0, 0.0)?;
+        if !self.definitions.is_empty() {
+            write!(svg, "<defs>{}</defs>", self.definitions).unwrap();
+        }
+        svg.push_str(&body);
         svg.push_str("</svg>");
         Ok(svg)
     }
@@ -69,7 +78,7 @@ impl<'a> SvgGenerator<'a> {
                         "<rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\""
                     )
                     .unwrap();
-                    write_paint(svg, layer.fill, layer.stroke, self.size, None)?;
+                    self.write_paint(svg, layer.fill.as_ref(), layer.stroke, None)?;
                     svg.push_str("/>");
                 }
                 Layer::Ellipse(layer) => {
@@ -84,7 +93,7 @@ impl<'a> SvgGenerator<'a> {
                         height / 2.0
                     )
                     .unwrap();
-                    write_paint(svg, layer.fill, layer.stroke, self.size, None)?;
+                    self.write_paint(svg, layer.fill.as_ref(), layer.stroke, None)?;
                     svg.push_str("/>");
                 }
                 Layer::Line(layer) => {
@@ -190,7 +199,7 @@ impl<'a> SvgGenerator<'a> {
     }
 
     fn write_text(
-        &self,
+        &mut self,
         svg: &mut String,
         layer: &TextLayer,
         offset_x: f64,
@@ -209,7 +218,7 @@ impl<'a> SvgGenerator<'a> {
             layer.font.style.as_svg()
         )
         .unwrap();
-        write_color(svg, "fill", layer.fill);
+        self.write_fill(svg, Some(&layer.fill));
         if let Some(stroke) = layer.stroke {
             write_stroke(svg, stroke, self.size, Some(font_size))?;
             svg.push_str(" paint-order=\"stroke fill\" stroke-linejoin=\"round\"");
@@ -294,6 +303,79 @@ impl<'a> SvgGenerator<'a> {
         Ok((uri, resource))
     }
 
+    fn write_paint(
+        &mut self,
+        svg: &mut String,
+        fill: Option<&Paint>,
+        stroke: Option<Stroke>,
+        font_size: Option<f64>,
+    ) -> Result<(), TemplateError> {
+        self.write_fill(svg, fill);
+        if let Some(stroke) = stroke {
+            write_stroke(svg, stroke, self.size, font_size)?;
+        }
+        Ok(())
+    }
+
+    fn write_fill(&mut self, svg: &mut String, fill: Option<&Paint>) {
+        match fill {
+            Some(Paint::Solid(color)) => write_color(svg, "fill", *color),
+            Some(Paint::Gradient(gradient)) => {
+                let id = self.define_gradient(gradient);
+                write!(svg, " fill=\"url(#{id})\"").unwrap();
+            }
+            None => svg.push_str(" fill=\"none\""),
+        }
+    }
+
+    fn define_gradient(&mut self, gradient: &Gradient) -> String {
+        let id = format!("gradient{}", self.next_gradient);
+        self.next_gradient += 1;
+        let element = match gradient.kind {
+            GradientKind::Linear { angle } => {
+                let radians = angle.to_radians();
+                let (x, y) = (radians.cos() / 2.0, radians.sin() / 2.0);
+                write!(
+                    self.definitions,
+                    "<linearGradient id=\"{id}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">",
+                    unit_coordinate(0.5 - x),
+                    unit_coordinate(0.5 - y),
+                    unit_coordinate(0.5 + x),
+                    unit_coordinate(0.5 + y)
+                )
+                .unwrap();
+                "linearGradient"
+            }
+            GradientKind::Radial => {
+                write!(
+                    self.definitions,
+                    "<radialGradient id=\"{id}\" cx=\"0.5\" cy=\"0.5\" r=\"0.5\">"
+                )
+                .unwrap();
+                "radialGradient"
+            }
+        };
+        for stop in &gradient.stops {
+            write!(
+                self.definitions,
+                "<stop offset=\"{}\" stop-color=\"#{:02x}{:02x}{:02x}\"",
+                stop.offset, stop.color.r, stop.color.g, stop.color.b
+            )
+            .unwrap();
+            if stop.color.a != 255 {
+                write!(
+                    self.definitions,
+                    " stop-opacity=\"{}\"",
+                    f64::from(stop.color.a) / 255.0
+                )
+                .unwrap();
+            }
+            self.definitions.push_str("/>");
+        }
+        write!(self.definitions, "</{element}>").unwrap();
+        id
+    }
+
     fn insert_resource(&mut self, kind: &str, resource: Resource) -> String {
         let uri = format!("rssstv-{kind}:{}", self.next_resource);
         self.next_resource += 1;
@@ -324,6 +406,10 @@ fn resolve_length(
     Ok(value)
 }
 
+fn unit_coordinate(value: f64) -> f64 {
+    (value * 1e6).round() / 1e6
+}
+
 fn anchor_offset(anchor: Anchor, width: f64, height: f64) -> (f64, f64) {
     match anchor {
         Anchor::TopLeft => (0.0, 0.0),
@@ -346,23 +432,6 @@ fn text_anchor(anchor: Anchor) -> (&'static str, &'static str) {
         Anchor::BottomCenter => ("middle", "text-after-edge"),
         Anchor::BottomRight => ("end", "text-after-edge"),
     }
-}
-
-fn write_paint(
-    svg: &mut String,
-    fill: Option<Color>,
-    stroke: Option<Stroke>,
-    size: RenderSize,
-    font_size: Option<f64>,
-) -> Result<(), TemplateError> {
-    match fill {
-        Some(color) => write_color(svg, "fill", color),
-        None => svg.push_str(" fill=\"none\""),
-    }
-    if let Some(stroke) = stroke {
-        write_stroke(svg, stroke, size, font_size)?;
-    }
-    Ok(())
 }
 
 fn write_stroke(

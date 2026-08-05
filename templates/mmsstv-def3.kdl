@@ -6,9 +6,8 @@
 // with Windows itself; they fall back to Arial.
 //
 // The picture box held MMSSTV's history image, which is what `rximage` shows.
-// The title bar was an orange-to-cream horizontal gradient and is filled with
-// the left-hand color. The three large texts carried drop shadows, which are
-// approximated by an outline in the shadow color.
+// The three large texts carried drop shadows, which are approximated by an
+// outline in the shadow color.
 
 rximage {
     position x=(fw)0.6 y=(fh)99.2 anchor="bottom-left"
@@ -18,7 +17,10 @@ rximage {
 rect {
     position x=(fw)0 y=(fh)0 anchor="top-left"
     size width=(fw)100 height=(fh)6.2
-    fill color="#ff8040"
+    fill gradient="linear" {
+        stop offset=0 color="#ff8040"
+        stop offset=1 color="#ffff80"
+    }
 }
 
 text "${contact.callsign}" {

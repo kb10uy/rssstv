@@ -1,14 +1,14 @@
 // MMSSTV `def1.mtm`, ported.
 //
 // Fonts: Arial, Comic Sans MS.
-//
-// The title bar was a cyan-to-green horizontal gradient. It is filled with the
-// left-hand color, which is what MMSSTV's own fast preview drew as well.
 
 rect {
     position x=(fw)0 y=(fh)0 anchor="top-left"
     size width=(fw)100 height=(fh)6.2
-    fill color="#00ffff"
+    fill gradient="linear" {
+        stop offset=0 color="#00ffff"
+        stop offset=1 color="#00ff00"
+    }
 }
 
 text "${station.callsign}" {

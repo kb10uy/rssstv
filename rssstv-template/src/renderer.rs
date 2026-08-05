@@ -202,6 +202,34 @@ mod tests {
     }
 
     #[test]
+    fn paints_text_from_a_defined_gradient() {
+        let template = Template::parse(
+            r##"
+text "CQ SSTV" {
+    position x=(fw)0 y=(fh)0
+    font family="Monaspace Argon" size=(fh)25 weight=700
+    fill gradient="linear" angle=90 {
+        stop offset=0 color="#00ffff"
+        stop offset=1 color="#00ff0080"
+    }
+}
+"##,
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let mut generator = SvgGenerator::new(RenderSize::new(320, 256).unwrap(), &context);
+        let svg = generator.generate(template.layers()).unwrap();
+
+        assert!(svg.contains(
+            "<defs><linearGradient id=\"gradient0\" x1=\"0.5\" y1=\"0\" x2=\"0.5\" y2=\"1\">"
+        ));
+        assert!(svg.contains("<stop offset=\"0\" stop-color=\"#00ffff\"/>"));
+        assert!(svg.contains("stop-color=\"#00ff00\" stop-opacity=\""));
+        assert!(svg.contains("fill=\"url(#gradient0)\""));
+    }
+
+    #[test]
     fn renders_shapes_as_a_transparent_overlay() {
         let template = Template::parse(
             r##"
@@ -253,6 +281,44 @@ group {
                 .any(|pixel| pixel.b == 255 && pixel.a > 0)
         );
         assert_eq!(image.pixels()[99], Rgba8::new(255, 255, 255, 255));
+    }
+
+    #[test]
+    fn fills_shapes_with_linear_and_radial_gradients() {
+        let template = Template::parse(
+            r##"
+rect {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)100 height=(fh)50
+    fill gradient="linear" {
+        stop offset=0 color="#ff0000"
+        stop offset=1 color="#0000ff"
+    }
+}
+rect {
+    position x=(fw)0 y=(fh)50
+    size width=(fw)100 height=(fh)50
+    fill gradient="radial" {
+        stop offset=0 color="#00ff00"
+        stop offset=1 color="#000000"
+    }
+}
+"##,
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let image = Renderer::new()
+            .render(&template, RenderSize::new(64, 64).unwrap(), &context)
+            .unwrap();
+        let pixel = |x: usize, y: usize| image.pixels()[y * 64 + x];
+
+        assert!(pixel(0, 16).r > 240 && pixel(0, 16).b < 16);
+        assert!(pixel(63, 16).b > 240 && pixel(63, 16).r < 16);
+        assert!(pixel(32, 16).r > 100 && pixel(32, 16).b > 100);
+
+        assert!(pixel(32, 48).g > 240);
+        assert!(pixel(0, 48).g < 16);
     }
 
     #[test]

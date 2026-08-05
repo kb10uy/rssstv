@@ -5,9 +5,9 @@ use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 use crate::{
     TemplateError,
     scene::{
-        Anchor, Color, EllipseLayer, Font, FontStyle, GroupLayer, ImageFit, ImageLayer, Layer,
-        LayerSize, Length, LineLayer, Position, ReceivedImageLayer, RectangleLayer, Stroke,
-        Template, TextLayer,
+        Anchor, Color, EllipseLayer, Font, FontStyle, Gradient, GradientKind, GradientStop,
+        GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length, LineLayer, Paint, Position,
+        ReceivedImageLayer, RectangleLayer, Stroke, Template, TextLayer,
     },
 };
 
@@ -82,8 +82,7 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
         .map(|_| required_string(font_node, "style").and_then(parse_font_style))
         .transpose()?
         .unwrap_or_default();
-    let fill_node = required_unique_child(children, "fill")?;
-    validate_properties(fill_node, &["color"], 0)?;
+    let fill = parse_fill(required_unique_child(children, "fill")?)?;
 
     Ok(TextLayer {
         text,
@@ -94,7 +93,7 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
             weight,
             style,
         },
-        fill: parse_color(required_string(fill_node, "color")?)?,
+        fill,
         stroke: optional_unique_child(children, "stroke")?
             .map(parse_stroke)
             .transpose()?,
@@ -111,7 +110,7 @@ fn parse_rectangle(node: &KdlNode) -> Result<RectangleLayer, TemplateError> {
     let stroke = optional_unique_child(children, "stroke")?
         .map(parse_stroke)
         .transpose()?;
-    require_paint(fill, stroke)?;
+    require_paint(fill.as_ref(), stroke)?;
     Ok(RectangleLayer {
         position: parse_position(required_unique_child(children, "position")?, true)?,
         size: parse_size(required_unique_child(children, "size")?, true)?,
@@ -130,7 +129,7 @@ fn parse_ellipse(node: &KdlNode) -> Result<EllipseLayer, TemplateError> {
     let stroke = optional_unique_child(children, "stroke")?
         .map(parse_stroke)
         .transpose()?;
-    require_paint(fill, stroke)?;
+    require_paint(fill.as_ref(), stroke)?;
     Ok(EllipseLayer {
         position: parse_position(required_unique_child(children, "position")?, true)?,
         size: parse_size(required_unique_child(children, "size")?, true)?,
@@ -215,9 +214,59 @@ fn parse_size(node: &KdlNode, require_both: bool) -> Result<LayerSize, TemplateE
     Ok(LayerSize { width, height, fit })
 }
 
-fn parse_fill(node: &KdlNode) -> Result<Color, TemplateError> {
-    validate_properties(node, &["color"], 0)?;
-    parse_color(required_string(node, "color")?)
+fn parse_fill(node: &KdlNode) -> Result<Paint, TemplateError> {
+    validate_properties(node, &["color", "gradient", "angle"], 0)?;
+    if node.get("gradient").is_none() {
+        if node.get("angle").is_some() {
+            return schema("`angle` requires `gradient`");
+        }
+        if node.children().is_some() {
+            return schema("solid fill must not contain stops");
+        }
+        return parse_color(required_string(node, "color")?).map(Paint::Solid);
+    }
+    if node.get("color").is_some() {
+        return schema("fill cannot specify both `color` and `gradient`");
+    }
+    let kind = match required_string(node, "gradient")? {
+        "linear" => GradientKind::Linear {
+            angle: optional_number(node, "angle")?.unwrap_or(0.0),
+        },
+        "radial" => {
+            if node.get("angle").is_some() {
+                return schema("a radial gradient has no `angle`");
+            }
+            GradientKind::Radial
+        }
+        value => return schema(format!("unknown gradient `{value}`")),
+    };
+    Ok(Paint::Gradient(Gradient {
+        kind,
+        stops: parse_stops(required_children(node)?)?,
+    }))
+}
+
+fn parse_stops(document: &KdlDocument) -> Result<Vec<GradientStop>, TemplateError> {
+    validate_child_names(document, &["stop"])?;
+    let mut stops: Vec<GradientStop> = Vec::new();
+    for node in document.nodes() {
+        validate_properties(node, &["offset", "color"], 0)?;
+        let offset = required_number(node, "offset")?;
+        if !(0.0..=1.0).contains(&offset) {
+            return schema("stop offset must be between 0 and 1");
+        }
+        if stops.last().is_some_and(|last| offset < last.offset) {
+            return schema("stop offsets must not decrease");
+        }
+        stops.push(GradientStop {
+            offset,
+            color: parse_color(required_string(node, "color")?)?,
+        });
+    }
+    if stops.len() < 2 {
+        return schema("a gradient requires at least two stops");
+    }
+    Ok(stops)
 }
 
 fn parse_stroke(node: &KdlNode) -> Result<Stroke, TemplateError> {
@@ -228,7 +277,7 @@ fn parse_stroke(node: &KdlNode) -> Result<Stroke, TemplateError> {
     })
 }
 
-fn require_paint(fill: Option<Color>, stroke: Option<Stroke>) -> Result<(), TemplateError> {
+fn require_paint(fill: Option<&Paint>, stroke: Option<Stroke>) -> Result<(), TemplateError> {
     if fill.is_none() && stroke.is_none() {
         return schema("shape requires fill or stroke");
     }
@@ -333,6 +382,30 @@ fn parse_optional_length(
         _ => return schema(format!("unknown length unit `({unit})`")),
     };
     Ok(Some(length))
+}
+
+fn required_number(node: &KdlNode, name: &str) -> Result<f64, TemplateError> {
+    optional_number(node, name)?.ok_or_else(|| {
+        TemplateError::Schema(format!("`{}` requires property `{name}`", node.name()))
+    })
+}
+
+fn optional_number(node: &KdlNode, name: &str) -> Result<Option<f64>, TemplateError> {
+    let Some(entry) = unique_property(node, name)? else {
+        return Ok(None);
+    };
+    if entry.ty().is_some() {
+        return schema(format!("property `{name}` must not have a unit"));
+    }
+    let value = match entry.value() {
+        KdlValue::Integer(value) => *value as f64,
+        KdlValue::Float(value) => *value,
+        _ => return schema(format!("property `{name}` must be a number")),
+    };
+    if !value.is_finite() {
+        return schema(format!("property `{name}` must be finite"));
+    }
+    Ok(Some(value))
 }
 
 fn required_string<'a>(node: &'a KdlNode, name: &str) -> Result<&'a str, TemplateError> {
@@ -465,6 +538,8 @@ fn schema<T>(message: impl Into<String>) -> Result<T, TemplateError> {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::*;
 
     const COMPLETE_TEMPLATE: &str = r##"
@@ -551,6 +626,94 @@ group {
         )
         .unwrap_err();
         assert!(negative_size.to_string().contains("non-negative"));
+    }
+
+    #[test]
+    fn parses_linear_and_radial_gradient_fills() {
+        let template = Template::parse(
+            r##"
+rect {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)100 height=(fh)10
+    fill gradient="linear" angle=90 {
+        stop offset=0 color="#00ffff"
+        stop offset=1 color="#00ff0080"
+    }
+}
+ellipse {
+    position x=(fw)50 y=(fh)50 anchor="center"
+    size width=(fw)20 height=(fh)20
+    fill gradient="radial" {
+        stop offset=0.25 color="#ffffff"
+        stop offset=1 color="#000000"
+    }
+}
+"##,
+        )
+        .unwrap();
+        let Layer::Rectangle(rectangle) = &template.layers()[0] else {
+            panic!("expected rectangle");
+        };
+        let Some(Paint::Gradient(linear)) = &rectangle.fill else {
+            panic!("expected a gradient fill");
+        };
+        assert_eq!(linear.kind, GradientKind::Linear { angle: 90.0 });
+        assert_eq!(linear.stops.len(), 2);
+        assert_eq!(linear.stops[1].color.a, 0x80);
+
+        let Layer::Ellipse(ellipse) = &template.layers()[1] else {
+            panic!("expected ellipse");
+        };
+        let Some(Paint::Gradient(radial)) = &ellipse.fill else {
+            panic!("expected a gradient fill");
+        };
+        assert_eq!(radial.kind, GradientKind::Radial);
+        assert_eq!(radial.stops[0].offset, 0.25);
+    }
+
+    #[rstest]
+    #[case(
+        "fill color=\"#ffffff\" gradient=\"linear\" { stop offset=0 color=\"#000000\"; stop offset=1 color=\"#ffffff\"; }",
+        "both `color` and `gradient`"
+    )]
+    #[case(
+        "fill gradient=\"conic\" { stop offset=0 color=\"#000000\"; stop offset=1 color=\"#ffffff\"; }",
+        "unknown gradient"
+    )]
+    #[case(
+        "fill gradient=\"radial\" angle=90 { stop offset=0 color=\"#000000\"; stop offset=1 color=\"#ffffff\"; }",
+        "radial gradient has no `angle`"
+    )]
+    #[case(
+        "fill gradient=\"linear\" { stop offset=0 color=\"#000000\"; }",
+        "at least two stops"
+    )]
+    #[case(
+        "fill gradient=\"linear\" { stop offset=1 color=\"#000000\"; stop offset=0 color=\"#ffffff\"; }",
+        "must not decrease"
+    )]
+    #[case(
+        "fill gradient=\"linear\" { stop offset=1.5 color=\"#000000\"; stop offset=2 color=\"#ffffff\"; }",
+        "between 0 and 1"
+    )]
+    #[case(
+        "fill gradient=\"linear\" { stop offset=0 color=\"#000000\"; blend offset=1 color=\"#ffffff\"; }",
+        "unknown child `blend`"
+    )]
+    #[case("fill color=\"#ffffff\" angle=90", "`angle` requires `gradient`")]
+    #[case(
+        "fill gradient=\"linear\" angle=(fw)90 { stop offset=0 color=\"#000000\"; stop offset=1 color=\"#ffffff\"; }",
+        "must not have a unit"
+    )]
+    fn rejects_malformed_gradients(#[case] fill: &str, #[case] message: &str) {
+        let error = Template::parse(&format!(
+            "rect {{\nposition x=(fw)0 y=(fh)0\nsize width=(fw)1 height=(fh)1\n{fill}\n}}"
+        ))
+        .unwrap_err();
+        assert!(
+            error.to_string().contains(message),
+            "expected `{message}` in `{error}`"
+        );
     }
 
     #[test]

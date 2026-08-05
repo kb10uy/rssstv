@@ -97,7 +97,7 @@ local function receive(ctx)
 end
 
 local function poll_frequency(ctx)
-  return ctx.ports.rig:frequency()
+  return ctx.ports.rig:frequency(), ctx.ports.rig:mode()
 end
 
 local function set_frequency(ctx, hz)
@@ -131,7 +131,7 @@ is what a station running VOX wants, and needs no separate way of saying so.
 | `close(ctx)` | Before the transports are given up | Failure is reported only |
 | `transmit(ctx)` | Starting a transmission, before any audio | Failure abandons the transmission |
 | `receive(ctx)` | After the last sample, plus the tail | Failure is reported; the rig may still be keyed |
-| `poll_frequency(ctx)` | Every poll interval, never while keyed | Returns hertz, or nothing when unknown |
+| `poll_frequency(ctx)` | Every poll interval, never while keyed | Returns hertz and mode, or nothing when unknown |
 | `set_frequency(ctx, hz)` | The operator asked to tune | Failure is reported |
 | `change_band(ctx, band)` | The operator chose a band | Receives the band's whole table |
 
@@ -165,6 +165,7 @@ Every port is a `rigctld`:
 | --- | --- |
 | `port:send(line)` | Sends one command, returns its answer as a list of lines |
 | `port:frequency()` | Reads the frequency in hertz, addressed for the VFO mode in use |
+| `port:mode()` | Reads the operating mode, addressed for the VFO mode in use |
 
 `send` raises when the rig refuses the command, carrying Hamlib's status
 number. A script that wants to go on regardless wraps it in `pcall`.
@@ -310,7 +311,7 @@ commands is a sequence of round trips.
 
 On connecting, the session asks `\chk_vfo` to find out whether `rigctld` was
 started with `--vfo` and therefore wants every command addressed to a VFO. The
-answer is applied to `port:frequency()` and to anything else the transport
+answer is applied to `port:frequency()`, `port:mode()`, and anything else the transport
 sends for itself. What a script passes to `port:send` goes out as written:
 which commands take a VFO is a property of the command, and the operator
 writing them knows how their own `rigctld` was started better than a guess here
@@ -389,6 +390,7 @@ Rig control is worked from a radio panel in the window, shared by both tabs:
 | Reconnect | Opens the connection again after a failure |
 | State | The connection's state |
 | Band selector | Calls `change_band` with the chosen band from `bands.toml` |
+| Mode | Shows the mode returned above the frequency |
 | Frequency | Shows what `poll_frequency` last returned |
 | Step down, step up | Calls `set_frequency` with the current frequency moved by the band's `step` |
 
@@ -408,6 +410,8 @@ reason: moving a rig that is on the air moves the transmission with it. A step
 that would leave the band is disabled rather than clamped, as is one on a band
 with no `step` and one off the bands entirely. A button that moves nothing is
 better than one that says it moved something.
+The mode and frequency form a two-line readout, and the step buttons use the
+same height.
 
 Nothing about rig control is in the menu bar except putting `rigcontrol.lua`
 and `bands.toml` where they can be edited, which sits under Settings. Writing

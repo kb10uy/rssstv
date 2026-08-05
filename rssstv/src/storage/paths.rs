@@ -201,38 +201,17 @@ fn create_default_config(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use super::*;
-
-    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("rssstv-paths-{}-{index}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
-    }
+    use crate::test_util::TempDir;
 
     #[test]
     fn initialize_creates_application_directories_and_default_config() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = AppPaths::from_roots(
-            root.0.join("config"),
-            root.0.join("data"),
-            root.0.join("pictures"),
-            root.0.join("state"),
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("pictures"),
+            root.path().join("state"),
         );
 
         paths.initialize().unwrap();
@@ -273,12 +252,12 @@ mod tests {
 
     #[test]
     fn initialize_does_not_replace_existing_config() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = AppPaths::from_roots(
-            root.0.join("config"),
-            root.0.join("data"),
-            root.0.join("pictures"),
-            root.0.join("state"),
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("pictures"),
+            root.path().join("state"),
         );
         fs::create_dir_all(paths.config_file.parent().unwrap()).unwrap();
         fs::write(&paths.config_file, "callsign = \"JA1ABC\"\n").unwrap();

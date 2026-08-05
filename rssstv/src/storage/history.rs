@@ -182,10 +182,7 @@ fn escape_xml(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io::BufReader,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
+    use std::io::BufReader;
 
     use image::{
         ImageDecoder,
@@ -195,27 +192,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::worker::receive::Frame;
-
-    static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("rssstv-history-{}-{index}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
-    }
+    use crate::{test_util::TempDir, worker::receive::Frame};
 
     fn candidate() -> HistoryCandidate {
         HistoryCandidate {
@@ -255,9 +232,9 @@ mod tests {
     #[case(HistoryFormat::Png, "png")]
     #[case(HistoryFormat::Jpeg, "jpg")]
     fn saves_each_format_with_xmp(#[case] format: HistoryFormat, #[case] extension: &str) {
-        let directory = TestDirectory::new();
+        let directory = TempDir::new();
 
-        let path = save(&directory.0, candidate(), format).unwrap();
+        let path = save(directory.path(), candidate(), format).unwrap();
 
         assert_eq!(path.extension().unwrap(), extension);
         assert_eq!(image::open(&path).unwrap().width(), 2);
@@ -278,11 +255,11 @@ mod tests {
 
     #[test]
     fn the_same_reception_second_uses_the_same_path() {
-        let directory = TestDirectory::new();
-        let first = save(&directory.0, candidate(), HistoryFormat::Webp).unwrap();
-        let second = save(&directory.0, candidate(), HistoryFormat::Webp).unwrap();
+        let directory = TempDir::new();
+        let first = save(directory.path(), candidate(), HistoryFormat::Webp).unwrap();
+        let second = save(directory.path(), candidate(), HistoryFormat::Webp).unwrap();
         assert_eq!(first, second);
-        assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[rstest]

@@ -11,6 +11,9 @@ mod storage;
 mod ui;
 mod worker;
 
+#[cfg(test)]
+mod test_util;
+
 use app::App;
 use platform::UI_FONTS;
 use storage::{log, paths};

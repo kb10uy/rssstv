@@ -347,38 +347,16 @@ mod tests {
         fs,
         io::{BufRead, BufReader, BufWriter, Write},
         net::TcpListener,
-        sync::atomic::{AtomicUsize, Ordering},
         time::Instant,
     };
 
     use super::*;
-    use crate::storage::bands::BandPlan;
+    use crate::{storage::bands::BandPlan, test_util::TempDir};
 
-    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    /// A configuration directory the script may or may not be written into.
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("rssstv-rig-{}-{index}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-
-        fn with_script(source: &str) -> Self {
-            let directory = Self::new();
-            fs::write(directory.0.join(script::SCRIPT_FILE), source).unwrap();
-            directory
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
+    fn with_script(source: &str) -> TempDir {
+        let directory = TempDir::new();
+        fs::write(directory.path().join(script::SCRIPT_FILE), source).unwrap();
+        directory
     }
 
     /// A stand-in for `rigctld` that answers every command with success.
@@ -468,8 +446,8 @@ mod tests {
     #[test]
     fn the_default_script_keys_and_unkeys() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::new();
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = TempDir::new();
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -486,8 +464,8 @@ mod tests {
     #[test]
     fn a_script_that_exports_nothing_keys_nothing_and_still_connects() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::with_script("return {}");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = with_script("return {}");
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -502,13 +480,13 @@ mod tests {
     #[test]
     fn the_lead_in_is_waited_out_before_the_rig_reports_it_is_transmitting() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::new();
+        let config = TempDir::new();
         let worker = RigWorker::spawn(
             &RigSettings {
                 lead_in_seconds: 0.3,
                 ..settings(&fake.address)
             },
-            &config.0,
+            config.path(),
             plan(),
         );
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
@@ -527,13 +505,13 @@ mod tests {
     #[test]
     fn polling_reports_what_the_rig_is_tuned_to() {
         let fake = FakeRig::spawn(7_178_000);
-        let config = TestDirectory::new();
+        let config = TempDir::new();
         let worker = RigWorker::spawn(
             &RigSettings {
                 poll_seconds: 0.02,
                 ..settings(&fake.address)
             },
-            &config.0,
+            config.path(),
             plan(),
         );
 
@@ -548,7 +526,7 @@ mod tests {
     #[test]
     fn a_frequency_without_a_mode_is_not_a_reading() {
         let fake = FakeRig::spawn(7_178_000);
-        let config = TestDirectory::with_script(
+        let config = with_script(
             "return { poll_frequency = function(ctx) return ctx.ports.rig:frequency() end }",
         );
         let worker = RigWorker::spawn(
@@ -556,7 +534,7 @@ mod tests {
                 poll_seconds: 0.02,
                 ..settings(&fake.address)
             },
-            &config.0,
+            config.path(),
             plan(),
         );
 
@@ -576,13 +554,13 @@ mod tests {
     #[test]
     fn a_keyed_rig_is_not_polled() {
         let fake = FakeRig::spawn(7_178_000);
-        let config = TestDirectory::new();
+        let config = TempDir::new();
         let worker = RigWorker::spawn(
             &RigSettings {
                 poll_seconds: 0.02,
                 ..settings(&fake.address)
             },
-            &config.0,
+            config.path(),
             plan(),
         );
         settle(&worker, |snapshot| snapshot.reading.is_some());
@@ -600,7 +578,7 @@ mod tests {
     #[test]
     fn the_script_is_told_which_band_the_rig_is_on() {
         let fake = FakeRig::spawn(7_178_000);
-        let config = TestDirectory::with_script(
+        let config = with_script(
             r#"
             return {
               poll_frequency = function(ctx)
@@ -617,7 +595,7 @@ mod tests {
                 poll_seconds: 0.02,
                 ..settings(&fake.address)
             },
-            &config.0,
+            config.path(),
             plan(),
         );
         settle(&worker, |snapshot| snapshot.reading.is_some());
@@ -637,9 +615,8 @@ mod tests {
     #[test]
     fn a_script_that_raises_reports_the_failure_and_stays_connected() {
         let fake = FakeRig::spawn(14_230_000);
-        let config =
-            TestDirectory::with_script("return { transmit = function() error('no antenna') end }");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = with_script("return { transmit = function() error('no antenna') end }");
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -658,9 +635,8 @@ mod tests {
     #[test]
     fn a_script_that_never_finishes_is_abandoned() {
         let fake = FakeRig::spawn(14_230_000);
-        let config =
-            TestDirectory::with_script("return { transmit = function() while true do end end }");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = with_script("return { transmit = function() while true do end end }");
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -676,8 +652,8 @@ mod tests {
     #[test]
     fn a_script_that_does_not_return_a_module_is_reported() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::with_script("return 3");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = with_script("return 3");
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
 
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
 
@@ -695,9 +671,9 @@ mod tests {
 
     #[test]
     fn a_rig_that_is_not_listening_is_reported_rather_than_waited_on() {
-        let config = TestDirectory::new();
+        let config = TempDir::new();
 
-        let worker = RigWorker::spawn(&settings(NOTHING_LISTENING), &config.0, plan());
+        let worker = RigWorker::spawn(&settings(NOTHING_LISTENING), config.path(), plan());
 
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
         assert!(snapshot.error.is_some());
@@ -708,7 +684,7 @@ mod tests {
     #[test]
     fn changing_band_hands_the_script_the_whole_band() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::with_script(
+        let config = with_script(
             r#"
             return {
               change_band = function(ctx, band)
@@ -728,7 +704,7 @@ mod tests {
             "amplifier = true\n",
         ))
         .unwrap();
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, Arc::new(plan));
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), Arc::new(plan));
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.change_band("40m");
@@ -748,10 +724,10 @@ mod tests {
     #[test]
     fn a_keyed_rig_is_not_tuned() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::with_script(
+        let config = with_script(
             "return { set_frequency = function(ctx, hz) ctx.ports.rig:send('F ' .. hz) end }",
         );
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -771,10 +747,8 @@ mod tests {
     #[test]
     fn dropping_the_worker_calls_close() {
         let fake = FakeRig::spawn(14_230_000);
-        let config = TestDirectory::with_script(
-            "return { close = function(ctx) ctx.ports.rig:send('T 0') end }",
-        );
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        let config = with_script("return { close = function(ctx) ctx.ports.rig:send('T 0') end }");
+        let worker = RigWorker::spawn(&settings(&fake.address), config.path(), plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         drop(worker);

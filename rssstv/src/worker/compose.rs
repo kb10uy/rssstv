@@ -413,8 +413,6 @@ impl AssetProvider for FileAssets {
 }
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
-
     use jiff::civil::date;
 
     use super::*;
@@ -555,8 +553,8 @@ mod tests {
     /// same buffer coming back is proof that nothing was decoded again.
     #[test]
     fn a_prepared_background_is_reused_while_the_file_is_unchanged() {
-        let directory = TestDirectory::new();
-        let path = directory.0.join("background.png");
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("background.png");
         image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
             .save(&path)
             .unwrap();
@@ -580,8 +578,8 @@ mod tests {
     /// from what the cache happens to still hold.
     #[test]
     fn a_removed_background_file_is_an_error() {
-        let directory = TestDirectory::new();
-        let path = directory.0.join("background.png");
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("background.png");
         image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
             .save(&path)
             .unwrap();
@@ -595,8 +593,8 @@ mod tests {
 
     #[test]
     fn a_replaced_background_file_is_prepared_again() {
-        let directory = TestDirectory::new();
-        let path = directory.0.join("background.png");
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("background.png");
         image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
             .save(&path)
             .unwrap();
@@ -616,8 +614,8 @@ mod tests {
     /// the cache is keyed on.
     #[test]
     fn another_mode_prepares_the_background_again() {
-        let directory = TestDirectory::new();
-        let path = directory.0.join("background.png");
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("background.png");
         image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
             .save(&path)
             .unwrap();
@@ -627,25 +625,5 @@ mod tests {
         let prepared = cache.prepare(&path, Mode::Pd120).unwrap();
 
         assert_eq!(prepared.size().width(), Mode::Pd120.spec().width() as usize);
-    }
-
-    static NEXT_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("rssstv-compose-{}-{index}", std::process::id()));
-            fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
     }
 }

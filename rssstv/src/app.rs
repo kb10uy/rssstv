@@ -1511,7 +1511,6 @@ mod tests {
     use std::{
         cell::RefCell,
         rc::Rc,
-        sync::atomic::{AtomicUsize, Ordering},
         time::{Duration, Instant},
     };
 
@@ -1519,27 +1518,10 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::worker::receive::{Frame, HistoryCandidate, Snapshot};
-
-    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir()
-                .join(format!("rssstv-app-library-{}-{index}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
-    }
+    use crate::{
+        test_util::TempDir,
+        worker::receive::{Frame, HistoryCandidate, Snapshot},
+    };
 
     /// Builds an interface over real directories but no host audio.
     fn disconnected(paths: AppPaths, settings: &Settings) -> App {
@@ -1555,12 +1537,12 @@ mod tests {
         app
     }
 
-    fn library(root: &TestDirectory) -> AppPaths {
+    fn library(root: &TempDir) -> AppPaths {
         let paths = AppPaths::from_roots(
-            root.0.join("config"),
-            root.0.join("data"),
-            root.0.join("pictures"),
-            root.0.join("state"),
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("pictures"),
+            root.path().join("state"),
         );
         paths.initialize().unwrap();
         fs::write(paths.templates_dir().join("alpha.kdl"), "").unwrap();
@@ -1617,7 +1599,7 @@ mod tests {
     #[case(true, 1)]
     #[case(false, 0)]
     fn automatic_history_follows_its_setting(#[case] enabled: bool, #[case] expected_files: usize) {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
         let received = paths.received_dir().to_owned();
         let settings = Settings {
@@ -1651,7 +1633,7 @@ mod tests {
     #[case(true)]
     #[case(false)]
     fn a_kept_reception_becomes_the_received_image(#[case] saving: bool) {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let settings = Settings {
             auto_history: saving,
             ..Settings::default()
@@ -2280,7 +2262,7 @@ mod tests {
 
     #[test]
     fn changed_settings_are_written_and_restored_on_the_next_start() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
 
         let mut app = disconnected(paths.clone(), &Settings::default());
@@ -2320,7 +2302,7 @@ mod tests {
 
     #[test]
     fn a_stored_selection_that_disappeared_falls_back_to_the_first_entry() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
         let settings = Settings {
             template: Some("gone.kdl".to_owned()),
@@ -2336,7 +2318,7 @@ mod tests {
 
     #[test]
     fn transient_state_is_not_written_to_the_configuration_file() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
 
         let mut app = disconnected(paths.clone(), &Settings::default());
@@ -2352,7 +2334,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_frame_does_not_rewrite_the_configuration_file() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
 
         let mut app = disconnected(paths.clone(), &Settings::default());
@@ -2379,12 +2361,12 @@ mod tests {
 
     #[test]
     fn library_refresh_lists_matching_files_and_preserves_selection() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = AppPaths::from_roots(
-            root.0.join("config"),
-            root.0.join("data"),
-            root.0.join("pictures"),
-            root.0.join("state"),
+            root.path().join("config"),
+            root.path().join("data"),
+            root.path().join("pictures"),
+            root.path().join("state"),
         );
         paths.initialize().unwrap();
         fs::write(paths.templates_dir().join("beta.kdl"), "").unwrap();
@@ -2442,7 +2424,7 @@ mod tests {
 
     #[test]
     fn a_composed_image_becomes_the_transmit_image() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
         fs::write(
             paths.templates_dir().join("alpha.kdl"),
@@ -2478,7 +2460,7 @@ mod tests {
     /// does not have to touch the library to send what was just received.
     #[test]
     fn a_kept_reception_reaches_the_transmit_image() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
         fs::write(
             paths.templates_dir().join("alpha.kdl"),
@@ -2521,7 +2503,7 @@ mod tests {
     /// while one runs must not replace it until the transmission is over.
     #[test]
     fn a_selection_during_a_transmission_takes_effect_when_it_ends() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let paths = library(&root);
         image::RgbImage::from_pixel(8, 6, image::Rgb([200, 30, 30]))
             .save(paths.stocks_dir().join("first.png"))

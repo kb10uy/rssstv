@@ -673,34 +673,13 @@ fn table_mut<'a>(document: &'a mut DocumentMut, name: &str) -> &'a mut Table {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use rstest::rstest;
 
     use super::*;
+    use crate::test_util::TempDir;
 
-    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
-
-    struct TestDirectory(PathBuf);
-
-    impl TestDirectory {
-        fn new() -> Self {
-            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
-            let path =
-                std::env::temp_dir().join(format!("rssstv-config-{}-{index}", std::process::id()));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-
-        fn config(&self) -> PathBuf {
-            self.0.join("config.toml")
-        }
-    }
-
-    impl Drop for TestDirectory {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
+    fn config_path(dir: &TempDir) -> PathBuf {
+        dir.path().join("config.toml")
     }
 
     fn populated() -> Settings {
@@ -758,37 +737,37 @@ mod tests {
 
     #[test]
     fn a_missing_file_reads_as_the_defaults() {
-        let root = TestDirectory::new();
-        let config = Config::load(&root.config());
+        let root = TempDir::new();
+        let config = Config::load(&config_path(&root));
         assert_eq!(config.settings(), Settings::default());
         assert!(config.error().is_none());
     }
 
     #[test]
     fn stored_settings_survive_a_reload() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         let settings = populated();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         config.store(&settings);
         assert!(config.error().is_none());
 
-        assert_eq!(Config::load(&root.config()).settings(), settings);
+        assert_eq!(Config::load(&config_path(&root)).settings(), settings);
     }
 
     #[test]
     fn saving_keeps_comments_and_unrelated_keys() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         fs::write(
-            root.config(),
+            config_path(&root),
             "# rig settings, edited by hand\nrig-port = \"COM3\"\n",
         )
         .unwrap();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         config.store(&Settings::default());
 
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(stored.contains("# rig settings, edited by hand"));
         assert!(stored.contains("rig-port = \"COM3\""));
         assert!(stored.contains("[receive]"));
@@ -796,35 +775,41 @@ mod tests {
 
     #[test]
     fn a_setting_with_no_value_is_removed_rather_than_emptied() {
-        let root = TestDirectory::new();
-        let mut config = Config::load(&root.config());
+        let root = TempDir::new();
+        let mut config = Config::load(&config_path(&root));
         config.store(&populated());
         config.store(&Settings::default());
 
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(!stored.contains("input-device"));
         assert!(!stored.contains("template"));
-        assert_eq!(Config::load(&root.config()).settings(), Settings::default());
+        assert_eq!(
+            Config::load(&config_path(&root)).settings(),
+            Settings::default()
+        );
     }
 
     #[test]
     fn a_malformed_file_reports_the_error_and_is_not_overwritten() {
-        let root = TestDirectory::new();
-        fs::write(root.config(), "language = \n").unwrap();
+        let root = TempDir::new();
+        fs::write(config_path(&root), "language = \n").unwrap();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         assert!(config.error().is_some());
         assert_eq!(config.settings(), Settings::default());
 
         config.store(&populated());
-        assert_eq!(fs::read_to_string(root.config()).unwrap(), "language = \n");
+        assert_eq!(
+            fs::read_to_string(config_path(&root)).unwrap(),
+            "language = \n"
+        );
     }
 
     #[test]
     fn unrecognized_values_fall_back_to_the_defaults() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         fs::write(
-            root.config(),
+            config_path(&root),
             concat!(
                 "language = \"tlh\"\n",
                 "[receive]\n",
@@ -836,7 +821,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = Config::load(&root.config());
+        let config = Config::load(&config_path(&root));
         assert!(config.error().is_none());
         assert_eq!(config.settings(), Settings::default());
     }
@@ -851,21 +836,24 @@ mod tests {
     #[case("ui-scale = 99\n", 3.0)]
     #[case("ui-scale = \"big\"\n", DEFAULT_UI_SCALE)]
     fn the_ui_scale_is_read_within_range(#[case] stored: &str, #[case] expected: f32) {
-        let root = TestDirectory::new();
-        fs::write(root.config(), stored).unwrap();
-        assert_eq!(Config::load(&root.config()).settings().ui_scale, expected);
+        let root = TempDir::new();
+        fs::write(config_path(&root), stored).unwrap();
+        assert_eq!(
+            Config::load(&config_path(&root)).settings().ui_scale,
+            expected
+        );
     }
 
     #[test]
     fn the_ui_scale_is_written_readably() {
-        let root = TestDirectory::new();
-        let mut config = Config::load(&root.config());
+        let root = TempDir::new();
+        let mut config = Config::load(&config_path(&root));
         config.store(&Settings {
             ui_scale: 1.3,
             ..Settings::default()
         });
 
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(
             stored.contains("ui-scale = 1.3"),
             "the scale was written as {stored}"
@@ -876,11 +864,11 @@ mod tests {
     /// before they are changed rather than only after.
     #[test]
     fn the_default_port_is_written_out_under_the_name_the_script_reaches_it_by() {
-        let root = TestDirectory::new();
-        let mut config = Config::load(&root.config());
+        let root = TempDir::new();
+        let mut config = Config::load(&config_path(&root));
         config.store(&Settings::default());
 
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(stored.contains("[rig.ports.rig]"), "{stored}");
         assert!(stored.contains(r#"address = "127.0.0.1:4532""#), "{stored}");
     }
@@ -889,9 +877,9 @@ mod tests {
     /// the name it was written under.
     #[test]
     fn every_named_port_is_read_back() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         fs::write(
-            root.config(),
+            config_path(&root),
             concat!(
                 "[rig.ports.rig]\n",
                 "kind = \"rigctld\"\n",
@@ -902,7 +890,7 @@ mod tests {
         )
         .unwrap();
 
-        let ports = Config::load(&root.config()).settings().rig.ports;
+        let ports = Config::load(&config_path(&root)).settings().rig.ports;
 
         assert_eq!(
             ports.get("rig"),
@@ -925,24 +913,30 @@ mod tests {
     /// on a rig the operator did not ask for.
     #[test]
     fn an_entry_that_is_not_a_section_is_not_a_port() {
-        let root = TestDirectory::new();
-        fs::write(root.config(), "[rig.ports]\nrig = 3\n").unwrap();
+        let root = TempDir::new();
+        fs::write(config_path(&root), "[rig.ports]\nrig = 3\n").unwrap();
 
-        assert!(Config::load(&root.config()).settings().rig.ports.is_empty());
+        assert!(
+            Config::load(&config_path(&root))
+                .settings()
+                .rig
+                .ports
+                .is_empty()
+        );
     }
 
     /// A port named the kind of transport it was, back when there could have
     /// been more than one. There cannot, so the key goes.
     #[test]
     fn the_transport_kind_is_taken_out_of_a_port() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         fs::write(
-            root.config(),
+            config_path(&root),
             "[rig.ports.rig]\nkind = \"rigctld\"\naddress = \"192.168.0.8:4532\"\n",
         )
         .unwrap();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         let settings = config.settings();
         assert_eq!(
             settings.rig.ports.get("rig"),
@@ -952,7 +946,7 @@ mod tests {
         );
 
         config.store(&settings);
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(!stored.contains("kind"), "{stored}");
         assert!(stored.contains("192.168.0.8:4532"), "{stored}");
     }
@@ -961,11 +955,11 @@ mod tests {
     /// how every other unusable value in this file is treated.
     #[test]
     fn a_ports_key_that_is_not_a_section_leaves_the_default_port() {
-        let root = TestDirectory::new();
-        fs::write(root.config(), "[rig]\nports = 3\n").unwrap();
+        let root = TempDir::new();
+        fs::write(config_path(&root), "[rig]\nports = 3\n").unwrap();
 
         assert_eq!(
-            Config::load(&root.config()).settings().rig.ports,
+            Config::load(&config_path(&root)).settings().rig.ports,
             RigSettings::default().ports
         );
     }
@@ -974,9 +968,9 @@ mod tests {
     /// behind would leave settings that look like they still do something.
     #[test]
     fn the_keys_of_the_earlier_arrangement_are_taken_out() {
-        let root = TestDirectory::new();
+        let root = TempDir::new();
         fs::write(
-            root.config(),
+            config_path(&root),
             concat!(
                 "[rig]\n",
                 "address = \"192.168.0.8:4532\"\n",
@@ -988,10 +982,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         config.store(&Settings::default());
 
-        let stored = fs::read_to_string(root.config()).unwrap();
+        let stored = fs::read_to_string(config_path(&root)).unwrap();
         assert!(!stored.contains("[rig.commands]"), "{stored}");
         assert!(!stored.contains("[rig.bands]"), "{stored}");
         // The single address the rig used to be reached at; the ports written
@@ -1011,10 +1005,10 @@ mod tests {
         #[case] expected_poll: f32,
         #[case] expected_lead_in: f32,
     ) {
-        let root = TestDirectory::new();
-        fs::write(root.config(), format!("[rig]\n{written}")).unwrap();
+        let root = TempDir::new();
+        fs::write(config_path(&root), format!("[rig]\n{written}")).unwrap();
 
-        let rig = Config::load(&root.config()).settings().rig;
+        let rig = Config::load(&config_path(&root)).settings().rig;
 
         assert_eq!(rig.poll_seconds, expected_poll);
         assert_eq!(rig.lead_in_seconds, expected_lead_in);
@@ -1029,12 +1023,12 @@ mod tests {
 
     #[test]
     fn a_conflicting_table_name_is_replaced() {
-        let root = TestDirectory::new();
-        fs::write(root.config(), "receive = 3\n").unwrap();
+        let root = TempDir::new();
+        fs::write(config_path(&root), "receive = 3\n").unwrap();
 
-        let mut config = Config::load(&root.config());
+        let mut config = Config::load(&config_path(&root));
         config.store(&populated());
 
-        assert_eq!(Config::load(&root.config()).settings(), populated());
+        assert_eq!(Config::load(&config_path(&root)).settings(), populated());
     }
 }

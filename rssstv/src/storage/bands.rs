@@ -21,7 +21,7 @@ use toml_edit::{DocumentMut, Item, Value};
 pub const BANDS_FILE: &str = "bands.toml";
 
 /// The plan used when no file has been written.
-pub const DEFAULT_PLAN: &str = include_str!("../../bands.toml");
+pub const DEFAULT_PLAN: &str = include_str!("../../assets/bands.toml");
 
 /// A setting the operator attached to a band, as the script will read it.
 #[derive(Clone, Debug, PartialEq)]

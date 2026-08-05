@@ -1,34 +1,42 @@
 # Rig Control
 
 The application keys the station's rig, reads what it is tuned to, and moves it
-between bands. How any of that is actually done differs by station, so the
-application supplies the moments and the operator supplies the means.
+between bands. What each of those means at the rig differs by station, so the
+application supplies the moments and the operator supplies the commands.
 
 This document describes the target design. What is currently implemented is
 narrower; see [Status](#status).
 
-## Why a Script
+## Why One Transport and a Script
 
-A station keys its rig in more ways than one protocol covers. MMSSTV lets the
-operator write a custom PTT command as raw CI-V bytes on a serial port; EXTFSK
-hands keying to an external plugin driving DTR or RTS; Hamlib does it through
-`rigctld` over a socket. A station may use two at once — CAT through `rigctld`
-for frequency, a separate serial line for PTT — and the three have no operation
-in common that could be modelled once.
+Keying an SSTV station has historically been several arrangements at once.
+MMSSTV lets the operator write a custom PTT command as raw CI-V bytes on a
+serial port; EXTFSK hands keying to an external plugin driving DTR or RTS;
+Hamlib does it over a socket. They are three ways of reaching the same rig, and
+a station that used two of them had two things to configure and two ways for
+keying to go wrong.
 
-So the boundary is not *which commands* but *which transport*, and the choice
-between them is the operator's. The application opens the transports named in
-the configuration and calls a Lua script at each moment it reaches; what the
-script sends over which transport is its own business.
+`rigctld` already covers all three: Hamlib speaks CI-V, drives DTR and RTS, and
+does it for hundreds of rigs. So this application reaches the rig exactly one
+way, and everything MMSSTV solved with a custom command and EXTFSK solved with
+a plugin becomes a line of `rigctld` command in one place.
 
-An earlier design put command lines directly in `config.toml`. It could express
-a Hamlib command and nothing else, could not branch, and could not read an
-answer back. This replaces it.
+That one place cannot be a fixed list of commands, because what a rig wants
+around a transmission is a property of the rig and the station around it — a
+data mode, a monitor level, a bandwidth, an amplifier on a second `rigctld`.
+Nor can a fixed list read an answer back, which is what it takes to check that
+keying actually engaged rather than trusting that the command was accepted. So
+the application calls a Lua script at each moment it reaches, and what the
+script sends is the operator's.
+
+An earlier design put command lines directly in `config.toml`. It could send a
+command and nothing else: no branching, no reading an answer, no sharing one
+sequence across bands. This replaces it.
 
 ## Why `rigctld` Rather Than Linked Hamlib
 
-The Hamlib transport is a socket to a `rigctld` the operator already has
-running, rather than `libhamlib` linked into the build.
+The transport is a socket to a `rigctld` the operator already has running,
+rather than `libhamlib` linked into the build.
 
 Linking it would put an autotools C build into every platform's toolchain, ship
 a shared library beside the executable, and complicate cross compilation, all
@@ -46,32 +54,24 @@ what a station running more than one program is doing anyway.
 
 | Layer | Holds | Where |
 | --- | --- | --- |
-| Transports | Sockets and serial ports, framed and typed | `rssstv-rig` |
+| Transport | The `rigctld` protocol, framed | `rssstv-rig` |
 | Policy | What to send, and when, for this station | `rigcontrol.lua` |
 | Band data | Where each band is and what to do on it | `bands.toml` |
-| Timing and wiring | Which transports exist, keying delays, poll rate | `config.toml` |
+| Timing and wiring | Which `rigctld` instances to reach, keying delays, poll rate | `config.toml` |
 
 The Lua host and the worker thread live in the application crate rather than in
 `rssstv-rig`: a scripting host is application policy, and the reusable crate
 stays what it is now, a description of how to talk to a rig.
 
+Ports are named because a station may reach more than one `rigctld` — the rig
+on one, an amplifier or a rotator on another — not because there is more than
+one kind of transport. There is not.
+
 ## Status
 
-Implemented:
-
-- The `rigctld` transport, its extended-response framing, and `\chk_vfo`.
-- Named transports under `[rig.ports]`.
-- The Lua host: `rigcontrol.lua`, the compiled-in default, the context, ports
-  as script objects, the call deadline, and every entry point.
-- Keying around a transmission with a lead-in and a tail, and refusing a
-  transmission the rig would not take.
-- `bands.toml`, the compiled-in default plan, and the radio panel.
-- Frequency polling into `${radio.frequency}` and `${radio.band}`.
-
-Not yet implemented, and described here as the target:
-
-- The serial transport, and with it the CI-V and DTR/RTS keying that motivates
-  the design.
+Everything described here is implemented: the `rigctld` transport and its
+framing, named ports, the Lua host and every entry point, keying around a
+transmission, the band plan, the radio panel, and the template variables.
 
 ## The Script
 
@@ -159,7 +159,7 @@ is already on.
 
 ### Ports
 
-A port of kind `rigctld`:
+Every port is a `rigctld`:
 
 | Method | Does |
 | --- | --- |
@@ -168,14 +168,6 @@ A port of kind `rigctld`:
 
 `send` raises when the rig refuses the command, carrying Hamlib's status
 number. A script that wants to go on regardless wraps it in `pcall`.
-
-A port of kind `serial`, which the CI-V and EXTFSK cases need:
-
-| Method | Does |
-| --- | --- |
-| `port:write(bytes)` | Writes bytes, given as a Lua string |
-| `port:read(count, timeout_ms)` | Reads up to `count` bytes |
-| `port:set_rts(on)`, `port:set_dtr(on)` | Drives the modem control lines |
 
 ### Bounding and Failure
 
@@ -269,10 +261,9 @@ poll-interval = 1.0
 kind = "rigctld"
 address = "127.0.0.1:4532"
 
-[rig.ports.ptt]
-kind = "serial"
-device = "COM3"
-baud = 19200
+[rig.ports.amplifier]
+kind = "rigctld"
+address = "127.0.0.1:4533"
 ```
 
 | Key | Meaning |
@@ -288,14 +279,15 @@ opposite end, where the ring buffer is empty but the device has not finished
 playing what it was handed.
 
 Each entry under `[rig.ports]` becomes one member of `ctx.ports` under the same
-name. The names above are the ones the default script expects, and a station
-with only a `rigctld` needs only the first.
+name. `rig` is the one the default script uses, and a station with a single
+`rigctld` needs only that one; the second above is what a station reaching an
+amplifier on its own `rigctld` would add.
 
 A missing `[rig.ports]` section is one port named `rig` on the default address,
-so that switching rig control on works for a station running nothing but
-`rigctld`. A section that is present is taken as written: a port of a kind this
-build cannot open is dropped rather than replaced, because handing back the
-default would put the script on a rig the operator did not ask for.
+so that switching rig control on works without configuring anything. A section
+that is present is taken as written: a port whose `kind` is not `rigctld` is
+dropped rather than replaced, because handing back the default would put the
+script on a rig the operator did not ask for.
 
 ## The rigctld Transport
 
@@ -412,22 +404,13 @@ A step that would leave the band is disabled rather than clamped, as is one on
 a band with no `step` and one off the bands entirely. A button that moves
 nothing is better than one that says it moved something.
 
-## Staging
+## What Came Before
 
-1. **Done.** The Lua host, the `rigctld` port, and `open`, `close`,
-   `transmit`, `receive`, and `poll_frequency`. Replaced `[rig.commands]` at
-   parity with what worked before it.
-2. **Done.** `bands.toml`, `change_band`, `set_frequency`, and the radio panel.
-   Replaced `[rig.bands]` and the built-in band table, which left `rssstv-rig`
-   holding transports and nothing else.
-3. The serial port, and with it CI-V keying and DTR/RTS keying.
-
-Each stage stands on its own. The third is what makes the MMSSTV and EXTFSK
-cases work, and it needs nothing from the first two but the seam they define.
-
-The keys of the arrangement before the first stage — `[rig] address`,
-`[rig.commands]`, and `[rig.bands]` — are removed from the file when it is next
-saved, rather than left behind looking like settings that still do something.
+Rig control was first written with the commands themselves in `config.toml`:
+a list per event, and a second list per band. The keys of that arrangement —
+`[rig] address`, `[rig.commands]`, and `[rig.bands]` — are removed from the
+file when it is next saved, rather than left behind looking like settings that
+still do something.
 
 ## Verification Strategy
 

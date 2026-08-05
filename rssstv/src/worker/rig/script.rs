@@ -25,7 +25,7 @@ pub const SCRIPT_FILE: &str = "rigcontrol.lua";
 /// Compiled in rather than written out on the first run: a file written once
 /// is a file that never gains a later fix, and most operators never need to
 /// edit it. The menu writes it out for the ones who do.
-pub const DEFAULT_SCRIPT: &str = include_str!("../../../scripts/rigcontrol.lua");
+pub const DEFAULT_SCRIPT: &str = include_str!("../../../assets/rigcontrol.lua");
 
 /// How long one call may run before it is abandoned.
 ///

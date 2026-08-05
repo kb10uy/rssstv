@@ -50,7 +50,7 @@ platform integration, and application behavior.
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
 | Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
 | Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture and playback implemented |
-| Rig transports | How a rig is reached: sockets, and later serial lines | `rssstv-rig`; `rigctld` client implemented |
+| Rig transport | How a rig is reached: a `rigctld` socket | `rssstv-rig`; implemented |
 | Rig policy | What the rig is told, and when | `rigcontrol.lua`, hosted by `rssstv` |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
@@ -371,10 +371,14 @@ transmission.
 `rssstv-rig` is the platform rig boundary, and it is a socket rather than a
 library: Hamlib runs as the operator's own `rigctld` process, which keeps a C
 build out of every platform's toolchain and leaves the serial port available to
-whatever else the station runs. The crate is how a rig is reached and not what
-it is told: what is sent at each moment is a Lua script the application hosts,
-because a station keys its rig in more ways than one protocol covers. The whole
-arrangement is described in [rig-control.md](rig-control.md).
+whatever else the station runs. It is also the only way the application reaches
+a rig, because Hamlib already covers the CI-V and DTR/RTS keying that other
+SSTV software arranges separately.
+
+The crate is how a rig is reached and not what it is told: what is sent at each
+moment is a Lua script the application hosts, because what a rig wants around a
+transmission differs by rig and by station. The whole arrangement is described
+in [rig-control.md](rig-control.md).
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
@@ -493,9 +497,6 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - Template editing.
-- A serial rig transport beside the `rigctld` one, which is what the CI-V and
-  EXTFSK keying arrangements need. Designed in
-  [rig-control.md](rig-control.md).
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

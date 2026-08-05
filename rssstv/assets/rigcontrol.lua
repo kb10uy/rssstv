@@ -9,7 +9,7 @@
 --
 -- Each is called with a context table:
 --
---   ctx.ports      the transports from [rig.ports], by name
+--   ctx.ports      the rigctld connections from [rig.ports], by name
 --   ctx.band       the band the rig is on, or nil between bands
 --   ctx.frequency  the last frequency read, in hertz, or nil
 --   ctx.log(text)  writes to the application log

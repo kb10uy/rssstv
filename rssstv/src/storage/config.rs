@@ -87,9 +87,10 @@ pub struct Settings {
 
 /// How the station's rig is reached.
 ///
-/// Only the transports and the timing: what is sent over them is the
-/// operator's own script, because a station keys its rig in more ways than one
-/// protocol covers and none of them belongs hard-coded in an SSTV application.
+/// Only which `rigctld` instances to reach and the keying timing. What is sent
+/// over them is the operator's own script, because what a rig wants around a
+/// transmission is a property of that rig and of the station around it, and
+/// none of that belongs hard-coded in an SSTV application.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RigSettings {
     /// Whether the application connects at all.
@@ -108,6 +109,10 @@ pub struct RigSettings {
 pub const DEFAULT_PORT_NAME: &str = "rig";
 
 /// One transport, as the configuration file describes it.
+///
+/// An enum of one, because `kind` is written in the file and a value this
+/// build does not know has to be refusable. There is no second kind planned:
+/// Hamlib already covers the CI-V and DTR/RTS keying that would want one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PortSettings {
     /// A `rigctld` the operator is already running.

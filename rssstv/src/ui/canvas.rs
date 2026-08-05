@@ -1,10 +1,9 @@
 use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 
-use crate::ui::raster::Raster;
-
-const VIEWPORT: Color32 = Color32::from_rgb(10, 10, 13);
-const PENDING: Color32 = Color32::from_rgb(23, 23, 26);
-const SCAN_LINE: Color32 = Color32::from_rgb(148, 196, 252);
+use crate::ui::{
+    colors::{PENDING, SCAN_LINE, VIEWPORT},
+    raster::Raster,
+};
 
 /// Draws the main image view into the space `ui` has left.
 ///

@@ -4,6 +4,7 @@
 //! egui alone, because the platform draws it where the platform has one.
 
 pub mod canvas;
+pub mod colors;
 pub mod menu;
 pub mod raster;
 pub mod view;

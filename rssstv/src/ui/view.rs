@@ -9,7 +9,7 @@ use crate::{
     error::AppError,
     i18n::{arg, number},
     storage::paths::Folder,
-    ui::{canvas, menu},
+    ui::{canvas, colors, menu},
     worker::{
         receive::RxProgress,
         rig::RigState,
@@ -144,7 +144,7 @@ fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
                 let usable = valid_variable_name(name);
                 let field = egui::TextEdit::singleline(name)
                     .desired_width(name_width)
-                    .text_color_opt((!usable).then_some(Color32::from_rgb(220, 96, 96)));
+                    .text_color_opt((!usable).then_some(colors::INVALID));
                 let mut response = ui.add(field);
                 if !usable {
                     response = response.on_hover_text(invalid.clone());
@@ -373,8 +373,7 @@ fn transmit_button(ui: &mut Ui, app: &mut App, height: f32) {
     // what, rather than taking the press and reporting the same thing as an
     // error afterwards.
     let problem = (!active).then(|| app.transmit_problem()).flatten();
-    let button =
-        egui::Button::new(RichText::new(label).size(SMALL)).fill(Color32::from_rgb(140, 40, 40));
+    let button = egui::Button::new(RichText::new(label).size(SMALL)).fill(colors::TX_BUTTON);
     let mut response = ui
         .add_enabled_ui(problem.is_none(), |ui| ui.add_sized(size, button))
         .inner;
@@ -584,7 +583,7 @@ fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) {
 fn rx_level(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
     let color = if snapshot.progress.is_active() {
-        Color32::from_rgb(80, 200, 120)
+        colors::RX_LEVEL
     } else {
         Color32::WHITE
     };
@@ -599,7 +598,7 @@ fn rx_level(ui: &mut Ui, app: &App) {
 fn tx_level(ui: &mut Ui, app: &mut App) {
     let transmitting = app.tx_snapshot.phase.is_active();
     let color = if transmitting {
-        Color32::from_rgb(200, 60, 60)
+        colors::TX_LEVEL
     } else {
         Color32::WHITE
     };
@@ -930,7 +929,7 @@ fn status_bar(ui: &mut Ui, app: &App) {
         None if app.audio.output_device.is_some() => app.i18n.text("status-output-ready"),
         None => app.i18n.text("status-no-output"),
     };
-    let error_color = Color32::from_rgb(220, 120, 120);
+    let error_color = colors::ERROR;
 
     ui.horizontal(|ui| {
         if snapshot.dropped_samples > 0 {

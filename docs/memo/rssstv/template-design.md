@@ -91,7 +91,7 @@ The initial implementation supports these layer forms:
 
 | Layer | Argument | Required children | Optional children |
 | --- | --- | --- | --- |
-| `image` | PNG asset reference | `position`, `size` | `clip` |
+| `image` | Image asset reference (PNG, JPEG, BMP, or WebP) | `position`, `size` | `clip` |
 | `rximage` | None | `position`, `size` | `clip` |
 | `text` | Interpolated text | `position`, `font`, `fill` | `stroke` |
 | `rect` | None | `position`, `size`, at least one paint | `fill`, `stroke` |
@@ -509,9 +509,10 @@ color-key import mode, or implicit conversion of a particular RGB value to
 transparency.
 
 `image` references are resolved through a caller-provided asset interface. The
-renderer never opens a path from the template directly. The initial
-implementation accepts PNG-encoded assets only and passes them to `usvg` through
-private virtual resource URIs.
+renderer never opens a path from the template directly. The implementation
+accepts PNG, JPEG, and WebP assets, passing their bytes to `usvg` through
+private virtual resource URIs, and accepts BMP assets by decoding them and
+re-encoding as PNG before the same step.
 
 This pipeline keeps template parsing, variable evaluation, font and asset
 rendering, source-image preparation, and SSTV encoding as separate concerns.

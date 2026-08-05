@@ -321,6 +321,8 @@ pub struct Library {
 struct Composition {
     composer: Composer,
     generation: u64,
+    template_generation: u64,
+    stock_generation: u64,
     /// The last reception worth keeping, for `rximage` template layers.
     ///
     /// Held in memory rather than read back from the received folder: the
@@ -460,6 +462,8 @@ impl App {
             composition: Composition {
                 composer: Composer::spawn(),
                 generation: 0,
+                template_generation: 0,
+                stock_generation: 0,
                 received_image: Arc::new(test_pattern_image(settings.rx_mode)),
                 received_at: Zoned::now(),
                 frame: None,
@@ -740,11 +744,13 @@ impl App {
 
     pub fn refresh_templates(&mut self) {
         self.library.error = self.load_templates().err().map(|error| error.to_string());
+        self.composition.template_generation = self.composition.template_generation.wrapping_add(1);
         self.request_composition();
     }
 
     pub fn refresh_stocks(&mut self) {
         self.library.error = self.load_stocks().err().map(|error| error.to_string());
+        self.composition.stock_generation = self.composition.stock_generation.wrapping_add(1);
         self.request_composition();
     }
 
@@ -1147,9 +1153,13 @@ impl App {
         }
     }
 
-    /// Composes again after something the transmit image is built from
-    /// changed.
-    pub fn composition_changed(&mut self) {
+    pub fn template_changed(&mut self) {
+        self.composition.template_generation = self.composition.template_generation.wrapping_add(1);
+        self.request_composition();
+    }
+
+    pub fn stock_changed(&mut self) {
+        self.composition.stock_generation = self.composition.stock_generation.wrapping_add(1);
         self.request_composition();
     }
 
@@ -1188,6 +1198,8 @@ impl App {
         self.tx_error = None;
         self.composition.composer.request(ComposeRequest {
             generation: self.composition.generation,
+            template_generation: self.composition.template_generation,
+            stock_generation: self.composition.stock_generation,
             template_path: template.path.clone(),
             background_path: stock.path.clone(),
             assets_dir: self.paths.assets_dir().to_path_buf(),

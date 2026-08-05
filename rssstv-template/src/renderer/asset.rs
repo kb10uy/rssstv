@@ -1,16 +1,25 @@
 use std::{io::Cursor, sync::Arc};
 
-use image::{GenericImageView, ImageEncoder};
+use image::ImageEncoder;
 use resvg::usvg;
 use rssstv_sstv::image::RgbImage;
 
-use crate::{TemplateError, scene::Layer};
+use crate::{AssetError, EncodedAsset, TemplateError, scene::Layer};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) struct Resource {
-    pub(super) png: Arc<Vec<u8>>,
+    pub(super) data: Arc<Vec<u8>>,
+    pub(super) format: AssetFormat,
     pub(super) width: u32,
     pub(super) height: u32,
+}
+
+/// An encoded image format the SVG backend can embed as it stands.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum AssetFormat {
+    Png,
+    Jpeg,
+    WebP,
 }
 
 pub(super) fn validate_fonts(
@@ -36,10 +45,64 @@ pub(super) fn validate_fonts(
     Ok(())
 }
 
-pub(super) fn validate_png(png: Arc<Vec<u8>>) -> Result<Resource, TemplateError> {
-    let image = image::load_from_memory_with_format(&png, image::ImageFormat::Png)?;
-    let (width, height) = image.dimensions();
-    Ok(Resource { png, width, height })
+pub(super) fn validate_asset(
+    asset: &EncodedAsset,
+    reference: &str,
+) -> Result<Resource, TemplateError> {
+    if let Some(resource) = asset.validated.get() {
+        return Ok(resource.clone());
+    }
+    let resource = decode_asset(Arc::clone(&asset.data), reference)?;
+    let _ = asset.validated.set(resource.clone());
+    Ok(resource)
+}
+
+fn decode_asset(data: Arc<Vec<u8>>, reference: &str) -> Result<Resource, TemplateError> {
+    let reader = image::ImageReader::new(Cursor::new(data.as_slice()))
+        .with_guessed_format()
+        .map_err(|error| TemplateError::Asset {
+            reference: reference.to_owned(),
+            source: AssetError::new(error.to_string()),
+        })?;
+    let format = match reader.format() {
+        Some(image::ImageFormat::Png) => AssetFormat::Png,
+        Some(image::ImageFormat::Jpeg) => AssetFormat::Jpeg,
+        Some(image::ImageFormat::WebP) => AssetFormat::WebP,
+        Some(image::ImageFormat::Bmp) => return transcode_to_png(reader, reference),
+        _ => return Err(TemplateError::UnsupportedAsset(reference.to_owned())),
+    };
+    let (width, height) = reader.into_dimensions()?;
+    Ok(Resource {
+        data,
+        format,
+        width,
+        height,
+    })
+}
+
+fn transcode_to_png(
+    reader: image::ImageReader<Cursor<&[u8]>>,
+    reference: &str,
+) -> Result<Resource, TemplateError> {
+    let decoded = reader.decode().map_err(|error| TemplateError::Asset {
+        reference: reference.to_owned(),
+        source: AssetError::new(error.to_string()),
+    })?;
+    let rgba = decoded.to_rgba8();
+    let (width, height) = (rgba.width(), rgba.height());
+    let mut png = Vec::new();
+    image::codecs::png::PngEncoder::new(Cursor::new(&mut png)).write_image(
+        rgba.as_raw(),
+        width,
+        height,
+        image::ExtendedColorType::Rgba8,
+    )?;
+    Ok(Resource {
+        data: Arc::new(png),
+        format: AssetFormat::Png,
+        width,
+        height,
+    })
 }
 
 pub(super) fn encode_received_image(image: &RgbImage) -> Result<Resource, TemplateError> {
@@ -58,7 +121,8 @@ pub(super) fn encode_received_image(image: &RgbImage) -> Result<Resource, Templa
         image::ExtendedColorType::Rgb8,
     )?;
     Ok(Resource {
-        png: Arc::new(png),
+        data: Arc::new(png),
+        format: AssetFormat::Png,
         width,
         height,
     })

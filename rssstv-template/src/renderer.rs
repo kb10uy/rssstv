@@ -1,4 +1,8 @@
-use std::{fs, io, path::PathBuf, sync::Arc};
+use std::{
+    fs, io,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 use resvg::{
     tiny_skia::{Pixmap, Transform},
@@ -8,7 +12,10 @@ use rssstv_sstv::image::RgbImage;
 
 use crate::{
     AssetError, RenderSize, Rgba8, RgbaImage, TemplateError,
-    renderer::{asset::validate_fonts, svg::SvgGenerator},
+    renderer::{
+        asset::{AssetFormat, validate_fonts},
+        svg::SvgGenerator,
+    },
     scene::{Template, Variables},
 };
 
@@ -18,24 +25,30 @@ pub(crate) mod variable;
 
 pub use variable::valid_variable_name;
 
-/// PNG bytes returned by an [`AssetProvider`].
+/// Encoded image bytes returned by an [`AssetProvider`].
+///
+/// The provider hands over the file as it found it. Which format those bytes
+/// are in is read from the bytes themselves, so a provider does not have to
+/// trust, or even look at, the name it resolved.
 #[derive(Clone, Debug)]
 pub struct EncodedAsset {
-    png: Arc<Vec<u8>>,
+    data: Arc<Vec<u8>>,
+    validated: Arc<OnceLock<asset::Resource>>,
 }
 
 impl EncodedAsset {
-    /// Wraps PNG-encoded bytes.
-    pub fn png(bytes: Vec<u8>) -> Self {
+    /// Wraps the encoded bytes of a PNG, JPEG, BMP, or WebP image.
+    pub fn new(bytes: Vec<u8>) -> Self {
         Self {
-            png: Arc::new(bytes),
+            data: Arc::new(bytes),
+            validated: Arc::new(OnceLock::new()),
         }
     }
 }
 
 /// Resolves image references without granting the renderer filesystem access.
 pub trait AssetProvider: Send + Sync {
-    /// Loads one PNG reference, returning `None` when it does not exist.
+    /// Loads one image reference, returning `None` when it does not exist.
     fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError>;
 }
 
@@ -70,7 +83,7 @@ impl AssetProvider for FileAssetProvider {
     fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
         let path = self.base.join(reference);
         match fs::read(&path) {
-            Ok(bytes) => Ok(Some(EncodedAsset::png(bytes))),
+            Ok(bytes) => Ok(Some(EncodedAsset::new(bytes))),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(AssetError::new(format!(
                 "failed to read {}: {error}",
@@ -86,7 +99,7 @@ pub struct RenderContext<'a> {
     pub variables: &'a Variables,
     /// Final received image used by `rximage`, when available.
     pub received_image: Option<&'a RgbImage>,
-    /// Resolver for PNG references used by `image` layers.
+    /// Resolver for image references used by `image` layers.
     pub assets: &'a dyn AssetProvider,
 }
 
@@ -160,7 +173,11 @@ impl Renderer {
             resources
                 .get(href)
                 .cloned()
-                .map(|resource| ImageKind::PNG(resource.png))
+                .map(|resource| match resource.format {
+                    AssetFormat::Png => ImageKind::PNG(resource.data),
+                    AssetFormat::Jpeg => ImageKind::JPEG(resource.data),
+                    AssetFormat::WebP => ImageKind::WEBP(resource.data),
+                })
         });
 
         let tree = usvg::Tree::from_str(&svg, &options)?;
@@ -184,6 +201,8 @@ mod tests {
 
     use image::ImageEncoder;
     use rssstv_sstv::image::{ImageSize, Rgb8};
+
+    use crate::VariableValue;
 
     use super::*;
 
@@ -427,7 +446,23 @@ rect {
 
     impl AssetProvider for SingleAsset {
         fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
-            Ok((reference == "logo.png").then(|| EncodedAsset::png(self.0.clone())))
+            Ok((reference == "logo.png").then(|| EncodedAsset::new(self.0.clone())))
+        }
+    }
+
+    struct AnyAsset(Vec<u8>);
+
+    impl AssetProvider for AnyAsset {
+        fn load(&self, _reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
+            Ok(Some(EncodedAsset::new(self.0.clone())))
+        }
+    }
+
+    struct ReusableAsset(EncodedAsset);
+
+    impl AssetProvider for ReusableAsset {
+        fn load(&self, _reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
+            Ok(Some(self.0.clone()))
         }
     }
 
@@ -454,6 +489,91 @@ rect {
                 .iter()
                 .all(|pixel| *pixel == Rgba8::new(100, 149, 199, 128))
         );
+    }
+
+    #[test]
+    fn renders_a_caller_resolved_jpeg_asset() {
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(Cursor::new(&mut jpeg))
+            .write_image(&[100, 150, 200], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let assets = AnyAsset(jpeg);
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &assets);
+        let template = Template::parse(
+            "image \"logo.jpg\" { position x=(fw)0 y=(fh)0; size width=(fw)100 height=(fh)100 fit=\"stretch\"; }",
+        )
+        .unwrap();
+        let image = Renderer::new()
+            .render(&template, RenderSize::new(2, 2).unwrap(), &context)
+            .unwrap();
+
+        assert!(image.pixels().iter().all(|pixel| {
+            pixel.r.abs_diff(100) <= 8
+                && pixel.g.abs_diff(150) <= 8
+                && pixel.b.abs_diff(200) <= 8
+                && pixel.a == 255
+        }));
+    }
+
+    #[test]
+    fn transcodes_a_caller_resolved_bmp_asset_to_png() {
+        let mut bmp = Vec::new();
+        image::codecs::bmp::BmpEncoder::new(&mut Cursor::new(&mut bmp))
+            .write_image(&[100, 150, 200], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let assets = AnyAsset(bmp);
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &assets);
+        let template = Template::parse(
+            "image \"logo.bmp\" { position x=(fw)0 y=(fh)0; size width=(fw)100 height=(fh)100 fit=\"stretch\"; }",
+        )
+        .unwrap();
+        let image = Renderer::new()
+            .render(&template, RenderSize::new(2, 2).unwrap(), &context)
+            .unwrap();
+
+        assert!(
+            image
+                .pixels()
+                .iter()
+                .all(|pixel| *pixel == Rgba8::new(100, 150, 200, 255))
+        );
+    }
+
+    #[test]
+    fn reuses_a_validated_asset_across_variable_only_renders() {
+        let mut bmp = Vec::new();
+        image::codecs::bmp::BmpEncoder::new(&mut Cursor::new(&mut bmp))
+            .write_image(&[100, 150, 200], 1, 1, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let assets = ReusableAsset(EncodedAsset::new(bmp));
+        let template = Template::parse(
+            "image \"logo.bmp\" { position x=(fw)0 y=(fh)0; size width=(fw)100 height=(fh)100 fit=\"stretch\"; }",
+        )
+        .unwrap();
+        let renderer = Renderer::new();
+        let first_variables = Variables::new();
+        renderer
+            .render(
+                &template,
+                RenderSize::new(2, 2).unwrap(),
+                &RenderContext::new(&first_variables, &assets),
+            )
+            .unwrap();
+        let first = assets.0.validated.get().unwrap().data.as_ptr();
+
+        let mut second_variables = Variables::new();
+        second_variables.insert("contact.callsign", VariableValue::Text("N0CALL".into()));
+        renderer
+            .render(
+                &template,
+                RenderSize::new(2, 2).unwrap(),
+                &RenderContext::new(&second_variables, &assets),
+            )
+            .unwrap();
+
+        assert_eq!(assets.0.validated.get().unwrap().data.as_ptr(), first);
     }
 
     #[test]

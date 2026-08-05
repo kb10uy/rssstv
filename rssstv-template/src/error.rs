@@ -54,7 +54,10 @@ pub enum TemplateError {
     /// A requested font family is not registered with the renderer.
     #[error("template font family `{0}` is not available")]
     MissingFont(String),
-    /// PNG encoding or decoding failed.
+    /// An image asset is in a format the SVG backend cannot embed.
+    #[error("template asset `{0}` is not a PNG, JPEG, BMP, or WebP image")]
+    UnsupportedAsset(String),
+    /// Image encoding or decoding failed.
     #[error("template image processing failed: {0}")]
     Image(#[from] image::ImageError),
     /// SVG parsing failed.

@@ -450,11 +450,11 @@ renders the template with `${station.callsign}` and the background available as
 blocks rather than generating the complete waveform in memory.
 
 `rssstv-template` strictly parses ordered KDL v2 layers, resolves frame-relative
-geometry and caller-provided variables, PNG assets, received images, and fonts,
-then generates static SVG for `resvg`. It returns a straight-alpha RGBA overlay
-and can source-over composite that overlay into `rssstv-sstv::image::RgbImage`.
-It does not select or prepare the background image and does not access history
-or the filesystem implicitly.
+geometry and caller-provided variables, image assets (PNG, JPEG, BMP, WebP),
+received images, and fonts, then generates static SVG for `resvg`. It returns a
+straight-alpha RGBA overlay and can source-over composite that overlay into
+`rssstv-sstv::image::RgbImage`. It does not select or prepare the background
+image and does not access history or the filesystem implicitly.
 
 ## Application Storage
 
@@ -492,6 +492,16 @@ File menu opens each of the directories above the same way, the configuration
 by the directory holding its file: they hold the operator's own files in the
 operator's own directories, so browsing them belongs to the file manager rather
 than to a session the application would have to keep.
+
+The composition worker caches the parsed selected template, decoded stock
+image, mode-sized background, and encoded template assets. Template selection
+or template-list refresh invalidates the template and asset caches; stock
+selection or stock-list refresh invalidates the decoded background. Other
+composition changes, including variables, timestamps, radio readings, received
+images, and mode changes, perform no template or image file I/O. A mode change
+resizes the already decoded stock image. Advancing the template generation
+drops all encoded assets from the previous template before rendering the new
+one, including when the new template has no image layers.
 
 ## Planned Gaps
 

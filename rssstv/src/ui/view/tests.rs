@@ -353,6 +353,27 @@ fn a_populated_library_renders() {
     harness.get_by_label_contains("antenna.png");
 }
 
+#[test]
+fn template_and_stock_tables_give_the_file_name_most_of_the_width() {
+    let mut app = App::headless();
+    let template = "a-very-long-template-file-name-that-needs-the-complete-column-width.kdl";
+    let stock = "a-very-long-stock-file-name-that-needs-a-wide-column.png";
+    app.library.templates = vec![crate::app::Entry::sample(template, "")];
+    app.library.stocks = vec![crate::app::Entry::sample(stock, "320×256")];
+    let mut harness = Harness::new_ui(|ui| {
+        ui.allocate_ui(egui::vec2(700.0, 180.0), |ui| library(ui, &mut app));
+    });
+    harness.run();
+
+    let template_width = harness.get_by_label(template).rect().width();
+    let stock_width = harness.get_by_label(stock).rect().width();
+    assert!(template_width > stock_width);
+    assert!(
+        stock_width > 240.0,
+        "stock name column was {stock_width} points"
+    );
+}
+
 /// The row is what senses the click, so its text must not. A selectable
 /// label takes the text cursor and swallows the press, which leaves the
 /// row unclickable exactly where it has text on it.

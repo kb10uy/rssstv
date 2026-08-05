@@ -13,9 +13,6 @@ pub(super) fn library(ui: &mut Ui, app: &mut App) {
     ui.add_enabled_ui(!transmitting, |ui| {
         ui.horizontal_top(|ui| {
             let height = ui.available_height();
-            // The two lists divide the panel between them, so widening the
-            // window widens the file names rather than the empty space beside
-            // them.
             let size = egui::vec2(list_width(ui), height);
 
             let labels = ListLabels::new(app, "section-templates");
@@ -26,13 +23,14 @@ pub(super) fn library(ui: &mut Ui, app: &mut App) {
                 size,
                 &app.library.templates,
                 &mut app.library.template,
+                false,
             ) {
                 Some(ListAction::Reveal) => app.reveal(Folder::Templates),
                 Some(ListAction::Refresh) => app.refresh_templates(),
                 None => {}
             }
             if app.library.template != previous_template {
-                app.composition_changed();
+                app.template_changed();
             }
 
             let labels = ListLabels::new(app, "section-stocks");
@@ -43,13 +41,14 @@ pub(super) fn library(ui: &mut Ui, app: &mut App) {
                 size,
                 &app.library.stocks,
                 &mut app.library.stock,
+                true,
             ) {
                 Some(ListAction::Reveal) => app.reveal(Folder::Stocks),
                 Some(ListAction::Refresh) => app.refresh_stocks(),
                 None => {}
             }
             if app.library.stock != previous_stock {
-                app.composition_changed();
+                app.stock_changed();
             }
         });
     });
@@ -86,10 +85,9 @@ fn entry_list(
     size: egui::Vec2,
     entries: &[Entry],
     selected: &mut Option<usize>,
+    show_geometry: bool,
 ) -> Option<ListAction> {
     let mut action = None;
-    // The enclosing layout runs left to right, so the header and the list are
-    // wrapped in a vertical Ui; without it they end up side by side.
     ui.allocate_ui(size, |ui| {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
@@ -109,7 +107,7 @@ fn entry_list(
                     ui.label(RichText::new(&labels.empty).size(LABEL).weak());
                     return;
                 }
-                entry_table(ui, labels, entries, selected);
+                entry_table(ui, labels, entries, selected, show_geometry);
             });
         });
     });
@@ -118,12 +116,17 @@ fn entry_list(
 
 /// The files in one library list.
 ///
-/// A table rather than a column of buttons: the name and the geometry are
-/// real columns, so the geometry lines up down the list instead of merely
-/// sitting at the end of each row, and only the visible rows are built.
-fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &mut Option<usize>) {
+/// A table rather than a column of buttons builds only the visible rows. Stock
+/// geometry gets its own aligned column; template names use the complete row.
+fn entry_table(
+    ui: &mut Ui,
+    labels: &ListLabels,
+    entries: &[Entry],
+    selected: &mut Option<usize>,
+    show_geometry: bool,
+) {
     let row_height = ui.spacing().interact_size.y;
-    TableBuilder::new(ui)
+    let mut table = TableBuilder::new(ui)
         .id_salt(&labels.title)
         // A table insists on 200 points of scrolling area by default, which
         // would hold the whole library panel open at that height however far
@@ -133,24 +136,28 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
         .sense(egui::Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
         .auto_shrink([false, false])
-        .column(Column::remainder().clip(true))
-        .column(Column::auto())
-        .body(|body| {
-            body.rows(row_height, entries.len(), |mut row| {
-                let index = row.index();
-                let entry = &entries[index];
-                row.set_selected(*selected == Some(index));
-                row.col(|ui| {
-                    ui.label(RichText::new(&entry.name).size(SMALL));
-                });
+        .column(Column::remainder().clip(true));
+    if show_geometry {
+        table = table.column(Column::exact(56.0));
+    }
+    table.body(|body| {
+        body.rows(row_height, entries.len(), |mut row| {
+            let index = row.index();
+            let entry = &entries[index];
+            row.set_selected(*selected == Some(index));
+            row.col(|ui| {
+                ui.label(RichText::new(&entry.name).size(SMALL));
+            });
+            if show_geometry {
                 row.col(|ui| {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(RichText::new(&entry.geometry).size(LABEL).weak());
                     });
                 });
-                if row.response().clicked() {
-                    *selected = Some(index);
-                }
-            });
+            }
+            if row.response().clicked() {
+                *selected = Some(index);
+            }
         });
+    });
 }

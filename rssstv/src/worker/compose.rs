@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -7,7 +7,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::SystemTime,
 };
 
 use image::imageops::FilterType;
@@ -26,6 +25,8 @@ use crate::worker::rig::Reading;
 #[derive(Clone, Debug)]
 pub struct ComposeRequest {
     pub generation: u64,
+    pub template_generation: u64,
+    pub stock_generation: u64,
     pub template_path: PathBuf,
     pub background_path: PathBuf,
     pub assets_dir: PathBuf,
@@ -126,7 +127,9 @@ impl core::fmt::Debug for Composer {
 fn compose_loop(control: Arc<ComposeControl>, result: Arc<Mutex<Option<ComposeResult>>>) {
     let mut renderer = Renderer::new();
     renderer.load_system_fonts();
+    let mut templates = TemplateCache::default();
     let mut backgrounds = BackgroundCache::default();
+    let assets = AssetCache::default();
     loop {
         let request = {
             let Ok(mut pending) = control.request.lock() else {
@@ -147,7 +150,13 @@ fn compose_loop(control: Arc<ComposeControl>, result: Arc<Mutex<Option<ComposeRe
             continue;
         };
         let generation = request.generation;
-        let composed = compose_frame(&request, &mut renderer, &mut backgrounds);
+        let composed = compose_frame(
+            &request,
+            &mut renderer,
+            &mut templates,
+            &mut backgrounds,
+            &assets,
+        );
         let watched = composed
             .as_ref()
             .map_or(Watched::default(), |(_, watched)| *watched);
@@ -177,12 +186,19 @@ struct Watched {
 fn compose_frame(
     request: &ComposeRequest,
     renderer: &mut Renderer,
+    templates: &mut TemplateCache,
     backgrounds: &mut BackgroundCache,
+    assets: &AssetCache,
 ) -> Result<(RgbImage, Watched), String> {
-    let source = fs::read_to_string(&request.template_path)
-        .map_err(|error| format!("{}: {error}", request.template_path.display()))?;
-    let template = Template::parse(&source).map_err(|error| error.to_string())?;
-    let background = backgrounds.prepare(&request.background_path, request.mode)?;
+    assets
+        .select_generation(request.template_generation)
+        .map_err(|error| error.to_string())?;
+    let template = templates.prepare(&request.template_path, request.template_generation)?;
+    let background = backgrounds.prepare(
+        &request.background_path,
+        request.mode,
+        request.stock_generation,
+    )?;
     let size = RenderSize::new(
         u32::try_from(background.size().width()).map_err(|error| error.to_string())?,
         u32::try_from(background.size().height()).map_err(|error| error.to_string())?,
@@ -195,6 +211,8 @@ fn compose_frame(
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf(),
         assets_dir: request.assets_dir.clone(),
+        cache: assets,
+        generation: request.template_generation,
     };
     let variables = variables(request);
     let watched = Watched {
@@ -204,37 +222,78 @@ fn compose_frame(
     let mut context = RenderContext::new(&variables, &assets);
     context.received_image = Some(&request.received_image);
     let overlay = renderer
-        .render(&template, size, &context)
+        .render(template, size, &context)
         .map_err(|error| error.to_string())?;
     let frame = composite(background, &overlay).map_err(|error| error.to_string())?;
     Ok((frame, watched))
+}
+
+#[derive(Debug, Default)]
+struct TemplateCache {
+    parsed: Option<(PathBuf, u64, Template)>,
+}
+
+impl TemplateCache {
+    fn prepare(&mut self, path: &Path, generation: u64) -> Result<&Template, String> {
+        let reusable = self
+            .parsed
+            .as_ref()
+            .is_some_and(|(parsed, parsed_generation, _)| {
+                parsed == path && *parsed_generation == generation
+            });
+        if !reusable {
+            let source =
+                fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            let template = Template::parse(&source).map_err(|error| error.to_string())?;
+            self.parsed = Some((path.to_owned(), generation, template));
+        }
+        Ok(&self
+            .parsed
+            .as_ref()
+            .expect("the template was just parsed")
+            .2)
+    }
 }
 
 /// The prepared background the last composition used.
 ///
 /// Decoding a background and resizing it to the mode is by far the slowest
 /// part of a composition, and most compositions repeat one: a callsign edit, a
-/// new reception, or another template all leave the picture alone. The file is
-/// measured again on every request, so one replaced on disk is still picked
-/// up.
+/// new reception, or another template all leave the picture alone. The source
+/// is reloaded only when the stock selection or stock list generation changes;
+/// changing modes resizes the decoded source without touching the file again.
 #[derive(Debug, Default)]
 struct BackgroundCache {
-    prepared: Option<(BackgroundKey, RgbImage)>,
+    source: Option<(PathBuf, u64, image::RgbImage)>,
+    prepared: Option<(Mode, RgbImage)>,
 }
 
 impl BackgroundCache {
-    fn prepare(&mut self, path: &Path, mode: Mode) -> Result<&RgbImage, String> {
-        let key = BackgroundKey::of(path, mode);
-        // A file the filesystem will not describe cannot be told apart from
-        // the one already held, so it is prepared again rather than assumed
-        // unchanged.
-        let reusable = key.stamp.is_some()
-            && self
-                .prepared
+    fn prepare(&mut self, path: &Path, mode: Mode, generation: u64) -> Result<&RgbImage, String> {
+        let source_reusable = self
+            .source
+            .as_ref()
+            .is_some_and(|(loaded, loaded_generation, _)| {
+                loaded == path && *loaded_generation == generation
+            });
+        if !source_reusable {
+            let decoded = image::open(path)
+                .map_err(|error| format!("{}: {error}", path.display()))?
+                .to_rgb8();
+            self.source = Some((path.to_owned(), generation, decoded));
+            self.prepared = None;
+        }
+        if !self
+            .prepared
+            .as_ref()
+            .is_some_and(|(prepared_mode, _)| *prepared_mode == mode)
+        {
+            let source = &self
+                .source
                 .as_ref()
-                .is_some_and(|(prepared, _)| *prepared == key);
-        if !reusable {
-            self.prepared = Some((key, load_background(path, mode)?));
+                .expect("the background source was just loaded")
+                .2;
+            self.prepared = Some((mode, prepare_background(source, mode)?));
         }
         Ok(&self
             .prepared
@@ -244,36 +303,9 @@ impl BackgroundCache {
     }
 }
 
-/// What a prepared background was prepared from.
-#[derive(Debug, Eq, PartialEq)]
-struct BackgroundKey {
-    path: PathBuf,
-    /// The mode decides the dimensions the background was cropped to.
-    mode: Mode,
-    /// The modification time and length of the file as it was read, or `None`
-    /// when the filesystem would not say.
-    stamp: Option<(SystemTime, u64)>,
-}
-
-impl BackgroundKey {
-    fn of(path: &Path, mode: Mode) -> Self {
-        let stamp = fs::metadata(path)
-            .and_then(|metadata| Ok((metadata.modified()?, metadata.len())))
-            .ok();
-        Self {
-            path: path.to_owned(),
-            mode,
-            stamp,
-        }
-    }
-}
-
-fn load_background(path: &Path, mode: Mode) -> Result<RgbImage, String> {
-    let decoded = image::open(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?
-        .to_rgb8();
+fn prepare_background(decoded: &image::RgbImage, mode: Mode) -> Result<RgbImage, String> {
     let prepared = cover_image(
-        &decoded,
+        decoded,
         u32::from(mode.spec().width()),
         u32::from(mode.spec().height()),
     );
@@ -387,12 +419,58 @@ fn insert_timestamp(variables: &mut Variables, name: &str, instant: &Zoned) {
     );
 }
 
-struct FileAssets {
-    template_dir: PathBuf,
-    assets_dir: PathBuf,
+#[derive(Debug, Default)]
+struct AssetCache {
+    loaded: Mutex<(u64, HashMap<PathBuf, Option<EncodedAsset>>)>,
 }
 
-impl AssetProvider for FileAssets {
+impl AssetCache {
+    fn select_generation(&self, generation: u64) -> Result<(), AssetError> {
+        let mut loaded = self
+            .loaded
+            .lock()
+            .map_err(|_| AssetError::new("template asset cache is unavailable"))?;
+        if loaded.0 != generation {
+            *loaded = (generation, HashMap::new());
+        }
+        Ok(())
+    }
+
+    fn load(&self, path: &Path, generation: u64) -> Result<Option<EncodedAsset>, AssetError> {
+        self.select_generation(generation)?;
+        let mut loaded = self
+            .loaded
+            .lock()
+            .map_err(|_| AssetError::new("template asset cache is unavailable"))?;
+        if let Some(asset) = loaded.1.get(path) {
+            return Ok(asset.clone());
+        }
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                loaded.1.insert(path.to_owned(), None);
+                return Ok(None);
+            }
+            Err(error) => return Err(file_asset_error(path, error)),
+        };
+        let asset = EncodedAsset::new(bytes);
+        loaded.1.insert(path.to_owned(), Some(asset.clone()));
+        Ok(Some(asset))
+    }
+}
+
+fn file_asset_error(path: &Path, error: io::Error) -> AssetError {
+    AssetError::new(format!("failed to read {}: {error}", path.display()))
+}
+
+struct FileAssets<'a> {
+    template_dir: PathBuf,
+    assets_dir: PathBuf,
+    cache: &'a AssetCache,
+    generation: u64,
+}
+
+impl AssetProvider for FileAssets<'_> {
     fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
         let local = self.template_dir.join(reference);
         let shared = Path::new(reference).strip_prefix("assets").map_or_else(
@@ -400,15 +478,8 @@ impl AssetProvider for FileAssets {
             |path| self.assets_dir.join(path),
         );
         for path in [local, shared] {
-            match fs::read(&path) {
-                Ok(bytes) => return Ok(Some(EncodedAsset::png(bytes))),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(AssetError::new(format!(
-                        "failed to read {}: {error}",
-                        path.display()
-                    )));
-                }
+            if let Some(asset) = self.cache.load(&path, self.generation)? {
+                return Ok(Some(asset));
             }
         }
         Ok(None)
@@ -432,6 +503,8 @@ mod tests {
     fn request() -> ComposeRequest {
         ComposeRequest {
             generation: 1,
+            template_generation: 0,
+            stock_generation: 0,
             template_path: PathBuf::new(),
             background_path: PathBuf::new(),
             assets_dir: PathBuf::new(),
@@ -564,12 +637,12 @@ mod tests {
         let mut cache = BackgroundCache::default();
 
         let first = cache
-            .prepare(&path, Mode::Robot36)
+            .prepare(&path, Mode::Robot36, 0)
             .unwrap()
             .pixels()
             .as_ptr();
         let second = cache
-            .prepare(&path, Mode::Robot36)
+            .prepare(&path, Mode::Robot36, 0)
             .unwrap()
             .pixels()
             .as_ptr();
@@ -577,10 +650,46 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    /// A background that is no longer there is reported rather than composed
-    /// from what the cache happens to still hold.
     #[test]
-    fn a_removed_background_file_is_an_error() {
+    fn a_parsed_template_is_reused_while_the_file_is_unchanged() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("template.kdl");
+        fs::write(
+            &path,
+            "rect { position x=(fw)0 y=(fh)0; size width=(fw)100 height=(fh)100; fill color=\"#000000\"; }",
+        )
+        .unwrap();
+        let mut cache = TemplateCache::default();
+
+        let first = cache.prepare(&path, 0).unwrap().layers().as_ptr();
+        let second = cache.prepare(&path, 0).unwrap().layers().as_ptr();
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_replaced_template_file_is_parsed_after_the_list_generation_changes() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("template.kdl");
+        fs::write(
+            &path,
+            "rect { position x=(fw)0 y=(fh)0; size width=(fw)100 height=(fh)100; fill color=\"#000000\"; }",
+        )
+        .unwrap();
+        let mut cache = TemplateCache::default();
+        let first = cache.prepare(&path, 0).unwrap().clone();
+        fs::write(
+            &path,
+            "rect { position x=(fw)0 y=(fh)0; size width=(fw)50 height=(fh)50; fill color=\"#ffffff\"; }\n\n",
+        )
+        .unwrap();
+
+        assert_eq!(cache.prepare(&path, 0).unwrap(), &first);
+        assert_ne!(cache.prepare(&path, 1).unwrap(), &first);
+    }
+
+    #[test]
+    fn an_unchanged_stock_generation_does_not_touch_the_background_file() {
         let directory = crate::test_util::TempDir::new();
         let path = directory.path().join("background.png");
         image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
@@ -588,10 +697,11 @@ mod tests {
             .unwrap();
         let mut cache = BackgroundCache::default();
 
-        cache.prepare(&path, Mode::Robot36).unwrap();
+        let first = cache.prepare(&path, Mode::Robot36, 0).unwrap().clone();
         fs::remove_file(&path).unwrap();
 
-        assert!(cache.prepare(&path, Mode::Robot36).is_err());
+        assert_eq!(cache.prepare(&path, Mode::Robot36, 0).unwrap(), &first);
+        assert!(cache.prepare(&path, Mode::Robot36, 1).is_err());
     }
 
     #[test]
@@ -603,14 +713,13 @@ mod tests {
             .unwrap();
         let mut cache = BackgroundCache::default();
 
-        let first = cache.prepare(&path, Mode::Robot36).unwrap().clone();
-        // A different geometry gives the file a different length, so the
-        // change is visible whatever the filesystem's timestamp resolution is.
+        let first = cache.prepare(&path, Mode::Robot36, 0).unwrap().clone();
         image::RgbImage::from_pixel(16, 12, image::Rgb([200, 100, 50]))
             .save(&path)
             .unwrap();
 
-        assert_ne!(cache.prepare(&path, Mode::Robot36).unwrap(), &first);
+        assert_eq!(cache.prepare(&path, Mode::Robot36, 0).unwrap(), &first);
+        assert_ne!(cache.prepare(&path, Mode::Robot36, 1).unwrap(), &first);
     }
 
     /// The prepared image is cropped to the mode, so the mode is part of what
@@ -624,9 +733,65 @@ mod tests {
             .unwrap();
         let mut cache = BackgroundCache::default();
 
-        cache.prepare(&path, Mode::Robot36).unwrap();
-        let prepared = cache.prepare(&path, Mode::Pd120).unwrap();
+        cache.prepare(&path, Mode::Robot36, 0).unwrap();
+        fs::remove_file(&path).unwrap();
+        let prepared = cache.prepare(&path, Mode::Pd120, 0).unwrap();
 
         assert_eq!(prepared.size().width(), Mode::Pd120.spec().width() as usize);
+    }
+
+    #[test]
+    fn a_bmp_stock_is_decoded_directly_as_the_background_source() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("background.bmp");
+        image::RgbImage::from_pixel(8, 6, image::Rgb([10, 20, 30]))
+            .save(&path)
+            .unwrap();
+        let mut cache = BackgroundCache::default();
+
+        let prepared = cache.prepare(&path, Mode::Robot36, 0).unwrap();
+
+        assert_eq!(prepared.pixels()[0], Rgb8::new(10, 20, 30));
+    }
+
+    #[test]
+    fn template_assets_are_not_read_again_until_the_template_generation_changes() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("logo.png");
+        fs::write(&path, b"asset").unwrap();
+        let cache = AssetCache::default();
+
+        cache.load(&path, 0).unwrap().unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(cache.load(&path, 0).unwrap().is_some());
+        assert!(cache.load(&path, 1).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_missing_asset_candidate_is_not_checked_again_within_one_generation() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("logo.png");
+        let cache = AssetCache::default();
+
+        assert!(cache.load(&path, 0).unwrap().is_none());
+        fs::write(&path, b"asset").unwrap();
+
+        assert!(cache.load(&path, 0).unwrap().is_none());
+        assert!(cache.load(&path, 1).unwrap().is_some());
+    }
+
+    #[test]
+    fn changing_templates_immediately_drops_assets_the_new_template_does_not_use() {
+        let directory = crate::test_util::TempDir::new();
+        let path = directory.path().join("logo.png");
+        fs::write(&path, b"asset").unwrap();
+        let cache = AssetCache::default();
+        cache.load(&path, 0).unwrap().unwrap();
+        assert_eq!(cache.loaded.lock().unwrap().1.len(), 1);
+
+        cache.select_generation(1).unwrap();
+
+        assert!(cache.loaded.lock().unwrap().1.is_empty());
     }
 }

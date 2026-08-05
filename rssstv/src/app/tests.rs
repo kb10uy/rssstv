@@ -910,6 +910,31 @@ fn library_refresh_lists_matching_files_and_preserves_selection() {
     );
 }
 
+#[test]
+fn qso_changes_do_not_invalidate_template_or_stock_files() {
+    let mut app = App::headless();
+    let template_generation = app.composition.template_generation;
+    let stock_generation = app.composition.stock_generation;
+
+    app.qso_changed();
+
+    assert_eq!(app.composition.template_generation, template_generation);
+    assert_eq!(app.composition.stock_generation, stock_generation);
+
+    app.template_changed();
+    assert_eq!(
+        app.composition.template_generation,
+        template_generation.wrapping_add(1)
+    );
+    assert_eq!(app.composition.stock_generation, stock_generation);
+
+    app.stock_changed();
+    assert_eq!(
+        app.composition.stock_generation,
+        stock_generation.wrapping_add(1)
+    );
+}
+
 /// Polls until the composition worker has delivered the transmit image.
 fn composed(app: &mut App) -> Arc<RgbImage> {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -1027,7 +1052,7 @@ fn a_selection_during_a_transmission_takes_effect_when_it_ends() {
 
     app.tx_snapshot.phase = TxPhase::Producing;
     app.library.stock = Some(1);
-    app.composition_changed();
+    app.stock_changed();
 
     app.poll_audio();
     assert_eq!(app.composition.frame.as_deref(), Some(first.as_ref()));

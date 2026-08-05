@@ -4,7 +4,7 @@ use crate::{
     RenderSize, TemplateError,
     renderer::{
         RenderContext,
-        asset::{Resource, encode_received_image, validate_png},
+        asset::{Resource, encode_received_image, validate_asset},
         variable::interpolate,
     },
     scene::{
@@ -380,7 +380,7 @@ impl<'a> SvgGenerator<'a> {
                 source,
             })?
             .ok_or_else(|| TemplateError::MissingAsset(reference.to_owned()))?;
-        let resource = validate_png(asset.png)?;
+        let resource = validate_asset(&asset, reference)?;
         let uri = self.insert_resource("asset", resource.clone());
         self.asset_uris.insert(reference.to_owned(), uri.clone());
         Ok((uri, resource))

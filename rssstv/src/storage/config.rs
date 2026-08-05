@@ -247,11 +247,7 @@ impl Config {
                 .unwrap_or(defaults.locale),
             input_device: owned(&self.document, Some("audio"), "input-device"),
             output_device: owned(&self.document, Some("audio"), "output-device"),
-            // The callsign used to sit at the top level, before the station
-            // had anything else to say about itself. A file written by that
-            // version is still read.
             station_callsign: owned(&self.document, Some("station"), "callsign")
-                .or_else(|| owned(&self.document, None, "callsign"))
                 .unwrap_or_default(),
             station_qth: owned(&self.document, Some("station"), "qth").unwrap_or_default(),
             station_grid: owned(&self.document, Some("station"), "grid").unwrap_or_default(),
@@ -328,7 +324,6 @@ impl Config {
             "output-device",
             settings.output_device.as_deref().map(value),
         );
-        set(document, None, "callsign", None);
         for (key, text) in [
             ("callsign", &settings.station_callsign),
             ("qth", &settings.station_qth),
@@ -566,23 +561,10 @@ fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
             Some(value((f64::from(seconds) * 1_000.0).round() / 1_000.0)),
         );
     }
-    // The rig used to be told what to send from this file, under a single
-    // address. A script says it now, over ports that are named, so the keys
-    // that meant the old arrangement are taken out rather than left looking
-    // like settings that still do something.
-    set(document, Some("rig"), "address", None);
-    if let Some(rig) = document.get_mut("rig").and_then(Item::as_table_mut) {
-        rig.remove("commands");
-        rig.remove("bands");
-    }
     let ports = subtable_mut(document, "rig", "ports");
     ports.retain(|name, _| rig.ports.contains_key(name));
     for (name, port) in &rig.ports {
-        // A port used to name the kind of transport it was. There is only one,
-        // so the key is taken back out along with the rest of what it meant.
-        let entry = child_table_mut(ports, name);
-        entry.remove("kind");
-        entry["address"] = value(port.address.as_str());
+        child_table_mut(ports, name)["address"] = value(port.address.as_str());
     }
 }
 
@@ -925,14 +907,14 @@ mod tests {
         );
     }
 
-    /// A port named the kind of transport it was, back when there could have
-    /// been more than one. There cannot, so the key goes.
+    /// A key the file does not define is left where the operator put it, so a
+    /// hand-written note beside a port survives being stored back.
     #[test]
-    fn the_transport_kind_is_taken_out_of_a_port() {
+    fn an_unrecognized_port_key_is_left_alone() {
         let root = TempDir::new();
         fs::write(
             config_path(&root),
-            "[rig.ports.rig]\nkind = \"rigctld\"\naddress = \"192.168.0.8:4532\"\n",
+            "[rig.ports.rig]\nnote = \"shack\"\naddress = \"192.168.0.8:4532\"\n",
         )
         .unwrap();
 
@@ -947,7 +929,7 @@ mod tests {
 
         config.store(&settings);
         let stored = fs::read_to_string(config_path(&root)).unwrap();
-        assert!(!stored.contains("kind"), "{stored}");
+        assert!(stored.contains("note = \"shack\""), "{stored}");
         assert!(stored.contains("192.168.0.8:4532"), "{stored}");
     }
 
@@ -962,36 +944,6 @@ mod tests {
             Config::load(&config_path(&root)).settings().rig.ports,
             RigSettings::default().ports
         );
-    }
-
-    /// The rig used to be told what to send from this file. Leaving those keys
-    /// behind would leave settings that look like they still do something.
-    #[test]
-    fn the_keys_of_the_earlier_arrangement_are_taken_out() {
-        let root = TempDir::new();
-        fs::write(
-            config_path(&root),
-            concat!(
-                "[rig]\n",
-                "address = \"192.168.0.8:4532\"\n",
-                "[rig.commands]\n",
-                "transmit = \"T 1\"\n",
-                "[rig.bands]\n",
-                "\"40m\" = '\\set_ant 1 0'\n",
-            ),
-        )
-        .unwrap();
-
-        let mut config = Config::load(&config_path(&root));
-        config.store(&Settings::default());
-
-        let stored = fs::read_to_string(config_path(&root)).unwrap();
-        assert!(!stored.contains("[rig.commands]"), "{stored}");
-        assert!(!stored.contains("[rig.bands]"), "{stored}");
-        // The single address the rig used to be reached at; the ports written
-        // in its place carry addresses of their own.
-        assert!(!stored.contains("192.168.0.8"), "{stored}");
-        assert!(stored.contains("[rig.ports.rig]"), "{stored}");
     }
 
     #[rstest]

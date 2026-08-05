@@ -8,7 +8,7 @@
 
 use crate::{
     app::App,
-    i18n::Locale,
+    i18n::{Locale, number},
     storage::{history::HistoryFormat, paths::Folder},
 };
 
@@ -103,7 +103,7 @@ pub fn model(app: &App) -> Vec<Menu> {
                 Item::Command {
                     label: app.i18n.text_with(
                         "menu-zoom-reset",
-                        &[("percent", crate::i18n::number(ui_scale_percent(app)))],
+                        &[("percent", number(ui_scale_percent(app)))],
                     ),
                     action: Action::ZoomReset,
                 },

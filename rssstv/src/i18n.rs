@@ -111,10 +111,17 @@ impl I18n {
 
 pub type Value<'a> = FluentValue<'a>;
 
-pub fn text(value: &str) -> Value<'_> {
+/// Passes borrowed text to a message.
+pub fn arg(value: &str) -> Value<'_> {
     Value::String(Cow::Borrowed(value))
 }
 
+/// Passes text a message has to own, such as a formatted error.
+pub fn owned(value: String) -> Value<'static> {
+    Value::String(Cow::Owned(value))
+}
+
+/// Passes a number to a message, formatted for the locale.
 pub fn number(value: impl Into<f64>) -> Value<'static> {
     Value::from(value.into())
 }

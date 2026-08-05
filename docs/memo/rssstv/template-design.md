@@ -404,6 +404,16 @@ a template that prints the frequency has to compose to something before there
 is a radio to ask, and a missing variable would refuse to render at all. Rig
 control replaces the values without the template changing.
 
+Both callsign variables stand in for themselves the same way, as the word
+`Callsign`, while nothing has been entered in the field they come from. A
+template draws its callsign line whether or not there is a callsign to put on
+it, and an empty variable expands to nothing, which leaves that line as a gap
+in a layout composed for text. Neither one reaches the composition untrimmed
+either: what a callsign means is the callsign, not the spaces typed around it.
+The stand-in is the composition's alone — the identifier a transmission sends
+and the check that names the station both read the field itself, so an unset
+callsign still refuses to transmit rather than going out as the word.
+
 `rx.timestamp.*` follows the same rule as the `rximage` layer it describes: the
 test pattern counts as adopted at startup, so the variable resolves from the
 first launch rather than failing until a reception arrives.

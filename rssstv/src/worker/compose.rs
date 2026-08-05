@@ -359,6 +359,7 @@ fn cover_image(source: &image::RgbImage, width: u32, height: u32) -> image::RgbI
 /// radio to ask, and a missing variable would refuse to render at all.
 const PLACEHOLDER_FREQUENCY_MHZ: f64 = 7.178;
 const PLACEHOLDER_BAND: &str = "40m";
+const PLACEHOLDER_CALLSIGN: &str = "Callsign";
 
 /// What the radio variables say, from the rig when there is one to ask.
 ///
@@ -375,19 +376,34 @@ fn radio(request: &ComposeRequest) -> (f64, String) {
     }
 }
 
+/// What a callsign variable says, or what stands in for one not set yet.
+///
+/// An empty variable expands to nothing, which leaves the line a template drew
+/// for a callsign as a gap: the layout is composed for one whether or not there
+/// is one to put there. So an unset callsign is drawn as the word instead, the
+/// way the radio variables stand in for a rig there is none of.
+fn callsign(value: &str) -> VariableValue {
+    let value = value.trim();
+    if value.is_empty() {
+        VariableValue::Text(PLACEHOLDER_CALLSIGN.to_owned())
+    } else {
+        VariableValue::Text(value.to_owned())
+    }
+}
+
 fn variables(request: &ComposeRequest) -> Variables {
     let mut variables = Variables::new();
     for (name, value) in [
-        ("station.callsign", &request.station_callsign),
         ("station.qth", &request.station_qth),
         ("station.grid", &request.station_grid),
-        ("contact.callsign", &request.contact_callsign),
         ("report.sent", &request.report),
         ("report.number", &request.number),
         ("report.received", &request.report_received),
     ] {
         variables.insert(name, VariableValue::Text(value.clone()));
     }
+    variables.insert("station.callsign", callsign(&request.station_callsign));
+    variables.insert("contact.callsign", callsign(&request.contact_callsign));
     let (frequency_mhz, band) = radio(request);
     variables.insert("radio.band", VariableValue::Text(band));
     variables.insert(
@@ -488,6 +504,7 @@ impl AssetProvider for FileAssets<'_> {
 #[cfg(test)]
 mod tests {
     use jiff::civil::date;
+    use rstest::rstest;
 
     use super::*;
 
@@ -546,6 +563,44 @@ mod tests {
                 "{name} should be offered to the template"
             );
         }
+    }
+
+    /// A template draws a line for a callsign whether or not one has been
+    /// entered, so an unset one is composed as the word rather than as the
+    /// empty string that would leave the line blank.
+    #[rstest]
+    #[case("")]
+    #[case("   ")]
+    fn an_unset_callsign_composes_as_the_placeholder(#[case] entered: &str) {
+        let request = ComposeRequest {
+            station_callsign: entered.to_owned(),
+            contact_callsign: entered.to_owned(),
+            ..request()
+        };
+
+        let variables = variables(&request);
+
+        for name in ["station.callsign", "contact.callsign"] {
+            assert_eq!(
+                variables.get(name),
+                Some(&VariableValue::Text(PLACEHOLDER_CALLSIGN.to_owned())),
+                "{name} should stand in for a callsign that is not set"
+            );
+        }
+    }
+
+    /// The composition is what a callsign means, not what was typed around it.
+    #[test]
+    fn a_callsign_reaches_the_template_trimmed() {
+        let request = ComposeRequest {
+            contact_callsign: " N0CALL ".to_owned(),
+            ..request()
+        };
+
+        assert_eq!(
+            variables(&request).get("contact.callsign"),
+            Some(&VariableValue::Text("N0CALL".to_owned()))
+        );
     }
 
     /// A transmit tab has to compose before there is a rig to ask, so the

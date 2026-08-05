@@ -1,5 +1,16 @@
 use crate::time::TxInstant;
 
+/// 1900 Hz: leader tone and Robot 36 chrominance porch.
+pub const LEADER_HZ: u32 = 1900;
+/// 1200 Hz: sync pulse, break tone, and VIS start/stop bits.
+pub const SYNC_HZ: u32 = 1200;
+/// 1500 Hz: porch, image black reference, and Robot 36 luminance selector.
+pub const PORCH_HZ: u32 = 1500;
+/// 1100 Hz: VIS one bit and FSK identification mark.
+pub const VIS_MARK_HZ: u32 = 1100;
+/// 1300 Hz: VIS zero bit and FSK identification space.
+pub const VIS_SPACE_HZ: u32 = 1300;
+
 /// An integer audio frequency in hertz.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Frequency(u32);

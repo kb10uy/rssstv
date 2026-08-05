@@ -5,7 +5,9 @@ use crate::{
     color::rgb_to_y_cr_cb,
     image::{ImageSize, RgbImage},
     mode::{Mode, ScanChannel, ScanContent, Support},
-    signal::{Frequency, TimedTone, TxComponent},
+    signal::{
+        Frequency, LEADER_HZ, PORCH_HZ, SYNC_HZ, TimedTone, TxComponent, VIS_MARK_HZ, VIS_SPACE_HZ,
+    },
     time::{SstvDuration, TxInstant},
 };
 use rssstv_fskid::{FskEncoder, FskId, FskNumber};
@@ -15,14 +17,14 @@ const VIS_END_PS: u64 = 910 * PS_PER_MS;
 const VOX_DURATION_PS: u64 = 800 * PS_PER_MS;
 
 const VOX: [(u32, u64); 8] = [
-    (1900, 100),
-    (1500, 100),
-    (1900, 100),
-    (1500, 100),
+    (LEADER_HZ, 100),
+    (PORCH_HZ, 100),
+    (LEADER_HZ, 100),
+    (PORCH_HZ, 100),
     (2300, 100),
-    (1500, 100),
+    (PORCH_HZ, 100),
     (2300, 100),
-    (1500, 100),
+    (PORCH_HZ, 100),
 ];
 
 /// A bounded, pull-based encoder for one owned SSTV image.
@@ -95,19 +97,23 @@ impl TxEncoder {
         }
         let raw = self.mode.spec().raw_vis().expect("supported modes use VIS");
         let (component, hz, duration_ms) = match self.vis_index {
-            0 => (TxComponent::Leader, 1900, 300),
-            1 => (TxComponent::Leader, 1200, 10),
-            2 => (TxComponent::Leader, 1900, 300),
-            3 => (TxComponent::Identification, 1200, 30),
+            0 => (TxComponent::Leader, LEADER_HZ, 300),
+            1 => (TxComponent::Leader, SYNC_HZ, 10),
+            2 => (TxComponent::Leader, LEADER_HZ, 300),
+            3 => (TxComponent::Identification, SYNC_HZ, 30),
             4..=11 => {
                 let bit = self.vis_index - 4;
                 (
                     TxComponent::Identification,
-                    if raw & (1 << bit) != 0 { 1100 } else { 1300 },
+                    if raw & (1 << bit) != 0 {
+                        VIS_MARK_HZ
+                    } else {
+                        VIS_SPACE_HZ
+                    },
                     30,
                 )
             }
-            12 => (TxComponent::Identification, 1200, 30),
+            12 => (TxComponent::Identification, SYNC_HZ, 30),
             _ => unreachable!(),
         };
         self.vis_index += 1;
@@ -364,7 +370,7 @@ impl Iterator for TransmissionEncoder {
                         continue;
                     }
                     self.stage = TransmissionStage::StationIdentification;
-                    return Some(self.emit(TxComponent::Footer, 1500, 300 * PS_PER_MS));
+                    return Some(self.emit(TxComponent::Footer, PORCH_HZ, 300 * PS_PER_MS));
                 }
                 TransmissionStage::StationIdentification => {
                     if let Some(event) = self.fsk.as_mut().and_then(Iterator::next) {

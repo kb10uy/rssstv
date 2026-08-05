@@ -5,7 +5,7 @@
 
 use crate::{
     mode::Mode,
-    signal::{Frequency, TxComponent},
+    signal::{Frequency, LEADER_HZ, PORCH_HZ, SYNC_HZ, TxComponent},
     time::SstvDuration,
 };
 
@@ -153,25 +153,25 @@ const fn pixels(
 
 const fn martin(component_ps: u64) -> [ScanSegment; 8] {
     [
-        tone(TxComponent::Sync, 1200, 4_862_000_000),
-        tone(TxComponent::Porch, 1500, 572_000_000),
+        tone(TxComponent::Sync, SYNC_HZ, 4_862_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 572_000_000),
         pixels(TxComponent::Green, ScanChannel::Green, 0, component_ps),
-        tone(TxComponent::Porch, 1500, 572_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 572_000_000),
         pixels(TxComponent::Blue, ScanChannel::Blue, 0, component_ps),
-        tone(TxComponent::Porch, 1500, 572_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 572_000_000),
         pixels(TxComponent::Red, ScanChannel::Red, 0, component_ps),
-        tone(TxComponent::Porch, 1500, 572_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 572_000_000),
     ]
 }
 
 const fn scottie(component_ps: u64) -> [ScanSegment; 7] {
     [
-        tone(TxComponent::Porch, 1500, 1_500_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 1_500_000_000),
         pixels(TxComponent::Green, ScanChannel::Green, 0, component_ps),
-        tone(TxComponent::Porch, 1500, 1_500_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 1_500_000_000),
         pixels(TxComponent::Blue, ScanChannel::Blue, 0, component_ps),
-        tone(TxComponent::Sync, 1200, 9_000_000_000),
-        tone(TxComponent::Porch, 1500, 1_500_000_000),
+        tone(TxComponent::Sync, SYNC_HZ, 9_000_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 1_500_000_000),
         pixels(TxComponent::Red, ScanChannel::Red, 0, component_ps),
     ]
 }
@@ -182,8 +182,8 @@ const fn robot36(
     chroma: ScanChannel,
 ) -> [ScanSegment; 6] {
     [
-        tone(TxComponent::Sync, 1200, 9_000_000_000),
-        tone(TxComponent::Porch, 1500, 3_000_000_000),
+        tone(TxComponent::Sync, SYNC_HZ, 9_000_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 3_000_000_000),
         pixels(
             TxComponent::Luminance,
             ScanChannel::Luminance,
@@ -191,15 +191,15 @@ const fn robot36(
             88_000_000_000,
         ),
         tone(TxComponent::ChrominanceSelector, selector_hz, 4_500_000_000),
-        tone(TxComponent::Porch, 1900, 1_500_000_000),
+        tone(TxComponent::Porch, LEADER_HZ, 1_500_000_000),
         pixels(chroma_component, chroma, 0, 44_000_000_000),
     ]
 }
 
 const fn pd(component_ps: u64) -> [ScanSegment; 6] {
     [
-        tone(TxComponent::Sync, 1200, 20_000_000_000),
-        tone(TxComponent::Porch, 1500, 2_080_000_000),
+        tone(TxComponent::Sync, SYNC_HZ, 20_000_000_000),
+        tone(TxComponent::Porch, PORCH_HZ, 2_080_000_000),
         pixels(
             TxComponent::Luminance,
             ScanChannel::Luminance,
@@ -235,7 +235,7 @@ const fn wide(primary: &'static [ScanSegment]) -> RasterScan {
     }
 }
 
-const SCOTTIE_LEADING: [ScanSegment; 1] = [tone(TxComponent::Sync, 1200, 9_000_000_000)];
+const SCOTTIE_LEADING: [ScanSegment; 1] = [tone(TxComponent::Sync, SYNC_HZ, 9_000_000_000)];
 
 const fn scottie_scan(primary: &'static [ScanSegment]) -> RasterScan {
     RasterScan {
@@ -250,24 +250,27 @@ const MARTIN2_UNIT: [ScanSegment; 8] = martin(73_216_000_000);
 const SCOTTIE1_UNIT: [ScanSegment; 7] = scottie(138_240_000_000);
 const SCOTTIE2_UNIT: [ScanSegment; 7] = scottie(88_064_000_000);
 const SCOTTIE_DX_UNIT: [ScanSegment; 7] = scottie(345_600_000_000);
-const ROBOT36_UNIT: [ScanSegment; 6] =
-    robot36(1500, TxComponent::RedDifference, ScanChannel::RedDifference);
+const ROBOT36_UNIT: [ScanSegment; 6] = robot36(
+    PORCH_HZ,
+    TxComponent::RedDifference,
+    ScanChannel::RedDifference,
+);
 const ROBOT36_ALTERNATE: [ScanSegment; 6] = robot36(
     2300,
     TxComponent::BlueDifference,
     ScanChannel::BlueDifference,
 );
 const ROBOT72_UNIT: [ScanSegment; 9] = [
-    tone(TxComponent::Sync, 1200, 9_000_000_000),
-    tone(TxComponent::Porch, 1500, 3_000_000_000),
+    tone(TxComponent::Sync, SYNC_HZ, 9_000_000_000),
+    tone(TxComponent::Porch, PORCH_HZ, 3_000_000_000),
     pixels(
         TxComponent::Luminance,
         ScanChannel::Luminance,
         0,
         138_000_000_000,
     ),
-    tone(TxComponent::Porch, 1500, 4_500_000_000),
-    tone(TxComponent::Porch, 1900, 1_500_000_000),
+    tone(TxComponent::Porch, PORCH_HZ, 4_500_000_000),
+    tone(TxComponent::Porch, LEADER_HZ, 1_500_000_000),
     pixels(
         TxComponent::RedDifference,
         ScanChannel::RedDifference,
@@ -275,7 +278,7 @@ const ROBOT72_UNIT: [ScanSegment; 9] = [
         69_000_000_000,
     ),
     tone(TxComponent::Porch, 2300, 4_500_000_000),
-    tone(TxComponent::Porch, 1900, 1_500_000_000),
+    tone(TxComponent::Porch, LEADER_HZ, 1_500_000_000),
     pixels(
         TxComponent::BlueDifference,
         ScanChannel::BlueDifference,

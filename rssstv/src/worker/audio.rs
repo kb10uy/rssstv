@@ -3,7 +3,10 @@ use rssstv_audio::{
 };
 use rssstv_demodulator::SyncStart;
 
-use crate::worker::receive::{HistoryCandidate, RxSnapshot, RxWorker};
+use crate::{
+    error::AppError,
+    worker::receive::{HistoryCandidate, RxSnapshot, RxWorker},
+};
 
 /// One second of queue at the preferred capture rate.
 const QUEUE_CAPACITY_SAMPLES: usize = 48_000;
@@ -18,7 +21,7 @@ pub struct AudioState {
     pub device: Option<InputDevice>,
     pub output_devices: Vec<OutputDevice>,
     pub output_device: Option<OutputDevice>,
-    pub error: Option<String>,
+    pub error: Option<AppError>,
     capture: Option<Capture>,
     worker: Option<RxWorker>,
     snapshot: RxSnapshot,
@@ -42,11 +45,11 @@ impl AudioState {
         let host = AudioHost::new();
         let (devices, input_error) = match host.input_devices() {
             Ok(devices) => (devices, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
+            Err(error) => (Vec::new(), Some(error.into())),
         };
         let (output_devices, output_error) = match host.output_devices() {
             Ok(devices) => (devices, None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
+            Err(error) => (Vec::new(), Some(error.into())),
         };
         let device = preferred
             .and_then(|name| devices.iter().find(|device| device.name() == name).cloned())
@@ -67,17 +70,16 @@ impl AudioState {
                     .filter(|device| output_devices.contains(device))
             })
             .or_else(|| output_devices.first().cloned());
-        let error = [input_error, output_error]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        // Both halves of the host failing at once says the same thing twice,
+        // so the first answer stands for the pair.
+        let error = input_error.or(output_error);
         let mut state = Self {
             host,
             devices,
             device: device.clone(),
             output_devices,
             output_device,
-            error: (!error.is_empty()).then(|| error.join("; ")),
+            error,
             capture: None,
             worker: None,
             snapshot: RxSnapshot::default(),
@@ -132,14 +134,12 @@ impl AudioState {
     pub fn open_playback(
         &self,
         capacity_samples: usize,
-    ) -> Result<(Playback, PlaybackWriter), String> {
+    ) -> Result<(Playback, PlaybackWriter), AppError> {
         let device = self
             .output_device
             .as_ref()
-            .ok_or_else(|| "no output device is selected".to_owned())?;
-        self.host
-            .open_playback(device, capacity_samples)
-            .map_err(|error| error.to_string())
+            .ok_or(AppError::NoOutputDevice)?;
+        Ok(self.host.open_playback(device, capacity_samples)?)
     }
 
     fn open(&mut self, device: &InputDevice) {
@@ -159,7 +159,7 @@ impl AudioState {
                 self.capture = Some(capture);
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.to_string()),
+            Err(error) => self.error = Some(error.into()),
         }
     }
 

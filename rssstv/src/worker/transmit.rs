@@ -12,7 +12,7 @@ use rssstv_fskid::{FskId, FskNumber};
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{TransmissionEncoder, image::RgbImage, mode::Mode};
 
-use crate::worker::update;
+use crate::{error::AppError, worker::update};
 
 const PCM_BLOCK_SIZE: usize = 1_024;
 
@@ -106,7 +106,7 @@ pub struct TxSnapshot {
     pub generated_samples: u64,
     pub total_samples: u64,
     pub raster: RasterTiming,
-    pub error: Option<String>,
+    pub error: Option<AppError>,
 }
 
 /// Output gain applied to generated PCM, shared with the interface.
@@ -206,7 +206,7 @@ impl TxWorker {
             .map(|snapshot| snapshot.clone())
             .unwrap_or_else(|_| TxSnapshot {
                 phase: TxPhase::Failed,
-                error: Some("transmit worker state is unavailable".to_owned()),
+                error: Some(AppError::WorkerUnavailable("transmit")),
                 ..TxSnapshot::default()
             })
     }
@@ -252,7 +252,7 @@ fn transmit_loop(
     };
     let transmission = match transmission {
         Ok(transmission) => transmission,
-        Err(error) => return fail(&snapshot, error.to_string()),
+        Err(error) => return fail(&snapshot, error),
     };
     let sample_rate_hz = writer.sample_rate_hz();
     let total_samples = transmission.duration().to_samples_ceil(sample_rate_hz);
@@ -269,7 +269,7 @@ fn transmit_loop(
     });
     let mut modulator = match Modulator::new(transmission, sample_rate_hz) {
         Ok(modulator) => modulator,
-        Err(error) => return fail(&snapshot, error.to_string()),
+        Err(error) => return fail(&snapshot, error),
     };
     let prefill = writer
         .vacant()
@@ -302,7 +302,7 @@ fn transmit_loop(
                     count = next;
                     offset = 0;
                 }
-                Err(error) => return fail(&snapshot, error.to_string()),
+                Err(error) => return fail(&snapshot, error),
             }
         }
         let written = writer.write(&block[offset..count]);
@@ -321,10 +321,10 @@ fn transmit_loop(
     }
 }
 
-fn fail(snapshot: &Mutex<TxSnapshot>, error: String) {
+fn fail(snapshot: &Mutex<TxSnapshot>, error: impl Into<AppError>) {
     update(snapshot, |state| {
         state.phase = TxPhase::Failed;
-        state.error = Some(error);
+        state.error = Some(error.into());
     });
 }
 

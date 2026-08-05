@@ -14,6 +14,7 @@ pub mod script;
 use rssstv_rig::DEFAULT_TIMEOUT;
 
 use crate::{
+    error::AppError,
     storage::{
         bands::BandPlan,
         config::{PortSettings, RigSettings},
@@ -82,7 +83,7 @@ pub struct RigSnapshot {
     /// What the rig was last found to be tuned to.
     pub reading: Option<Reading>,
     /// The last failure, cleared when a transmission asks to be keyed.
-    pub error: Option<String>,
+    pub error: Option<AppError>,
 }
 
 /// What the interface asks the rig for.
@@ -134,7 +135,7 @@ impl RigWorker {
             .map(|snapshot| snapshot.clone())
             .unwrap_or_else(|_| RigSnapshot {
                 state: RigState::Failed,
-                error: Some("rig control state is unavailable".to_owned()),
+                error: Some(AppError::WorkerUnavailable("rig control")),
                 reading: None,
             })
     }
@@ -229,7 +230,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
         Err(error) => {
             update(snapshot, |state| {
                 state.state = RigState::Failed;
-                state.error = Some(error.to_string());
+                state.error = Some(error.into());
             });
             return;
         }
@@ -237,7 +238,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
     if let Err(error) = host.call(Entry::Open, None) {
         update(snapshot, |state| {
             state.state = RigState::Failed;
-            state.error = Some(error.to_string());
+            state.error = Some(error.into());
         });
         return;
     }
@@ -299,7 +300,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
             // raised something of its own, but a socket that closed is closed.
             let stopping = host.transport_failed();
             update(snapshot, |state| {
-                state.error = Some(error.to_string());
+                state.error = Some(error.into());
                 if stopping {
                     state.state = RigState::Failed;
                 }
@@ -312,7 +313,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
     // Reported but not acted on: the session is being given up either way, and
     // a close that failed leaves nothing behind to recover.
     if let Err(error) = host.call(Entry::Close, frequency) {
-        update(snapshot, |state| state.error = Some(error.to_string()));
+        update(snapshot, |state| state.error = Some(error.into()));
     }
     update(snapshot, |state| state.state = RigState::Disconnected);
 }
@@ -544,8 +545,8 @@ mod tests {
         assert!(
             snapshot
                 .error
-                .as_deref()
-                .is_some_and(|error| error.contains("both frequency and mode"))
+                .as_ref()
+                .is_some_and(|error| error.to_string().contains("both frequency and mode"))
         );
     }
 
@@ -623,7 +624,12 @@ mod tests {
         let snapshot = settle(&worker, |snapshot| snapshot.error.is_some());
 
         assert!(
-            snapshot.error.as_deref().unwrap().contains("no antenna"),
+            snapshot
+                .error
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("no antenna"),
             "{snapshot:?}"
         );
         // The script failed, not the connection, so rig control is still up.
@@ -643,7 +649,12 @@ mod tests {
         let snapshot = settle(&worker, |snapshot| snapshot.error.is_some());
 
         assert!(
-            snapshot.error.as_deref().unwrap().contains("too long"),
+            snapshot
+                .error
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("too long"),
             "{snapshot:?}"
         );
         assert_ne!(snapshot.state, RigState::Transmitting);
@@ -658,7 +669,12 @@ mod tests {
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
 
         assert!(
-            snapshot.error.as_deref().unwrap().contains("table"),
+            snapshot
+                .error
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("table"),
             "{snapshot:?}"
         );
     }

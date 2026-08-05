@@ -13,7 +13,7 @@ use rssstv_sstv::{
     mode::Mode,
 };
 
-use crate::worker::receive::session::run;
+use crate::{error::AppError, worker::receive::session::run};
 
 mod session;
 
@@ -114,7 +114,7 @@ pub struct RxSnapshot {
     /// The contest numbers decoded alongside those identifiers.
     pub numbers: Vec<String>,
     pub dropped_samples: u64,
-    pub error: Option<String>,
+    pub error: Option<AppError>,
 }
 
 /// Single-slot handoff holding the newest observation.
@@ -285,7 +285,7 @@ mod tests {
         };
         mailbox.publish(RxSnapshot {
             frame: Some(frame.clone()),
-            error: Some("capture gap".to_owned()),
+            error: Some(AppError::CaptureRestartFailed),
             ..RxSnapshot::default()
         });
         mailbox.publish(RxSnapshot {
@@ -299,7 +299,10 @@ mod tests {
             RxProgress::Decoding { rows: 3, total: 10 }
         );
         assert_eq!(snapshot.frame, Some(frame));
-        assert_eq!(snapshot.error.as_deref(), Some("capture gap"));
+        assert_eq!(
+            snapshot.error.map(|error| error.to_string()),
+            Some(AppError::CaptureRestartFailed.to_string())
+        );
     }
 
     #[test]
@@ -335,14 +338,17 @@ mod tests {
     fn newer_payloads_replace_uncollected_ones() {
         let mailbox = Mailbox::default();
         mailbox.publish(RxSnapshot {
-            error: Some("first".to_owned()),
+            error: Some(AppError::WorkerUnavailable("first")),
             ..RxSnapshot::default()
         });
         mailbox.publish(RxSnapshot {
-            error: Some("second".to_owned()),
+            error: Some(AppError::WorkerUnavailable("second")),
             ..RxSnapshot::default()
         });
-        assert_eq!(mailbox.take().unwrap().error.as_deref(), Some("second"));
+        assert_eq!(
+            mailbox.take().unwrap().error.unwrap().to_string(),
+            AppError::WorkerUnavailable("second").to_string()
+        );
     }
 }
 
@@ -564,7 +570,7 @@ mod pipeline_tests {
         let (mistimed, error) = decode_at(mode, &expected, 300.0);
         assert_eq!(mistimed.progress, RxProgress::Complete, "{mistimed:?}");
         assert_eq!(mistimed.mode, Some(mode));
-        assert_eq!(mistimed.error, None);
+        assert!(mistimed.error.is_none());
         assert!(
             error < baseline + 4.0,
             "mistimed reception scored {error} against a {baseline} baseline"

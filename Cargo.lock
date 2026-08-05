@@ -3675,6 +3675,7 @@ name = "rssstv-fskid"
 version = "0.1.0"
 dependencies = [
  "rstest",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

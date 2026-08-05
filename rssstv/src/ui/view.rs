@@ -6,6 +6,7 @@ use rssstv_template::valid_variable_name;
 
 use crate::{
     app::{App, Dsp, Entry, Tab},
+    error::AppError,
     i18n::{arg, number},
     storage::paths::Folder,
     ui::{canvas, menu},
@@ -939,17 +940,24 @@ fn status_bar(ui: &mut Ui, app: &App) {
             );
             ui.label(RichText::new(dropped).size(LABEL).color(error_color));
         }
-        for error in [
-            app.audio.error.as_deref(),
-            snapshot.error.as_deref(),
-            app.tx_error.as_deref(),
-            app.rig_snapshot.error.as_deref(),
-            app.library_error.as_deref(),
-            app.config_error(),
+        let reported = [
+            app.audio.error.as_ref(),
+            snapshot.error.as_ref(),
+            app.rig_snapshot.error.as_ref(),
         ]
         .into_iter()
         .flatten()
-        {
+        .map(AppError::to_string);
+        for error in reported.chain(
+            [
+                app.tx_error.as_deref(),
+                app.library_error.as_deref(),
+                app.config_error(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_owned),
+        ) {
             ui.label(RichText::new(error).size(LABEL).color(error_color));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -975,6 +983,7 @@ mod tests {
         app::{App, FIRST_QSO_NUMBER},
         i18n::Locale,
     };
+    use rssstv_rig::RigError;
 
     /// Runs the interface for a few frames and returns the harness.
     ///
@@ -1080,10 +1089,15 @@ mod tests {
         // Reconnecting is offered exactly when there is a failure to recover
         // from.
         app.rig_snapshot.state = RigState::Failed;
-        app.rig_snapshot.error = Some("connection refused".to_owned());
+        let failure = AppError::Rig(RigError::Connect {
+            address: "127.0.0.1:4532".to_owned(),
+            detail: "connection refused".to_owned(),
+        });
+        let reported = failure.to_string();
+        app.rig_snapshot.error = Some(failure);
         let harness = render(&mut app);
         harness.get_by_label(&retry);
-        harness.get_by_label("connection refused");
+        harness.get_by_label(&reported);
     }
 
     #[test]

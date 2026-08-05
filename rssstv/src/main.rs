@@ -5,6 +5,7 @@ use std::{error::Error, sync::Arc};
 use egui::{FontData, FontDefinitions, FontFamily};
 
 mod app;
+mod error;
 mod i18n;
 mod platform;
 mod storage;

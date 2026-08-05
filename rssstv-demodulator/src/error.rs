@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 /// Failure while configuring or processing the receive front end.
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum DemodulatorError {
     /// The physical sample rate cannot represent the SSTV receive band.
     #[error("sample rate {0} Hz is too low for SSTV")]

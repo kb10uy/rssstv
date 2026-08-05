@@ -16,7 +16,10 @@ use rssstv_sstv::{
     rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging, StopReason},
 };
 
-use crate::worker::receive::{Frame, HistoryCandidate, Mailbox, RxProgress, RxSnapshot};
+use crate::{
+    error::AppError,
+    worker::receive::{Frame, HistoryCandidate, Mailbox, RxProgress, RxSnapshot},
+};
 
 /// Samples drained from the capture queue per pass.
 const READ_SAMPLES: usize = 4_096;
@@ -75,14 +78,14 @@ fn live_rx_config(mode: Mode, sample_rate_hz: u32, slant: bool) -> RxConfig {
 /// live clock can be off by thousands of parts per million. Refitting the rate
 /// over the whole staged reception is what removes the resulting slant, and it
 /// is not optional for a usable image.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 enum Refinement {
     /// Staging is off, or the reception cannot be refined.
     NotApplicable,
     /// Collecting trailing audio until the refit raster is covered.
     Waiting,
     Done,
-    Failed(String),
+    Failed(AppError),
 }
 
 /// Owns the protocol state for one worker thread.
@@ -112,9 +115,12 @@ struct Session {
 }
 
 impl Session {
-    fn new(sample_rate_hz: u32, sync_start: SyncStart, vis_restart: bool) -> Result<Self, String> {
-        let mut demodulator =
-            Demodulator::new(sample_rate_hz).map_err(|error| error.to_string())?;
+    fn new(
+        sample_rate_hz: u32,
+        sync_start: SyncStart,
+        vis_restart: bool,
+    ) -> Result<Self, AppError> {
+        let mut demodulator = Demodulator::new(sample_rate_hz)?;
         demodulator.set_sync_start(sync_start);
         demodulator.set_header_restart(vis_restart);
         Ok(Self {
@@ -157,7 +163,7 @@ impl Session {
     ///
     /// Capture overrun breaks the contiguity the demodulator requires, so the
     /// pipeline restarts rather than decoding across the gap.
-    fn reset(&mut self) -> Result<(), String> {
+    fn reset(&mut self) -> Result<(), AppError> {
         *self = Self::new(self.sample_rate_hz, self.sync_start, self.vis_restart)?;
         Ok(())
     }
@@ -195,7 +201,7 @@ impl Session {
         })
     }
 
-    fn interrupt(&mut self) -> Result<Option<(Frame, Option<HistoryCandidate>)>, String> {
+    fn interrupt(&mut self) -> Result<Option<(Frame, Option<HistoryCandidate>)>, AppError> {
         let Some(decoder) = self.decoder.as_mut() else {
             return Ok(None);
         };
@@ -229,9 +235,8 @@ impl Session {
         })
     }
 
-    fn restart_search(&mut self) -> Result<(), String> {
-        self.demodulator =
-            Demodulator::new(self.sample_rate_hz).map_err(|error| error.to_string())?;
+    fn restart_search(&mut self) -> Result<(), AppError> {
+        self.demodulator = Demodulator::new(self.sample_rate_hz)?;
         self.demodulator.set_sync_start(self.sync_start);
         self.demodulator.set_header_restart(self.vis_restart);
         self.searching = true;
@@ -244,13 +249,13 @@ impl Session {
     /// not restart the demodulator while it is still waiting.
     fn reception_finished(&self) -> bool {
         !self.searching
-            && self.refinement != Refinement::Waiting
+            && !matches!(self.refinement, Refinement::Waiting)
             && self.decoder.as_ref().is_some_and(|decoder| {
                 matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. })
             })
     }
 
-    fn take_refinement_error(&mut self) -> Option<String> {
+    fn take_refinement_error(&mut self) -> Option<AppError> {
         let Refinement::Failed(message) = &self.refinement else {
             return None;
         };
@@ -260,7 +265,7 @@ impl Session {
     }
 
     /// Feeds one demodulated chunk into the raster decoder.
-    fn decode(&mut self, chunk: &DemodulatedChunk, slant: bool) -> Result<(), String> {
+    fn decode(&mut self, chunk: &DemodulatedChunk, slant: bool) -> Result<(), AppError> {
         if let Some(mode) = chunk.detected_mode() {
             // A header during a reception is the station sending again, so the
             // picture it interrupts is closed out before the decoder is handed
@@ -270,14 +275,11 @@ impl Session {
                 self.superseded =
                     Self::history_candidate(previous, &self.received_at, &self.fsk_ids);
             }
-            self.decoder = Some(
-                RxDecoder::with_config(
-                    mode,
-                    self.sample_rate_hz,
-                    live_rx_config(mode, self.sample_rate_hz, slant),
-                )
-                .map_err(|error| error.to_string())?,
-            );
+            self.decoder = Some(RxDecoder::with_config(
+                mode,
+                self.sample_rate_hz,
+                live_rx_config(mode, self.sample_rate_hz, slant),
+            )?);
             self.published_revision = None;
             self.searching = false;
             self.refinement = if slant {
@@ -303,7 +305,7 @@ impl Session {
         result
     }
 
-    fn drive(&mut self, decoder: &mut RxDecoder, chunk: &DemodulatedChunk) -> Result<(), String> {
+    fn drive(&mut self, decoder: &mut RxDecoder, chunk: &DemodulatedChunk) -> Result<(), AppError> {
         let mut offset = 0;
         while offset < chunk.frequency_hz().len() {
             let block = DemodulatedBlock::new(
@@ -322,12 +324,9 @@ impl Session {
                 }
                 _ => {}
             }
-            let processed = decoder.process(block).map_err(|error| {
-                format!(
-                    "receive decoding failed at sample {}: {}",
-                    chunk.first_sample() + offset as u64 + error.consumed() as u64,
-                    error.error()
-                )
+            let processed = decoder.process(block).map_err(|error| AppError::Decode {
+                sample: chunk.first_sample() + offset as u64 + error.consumed() as u64,
+                source: error.error(),
             })?;
             if processed.event()
                 == Some(RxEvent::Stopped {
@@ -350,12 +349,11 @@ impl Session {
     /// tail has to be staged before refinement can succeed. This mirrors what
     /// the offline `decode-wav` integration does at end of file.
     fn stage_tail(&mut self, decoder: &mut RxDecoder, block: DemodulatedBlock<'_>) {
-        if self.refinement != Refinement::Waiting {
+        if !matches!(self.refinement, Refinement::Waiting) {
             return;
         }
         if let Err(error) = decoder.stage_for_refinement(block) {
-            self.refinement =
-                Refinement::Failed(format!("staging the refinement tail failed: {error}"));
+            self.refinement = Refinement::Failed(AppError::RefinementStaging(error));
             return;
         }
         let staged = decoder.staged_samples_len();
@@ -376,7 +374,7 @@ impl Session {
                 self.refine_next_len = staged.saturating_add(retry_step(rate));
             }
             Err(error) => {
-                self.refinement = Refinement::Failed(format!("slant refinement failed: {error}"));
+                self.refinement = Refinement::Failed(AppError::Refinement(error));
             }
         }
     }
@@ -440,7 +438,7 @@ pub(super) fn run(
         session.set_vis_restart(vis_restart.load(Ordering::Relaxed));
 
         if reading.is_discontinuous() && session.reset().is_err() {
-            error = Some("failed to restart after a capture overrun".to_owned());
+            error = Some(AppError::CaptureRestartFailed);
         }
 
         match session.demodulator.process(samples) {
@@ -469,7 +467,7 @@ pub(super) fn run(
                 }
             }
             Err(reason) => {
-                error = Some(reason.to_string());
+                error = Some(reason.into());
                 let _ = session.reset();
             }
         }

@@ -17,6 +17,7 @@ use rssstv_template::valid_variable_name;
 use rssstv_demodulator::SyncStart;
 
 use crate::{
+    error::AppError,
     i18n::{I18n, Locale, owned},
     platform::{self, Activity, Platform},
     storage::{
@@ -1208,16 +1209,16 @@ impl App {
         };
         self.tx_snapshot = worker.latest();
         if self.tx_snapshot.phase == TxPhase::Failed {
-            self.tx_error = self.tx_snapshot.error.clone();
+            self.tx_error = self.tx_snapshot.error.as_ref().map(AppError::to_string);
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
         // A rig that refused one of the operator's commands has not been keyed,
         // so the transmission it was keyed for cannot go out.
         if self.rig_keyed
-            && let Some(error) = self.rig_snapshot.error.clone()
+            && let Some(error) = self.rig_snapshot.error.as_ref()
         {
-            self.tx_error = Some(error);
+            self.tx_error = Some(error.to_string());
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
@@ -1231,8 +1232,9 @@ impl App {
             let result = self
                 .playback
                 .as_ref()
-                .ok_or_else(|| "playback closed before transmission started".to_owned())
-                .and_then(|playback| playback.play().map_err(|error| error.to_string()));
+                .ok_or(AppError::PlaybackClosed)
+                .and_then(|playback| Ok(playback.play()?))
+                .map_err(|error: AppError| error.to_string());
             match result {
                 Ok(()) => self.playback_started = true,
                 Err(error) => {
@@ -1248,7 +1250,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|playback| playback.underrun_samples() > 0)
         {
-            self.tx_error = Some("audio playback underrun".to_owned());
+            self.tx_error = Some(AppError::PlaybackUnderrun.to_string());
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
@@ -1293,11 +1295,10 @@ impl App {
         if !self.rig.enabled || self.rig_snapshot.state.is_ready() {
             return None;
         }
-        let detail = self
-            .rig_snapshot
-            .error
-            .clone()
-            .unwrap_or_else(|| self.i18n.text(self.rig_snapshot.state.label_key()));
+        let detail = self.rig_snapshot.error.as_ref().map_or_else(
+            || self.i18n.text(self.rig_snapshot.state.label_key()),
+            AppError::to_string,
+        );
         Some(
             self.i18n
                 .text_with("error-rig-unavailable", &[("error", owned(detail))]),
@@ -1348,7 +1349,7 @@ impl App {
         let (playback, writer) = match self.audio.open_playback(PLAYBACK_QUEUE_SAMPLES) {
             Ok(playback) => playback,
             Err(error) => {
-                self.tx_error = Some(error);
+                self.tx_error = Some(error.to_string());
                 return;
             }
         };
@@ -1522,6 +1523,7 @@ mod tests {
         test_util::TempDir,
         worker::receive::{Frame, HistoryCandidate, RxSnapshot},
     };
+    use rssstv_rig::RigError;
 
     /// Builds an interface over real directories but no host audio.
     fn disconnected(paths: AppPaths, settings: &Settings) -> App {
@@ -1827,7 +1829,10 @@ mod tests {
         let mut app = App::headless();
         app.rig.enabled = true;
         app.rig_snapshot.state = RigState::Failed;
-        app.rig_snapshot.error = Some("connection refused".to_owned());
+        app.rig_snapshot.error = Some(AppError::Rig(RigError::Connect {
+            address: "127.0.0.1:4532".to_owned(),
+            detail: "connection refused".to_owned(),
+        }));
 
         let problem = app.rig_problem().unwrap();
 

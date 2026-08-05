@@ -387,7 +387,7 @@ App
   rx: RxState                    // live session, image handle, level, sync
   tx: TxState                    // selected mode, prepared frame, progress
   library: LibraryState          // template list, stock list
-  qso: QsoState                  // callsign, RSV, serial number, RSV received
+  qso: QsoState                  // DX call, report received, report and serial sent
   locale: Locale
 ```
 
@@ -434,7 +434,7 @@ marked shared are built once and reused across tabs.
 | Radio panel | Shared | Connect and its state, then a band `pick_list`, the frequency, and two step buttons |
 | DSP panel | Receive | Three toggle buttons |
 | Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
-| QSO panel | Shared | `text_input` for the contact call, RSV, serial number, and received RSV |
+| QSO panel | Shared | `text_input` for the DX call and the received report, then the sent report with its list and its serial, and the two serial buttons |
 | Station dialog | Modal | `text_input` for the callsign, QTH, and grid locator |
 | Template variable dialog | Modal | Rows of `text_input` naming and valuing `${custom.*}` |
 | Template list | Shared | `scrollable` of selectable rows |
@@ -599,6 +599,20 @@ republishes every identifier it has decoded on each snapshot, so the interface
 follows the count of identifiers it has already adopted and leaves the field
 editable between receptions. That count is followed downwards as well, because
 reopening a device restarts the worker with an empty list.
+
+The QSO panel reads downwards in the order a contact is worked: the DX
+callsign, the report that station gave, and the report being given back. The
+received report is one field because the number in it arrives over the air as
+one thing. The report being sent is two, because its parts are worked
+differently: the report itself is chosen from a short list beside a field that
+may still be typed into, and the serial number is a counted three-digit value
+with buttons under it to count it on and to take it back to the first number.
+The serial survives a restart, because a contest outlives a session.
+
+A contest number decoded from the same FSKID fills the received report, as
+`595` and the number the way MMSSTV composes it. It is followed the same way as
+the identifier beside it: only an arrival writes, and the count of numbers
+already adopted is followed downwards as well as upwards.
 
 Transmit is implemented end to end. Template and stock changes enqueue a
 latest-wins composite request whose result becomes the transmit image, and TX

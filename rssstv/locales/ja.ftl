@@ -53,10 +53,11 @@ custom-title = テンプレート変数
 custom-note = テンプレートからは ${ "{" }custom.名前{ "}" } で参照します。
 custom-invalid = この名前はテンプレートから参照できません。
 custom-add = 追加
-qso-call = コール
-qso-rsv-nr = RSV/NR
-qso-rsv-received = 受信 RSV
-qso-clear = クリア
+qso-call = DX CALL
+qso-rsv-received = RSV/NR (R)
+qso-rsv-nr = RSV/NR (S)
+qso-nr-increment = NR Incr.
+qso-nr-reset = NR Reset
 
 action-auto-history = 自動履歴
 history-format-webp = WebP（可逆）

@@ -108,13 +108,50 @@ impl DspFlags {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+/// The report values offered for the report being sent.
+///
+/// A contest report is always readable, so the readability digit never moves;
+/// what an operator actually varies is the strength and the video quality.
+pub const RSV_OPTIONS: [&str; 6] = ["595", "594", "575", "574", "555", "554"];
+/// The report offered before the operator has changed it.
+pub const DEFAULT_RSV: &str = RSV_OPTIONS[0];
+/// The serial number a fresh log starts from.
+pub const FIRST_QSO_NUMBER: u16 = 1;
+/// The highest serial the three-digit field can show.
+pub const LAST_QSO_NUMBER: u16 = 999;
+/// The report the identifier's contest number is read as.
+///
+/// Only the number travels over the air; the readability and strength in front
+/// of it are what MMSSTV assumes of a station that got through at all.
+const RECEIVED_REPORT: &str = "595";
+
+#[derive(Clone, Debug)]
 pub struct Qso {
     pub call: String,
-    pub rsv: String,
-    pub number: String,
     /// The report the other station gave, which `${report.received}` reads.
     pub rsv_received: String,
+    pub rsv: String,
+    /// The serial number being sent, counted rather than typed so the operator
+    /// works it with the two buttons under it.
+    pub number: u16,
+}
+
+impl Default for Qso {
+    fn default() -> Self {
+        Self {
+            call: String::new(),
+            rsv_received: String::new(),
+            rsv: DEFAULT_RSV.to_owned(),
+            number: FIRST_QSO_NUMBER,
+        }
+    }
+}
+
+impl Qso {
+    /// Returns the serial number as the three digits it is sent as.
+    pub fn number_text(&self) -> String {
+        format!("{:03}", self.number)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -284,6 +321,9 @@ pub struct App {
     /// snapshot, so the count is what distinguishes a new arrival from the
     /// same list observed again.
     adopted_callsigns: usize,
+    /// How many decoded contest numbers have reached the QSO panel, followed
+    /// the same way as the identifiers beside them.
+    adopted_numbers: usize,
     platform: Box<dyn Platform>,
     /// What the platform was last told the application is doing.
     ///
@@ -359,7 +399,10 @@ impl App {
             tx_gain: Arc::new(TxGain::from_travel(settings.tx_volume)),
             auto_history: settings.auto_history,
             history_format: settings.history_format,
-            qso: Qso::default(),
+            qso: Qso {
+                number: settings.qso_number,
+                ..Qso::default()
+            },
             station_callsign: settings.station_callsign.trim().to_ascii_uppercase(),
             station_qth: settings.station_qth.clone(),
             station_grid: settings.station_grid.clone(),
@@ -399,6 +442,7 @@ impl App {
             rig_worker: None,
             rig_keyed: false,
             adopted_callsigns: 0,
+            adopted_numbers: 0,
             platform,
             activity: Activity::default(),
         }
@@ -434,6 +478,7 @@ impl App {
             station_callsign: self.station_callsign.clone(),
             station_qth: self.station_qth.clone(),
             station_grid: self.station_grid.clone(),
+            qso_number: self.qso.number,
             custom_variables: self.custom_variables.clone(),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
@@ -593,9 +638,23 @@ impl App {
         self.request_composition();
     }
 
-    pub fn clear_qso(&mut self) {
-        self.qso = Qso::default();
-        self.request_composition();
+    /// Counts the serial number on for the next contact.
+    ///
+    /// The field is three digits wide, so the count comes back to the first
+    /// number rather than to a fourth digit nothing could show.
+    pub fn increment_number(&mut self) {
+        self.qso.number = if self.qso.number >= LAST_QSO_NUMBER {
+            FIRST_QSO_NUMBER
+        } else {
+            self.qso.number + 1
+        };
+        self.qso_changed();
+    }
+
+    /// Takes the serial number back to the one a contest starts on.
+    pub fn reset_number(&mut self) {
+        self.qso.number = FIRST_QSO_NUMBER;
+        self.qso_changed();
     }
 
     /// Puts the operator's own variables in front of them for editing.
@@ -686,6 +745,7 @@ impl App {
             }
         }
         self.adopt_decoded_callsign();
+        self.adopt_decoded_number();
         self.audio.set_sync_start(self.sync_start());
         self.audio.set_vis_restart(self.vis_restart);
         self.tx_gain.set_travel(self.tx_volume);
@@ -915,6 +975,39 @@ impl App {
         self.qso_changed();
     }
 
+    /// Puts a newly decoded contest number in the received report field.
+    ///
+    /// The number is all the identifier carries, so the report it is read as
+    /// is filled in around it the way MMSSTV fills it in. It is followed the
+    /// same way as the identifier beside it: only an arrival writes, and the
+    /// count is followed down as well as up.
+    fn adopt_decoded_number(&mut self) {
+        let decoded = self.audio.snapshot().numbers.len();
+        if decoded < self.adopted_numbers {
+            self.adopted_numbers = 0;
+        }
+        if decoded == self.adopted_numbers {
+            return;
+        }
+        self.adopted_numbers = decoded;
+        let Some(number) = self
+            .audio
+            .snapshot()
+            .numbers
+            .last()
+            .map(|number| number.trim().to_owned())
+            .filter(|number| !number.is_empty())
+        else {
+            return;
+        };
+        let report = format!("{RECEIVED_REPORT}{number}");
+        if report == self.qso.rsv_received {
+            return;
+        }
+        self.qso.rsv_received = report;
+        self.qso_changed();
+    }
+
     /// Keeps a finished reception as the image `rximage` layers show.
     ///
     /// The receive worker only offers a reception that completed, or that was
@@ -1062,7 +1155,7 @@ impl App {
             station_grid: self.station_grid.clone(),
             contact_callsign: self.qso.call.clone(),
             report: self.qso.rsv.clone(),
-            number: self.qso.number.clone(),
+            number: self.qso.number_text(),
             report_received: self.qso.rsv_received.clone(),
             custom: self.custom_variables.clone(),
             radio: self.composition_reading.clone(),
@@ -1486,6 +1579,13 @@ mod tests {
     fn identified(calls: &[&str]) -> Snapshot {
         Snapshot {
             callsigns: calls.iter().map(|call| (*call).to_owned()).collect(),
+            ..Snapshot::default()
+        }
+    }
+
+    fn numbered(numbers: &[&str]) -> Snapshot {
+        Snapshot {
+            numbers: numbers.iter().map(|number| (*number).to_owned()).collect(),
             ..Snapshot::default()
         }
     }
@@ -2022,13 +2122,80 @@ mod tests {
     }
 
     #[test]
-    fn callsign_input_is_normalized_and_clearable() {
+    fn callsign_input_is_normalized() {
         let mut app = App::headless();
         app.qso.call = "ja1xyz".to_owned();
         app.normalize_call();
         assert_eq!(app.qso.call, "JA1XYZ");
-        app.clear_qso();
-        assert!(app.qso.call.is_empty());
+    }
+
+    /// The serial is three digits wide, so counting past the last one comes
+    /// back to the first rather than to a number the field could not show.
+    #[test]
+    fn the_serial_number_counts_on_and_wraps() {
+        let mut app = App::headless();
+        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+
+        app.increment_number();
+        assert_eq!(app.qso.number, 2);
+        assert_eq!(app.qso.number_text(), "002");
+
+        app.qso.number = LAST_QSO_NUMBER;
+        app.increment_number();
+        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+    }
+
+    #[test]
+    fn the_serial_number_is_reset_and_kept() {
+        let mut app = App::headless();
+        app.qso.number = 42;
+        assert_eq!(app.settings().qso_number, 42);
+
+        app.reset_number();
+        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+    }
+
+    /// A contest number arrives as digits alone, and is read as the report
+    /// MMSSTV reads it as.
+    #[test]
+    fn a_decoded_contest_number_fills_the_received_report() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(numbered(&["001"]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.rsv_received, "595001");
+    }
+
+    /// The worker republishes every number it has decoded, so the same list
+    /// observed again must not undo an edit made in the meantime.
+    #[test]
+    fn an_unchanged_number_list_leaves_the_received_report_alone() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(numbered(&["001"]));
+        app.poll_audio();
+        app.qso.rsv_received = "599".to_owned();
+        app.poll_audio();
+
+        assert_eq!(app.qso.rsv_received, "599");
+    }
+
+    /// A restarted worker publishes an empty list, and the next number it
+    /// decodes is a new arrival even though the count went down.
+    #[test]
+    fn a_number_after_a_restart_is_adopted_again() {
+        let mut app = App::headless();
+
+        app.audio.set_snapshot(numbered(&["001", "002"]));
+        app.poll_audio();
+        assert_eq!(app.qso.rsv_received, "595002");
+        app.audio.set_snapshot(Snapshot::default());
+        app.poll_audio();
+        app.audio.set_snapshot(numbered(&["001"]));
+        app.poll_audio();
+
+        assert_eq!(app.qso.rsv_received, "595001");
     }
 
     #[test]

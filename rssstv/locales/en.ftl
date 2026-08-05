@@ -53,10 +53,11 @@ custom-title = Template Variables
 custom-note = A template reads these as ${ "{" }custom.name{ "}" }.
 custom-invalid = A template cannot reference this name.
 custom-add = Add
-qso-call = Call
-qso-rsv-nr = RSV/NR
-qso-rsv-received = RSV rcvd
-qso-clear = Clear
+qso-call = DX CALL
+qso-rsv-received = RSV/NR (R)
+qso-rsv-nr = RSV/NR (S)
+qso-nr-increment = NR Incr.
+qso-nr-reset = NR Reset
 
 action-auto-history = Auto history
 history-format-webp = WebP (lossless)

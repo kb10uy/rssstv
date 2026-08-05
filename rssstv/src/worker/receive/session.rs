@@ -420,6 +420,7 @@ pub(super) fn run(
     let mut pcm = vec![0.0_f32; READ_SAMPLES];
     let mut level = 0.0_f32;
     let mut callsigns: Vec<String> = Vec::new();
+    let mut numbers: Vec<String> = Vec::new();
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut error = None;
     let mut last_progress = Progress::Idle;
@@ -455,6 +456,12 @@ pub(super) fn run(
                     }
                     if !session.fsk_ids.contains(&text) {
                         session.fsk_ids.push(text);
+                    }
+                }
+                for number in chunk.fsk_numbers() {
+                    let text = number.as_str().to_owned();
+                    if !numbers.contains(&text) {
+                        numbers.push(text);
                     }
                 }
                 if error.is_none() {
@@ -539,6 +546,7 @@ pub(super) fn run(
             frame,
             history,
             callsigns: callsigns.clone(),
+            numbers: numbers.clone(),
             dropped_samples: reader.dropped_samples(),
             error: error.take(),
         };

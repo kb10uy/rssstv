@@ -111,6 +111,8 @@ pub struct Snapshot {
     pub frame: Option<Frame>,
     pub history: Option<HistoryCandidate>,
     pub callsigns: Vec<String>,
+    /// The contest numbers decoded alongside those identifiers.
+    pub numbers: Vec<String>,
     pub dropped_samples: u64,
     pub error: Option<String>,
 }

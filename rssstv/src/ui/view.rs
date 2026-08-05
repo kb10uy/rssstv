@@ -5,7 +5,7 @@ use rssstv_audio::FaultKind;
 use rssstv_template::valid_variable_name;
 
 use crate::{
-    app::{App, Dsp, Entry, Tab},
+    app::{App, Dsp, Entry, FIRST_QSO_NUMBER, LAST_QSO_NUMBER, RSV_OPTIONS, Tab},
     i18n::{number, text as arg},
     storage::paths::Folder,
     ui::{canvas, menu},
@@ -22,7 +22,7 @@ const TAB_CONTROLS_HEIGHT: f32 = 160.0;
 const LIBRARY_HEIGHT: f32 = 182.0;
 /// Narrowest a library list is laid out at before the panel scrolls.
 const LIST_WIDTH: f32 = 182.0;
-const FIELD_LABEL_WIDTH: f32 = 64.0;
+const FIELD_LABEL_WIDTH: f32 = 72.0;
 
 const SMALL: f32 = 12.0;
 const LABEL: f32 = 11.0;
@@ -683,8 +683,8 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
     let full = ui.available_width();
     let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
-    let report_label = app.i18n.text("qso-rsv-nr");
     let received_label = app.i18n.text("qso-rsv-received");
+    let sent_label = app.i18n.text("qso-rsv-nr");
 
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
@@ -694,21 +694,8 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
             app.qso_changed();
         }
     });
-    ui.horizontal(|ui| {
-        // RSV and the serial number are one report, so they share a label and
-        // sit next to each other rather than being introduced separately.
-        field_label(ui, &report_label);
-        let field_width = (fields - gap) / 2.0;
-        let rsv = ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
-        let number =
-            ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
-        if rsv.changed() || number.changed() {
-            app.qso_changed();
-        }
-    });
-    // The report the other station gave sits on its own row rather than beside
-    // the one being sent: the two are read off the air in opposite directions,
-    // and a template usually prints one or the other.
+    // The report the other station gave is one field: the number in it arrives
+    // over the air as one thing, and it is read rather than composed.
     ui.horizontal(|ui| {
         field_label(ui, &received_label);
         let edit = egui::TextEdit::singleline(&mut app.qso.rsv_received).desired_width(fields);
@@ -717,11 +704,63 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         }
     });
     ui.horizontal(|ui| {
+        // The report being sent is composed of two parts the operator works
+        // differently: the report itself is chosen once and then left alone,
+        // while the serial number moves with every contact.
+        field_label(ui, &sent_label);
+        let arrow = ui.spacing().icon_width
+            + ui.spacing().icon_spacing
+            + 2.0 * ui.spacing().button_padding.x;
+        // The number field will not go below the width a dragged value is laid
+        // out at, so it is measured first and the report takes what is left
+        // rather than the two dividing the row and overflowing it.
+        let rest = fields - arrow - 2.0 * gap;
+        let number_width = (rest / 2.0).max(ui.spacing().interact_size.x);
+        let mut changed = ui
+            .add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(rest - number_width))
+            .changed();
+        // A picker beside the field rather than in place of it: the values in
+        // the list cover what a contest is worked with, and anything else is
+        // still typed.
+        ComboBox::from_id_salt("qso-rsv")
+            .selected_text("")
+            .width(0.0)
+            .show_ui(ui, |ui| {
+                for option in RSV_OPTIONS {
+                    if ui.selectable_label(app.qso.rsv == option, option).clicked() {
+                        app.qso.rsv = option.to_owned();
+                        changed = true;
+                    }
+                }
+            });
+        // Counted rather than typed, and shown with its leading zeros, because
+        // a serial is sent as three digits however small it is.
+        let number = egui::DragValue::new(&mut app.qso.number)
+            .range(FIRST_QSO_NUMBER..=LAST_QSO_NUMBER)
+            .custom_formatter(|number, _| format!("{:03}", number as u16));
+        let height = ui.spacing().interact_size.y;
+        changed |= ui.add_sized([number_width, height], number).changed();
+        if changed {
+            app.qso_changed();
+        }
+    });
+    ui.horizontal(|ui| {
+        let gaps = gap;
+        let width = (full - gaps) / 2.0;
+        let height = ui.spacing().interact_size.y;
+        let increment = RichText::new(app.i18n.text("qso-nr-increment")).size(SMALL);
+        let reset = RichText::new(app.i18n.text("qso-nr-reset")).size(SMALL);
         if ui
-            .button(RichText::new(app.i18n.text("qso-clear")).size(SMALL))
+            .add_sized([width, height], egui::Button::new(increment))
             .clicked()
         {
-            app.clear_qso();
+            app.increment_number();
+        }
+        if ui
+            .add_sized([width, height], egui::Button::new(reset))
+            .clicked()
+        {
+            app.reset_number();
         }
     });
 }
@@ -942,7 +981,10 @@ fn status_bar(ui: &mut Ui, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::{Harness, kittest::Queryable as _};
+    use egui_kittest::{
+        Harness,
+        kittest::{By, Queryable as _},
+    };
     use rstest::rstest;
 
     use super::*;
@@ -1072,6 +1114,68 @@ mod tests {
         }
 
         assert_eq!(app.auto_mode, before);
+    }
+
+    /// The QSO panel reads downwards in the order a contact is worked: who is
+    /// being called, what they gave, and what is being given back.
+    #[test]
+    fn the_qso_panel_reads_from_the_call_down_to_the_report_being_sent() {
+        let mut app = App::headless();
+        let call = app.i18n.text("qso-call");
+        let received = app.i18n.text("qso-rsv-received");
+        let sent = app.i18n.text("qso-rsv-nr");
+
+        let harness = render(&mut app);
+        let call_top = harness.get_by_label(&call).rect().top();
+        let received_top = harness.get_by_label(&received).rect().top();
+        let sent_top = harness.get_by_label(&sent).rect().top();
+
+        assert!(call_top < received_top);
+        assert!(received_top < sent_top);
+    }
+
+    #[test]
+    fn the_serial_number_buttons_work_it() {
+        let mut app = App::headless();
+        app.qso.number = 7;
+        let increment = app.i18n.text("qso-nr-increment");
+        let reset = app.i18n.text("qso-nr-reset");
+
+        {
+            let mut harness = render(&mut app);
+            harness.get_by_label(&increment).click();
+            harness.run();
+        }
+        assert_eq!(app.qso.number, 8);
+
+        {
+            let mut harness = render(&mut app);
+            harness.get_by_label(&reset).click();
+            harness.run();
+        }
+        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+    }
+
+    /// The report list is a convenience beside the field, not a replacement for
+    /// it: choosing from it fills the same text the operator may type over.
+    #[test]
+    fn the_report_list_fills_the_report_field() {
+        let mut app = App::headless();
+
+        {
+            let mut harness = render(&mut app);
+            // The list is opened from an arrow beside the field rather than
+            // from a control naming a value of its own, so it is the one
+            // combination box in the interface showing nothing.
+            harness
+                .get(By::new().role(egui::accesskit::Role::ComboBox).value(""))
+                .click();
+            harness.run();
+            harness.get_by_label(RSV_OPTIONS[3]).click();
+            harness.run();
+        }
+
+        assert_eq!(app.qso.rsv, RSV_OPTIONS[3]);
     }
 
     #[test]

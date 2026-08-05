@@ -414,9 +414,6 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
 /// came and went with the connection would be somewhere it could not.
 fn radio_panel(ui: &mut Ui, app: &mut App) {
     connection_row(ui, app);
-    if !app.rig.enabled {
-        return;
-    }
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(4.0);
@@ -437,28 +434,17 @@ fn connection_row(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
         let height = ui.spacing().interact_size.y;
         let gap = ui.spacing().item_spacing.x;
-        // Reconnecting is offered exactly when there is a failure to recover
-        // from, so it takes half the row only then.
-        let width = if failed {
-            (ui.available_width() - gap) / 2.0
-        } else {
-            ui.available_width()
-        };
+        let width = (ui.available_width() - gap) / 2.0;
         let switch = egui::Button::new(RichText::new(label).size(SMALL)).selected(app.rig.enabled);
         toggled = ui.add_sized([width, height], switch).clicked();
-        if failed {
-            let again = egui::Button::new(RichText::new(retry).size(SMALL));
-            retried = ui.add_sized([width, height], again).clicked();
-        }
+        let again = egui::Button::new(RichText::new(retry).size(SMALL));
+        retried = ui
+            .add_enabled_ui(failed, |ui| ui.add_sized([width, height], again))
+            .inner
+            .clicked();
     });
-    // What the rig said outlives the state it left behind, so the failure is
-    // what the operator is shown when there is one.
-    let told = app
-        .rig_snapshot
-        .error
-        .clone()
-        .unwrap_or_else(|| app.i18n.text(app.rig_snapshot.state.label_key()));
-    ui.label(RichText::new(told).size(LABEL).weak());
+    let state = app.i18n.text(app.rig_snapshot.state.label_key());
+    ui.label(RichText::new(state).size(LABEL).weak());
     if toggled {
         app.set_rig_enabled(!app.rig.enabled);
     }
@@ -920,6 +906,7 @@ fn status_bar(ui: &mut Ui, app: &App) {
             app.audio.error.as_deref(),
             snapshot.error.as_deref(),
             app.tx_error.as_deref(),
+            app.rig_snapshot.error.as_deref(),
             app.library_error.as_deref(),
             app.config_error(),
         ]
@@ -1001,8 +988,8 @@ mod tests {
         harness.get_by_label(&title);
     }
 
-    /// The panel is where rig control is switched on, so it has to be there
-    /// before there is a connection: what it holds is what follows the state.
+    /// The panel keeps the same controls in every connection state so its
+    /// contents do not move while a connection is established or lost.
     #[test]
     fn the_radio_panel_is_where_the_connection_is_worked() {
         let mut app = App::headless();
@@ -1010,6 +997,7 @@ mod tests {
         let connect = app.i18n.text("action-rig-connect");
         let disconnect = app.i18n.text("action-rig-disconnect");
         let retry = app.i18n.text("action-rig-retry");
+        let unknown = app.i18n.text("rig-frequency-unknown");
         let readout = app
             .i18n
             .text_with("radio-frequency", &[("frequency", arg("7.100"))]);
@@ -1018,9 +1006,8 @@ mod tests {
             let harness = render(&mut app);
             harness.get_by_label(&title);
             harness.get_by_label(&connect);
-            // Nothing to tune until there is a rig to tune.
-            assert!(harness.query_by_label(&readout).is_none());
-            assert!(harness.query_by_label(&retry).is_none());
+            harness.get_by_label(&unknown);
+            harness.get_by_label(&retry);
         }
 
         app.rig.enabled = true;
@@ -1033,14 +1020,16 @@ mod tests {
             let harness = render(&mut app);
             harness.get_by_label(&disconnect);
             harness.get_by_label(&readout);
-            assert!(harness.query_by_label(&retry).is_none());
+            harness.get_by_label(&retry);
         }
 
         // Reconnecting is offered exactly when there is a failure to recover
         // from.
         app.rig_snapshot.state = RigState::Failed;
+        app.rig_snapshot.error = Some("connection refused".to_owned());
         let harness = render(&mut app);
         harness.get_by_label(&retry);
+        harness.get_by_label("connection refused");
     }
 
     #[test]

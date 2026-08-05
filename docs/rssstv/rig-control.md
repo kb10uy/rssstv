@@ -387,18 +387,20 @@ Rig control is worked from a radio panel in the window, shared by both tabs:
 | --- | --- |
 | Connect, Disconnect | Switches rig control on and off |
 | Reconnect | Opens the connection again after a failure |
-| State | The connection's state, or the failure that ended it |
+| State | The connection's state |
 | Band selector | Calls `change_band` with the chosen band from `bands.toml` |
 | Frequency | Shows what `poll_frequency` last returned |
 | Step down, step up | Calls `set_frequency` with the current frequency moved by the band's `step` |
 
-The panel is always present, because it is where rig control is switched on: a
-station that has not connected still needs somewhere to say so. Everything
-below the switch appears with the connection.
+The panel and all of its controls are always present, because it is where rig
+control is switched on and because changing its height as a connection is
+established or lost makes the rest of the side panel move. Tuning controls are
+shown disabled when they cannot be used.
 
-What the rig said outlives the state it left behind, so a failure takes the
-place of the state rather than sitting beside it, and Reconnect is offered
-exactly when there is one.
+The state remains in the panel. What the rig said outlives the state it left
+behind, so the detailed error is reported in the status bar instead. Reconnect
+is always shown in the panel and is enabled exactly when there is a failure to
+recover from.
 
 The tuning controls are disabled unless the rig is connected and not keyed —
 the same rule that stops the worker polling during a transmission, for the same

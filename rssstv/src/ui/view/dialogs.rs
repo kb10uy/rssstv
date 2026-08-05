@@ -20,6 +20,7 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
     let note = app.i18n.text("station-callsign-required");
     let close = app.i18n.text("station-close");
     let labels = ["station-callsign", "station-qth", "station-grid"].map(|key| app.i18n.text(key));
+    let hint = app.i18n.text("hint-callsign");
 
     let mut finished = false;
     let mut done = false;
@@ -28,9 +29,9 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
         ui.heading(title);
         ui.add_space(8.0);
         let width = ui.available_width() - FIELD_LABEL_WIDTH - ui.spacing().item_spacing.x;
-        finished = station_field(ui, &labels[0], &mut app.station.callsign, width);
-        finished |= station_field(ui, &labels[1], &mut app.station.qth, width);
-        finished |= station_field(ui, &labels[2], &mut app.station.grid, width);
+        finished = station_field(ui, &labels[0], &hint, &mut app.station.callsign, width);
+        finished |= station_field(ui, &labels[1], "", &mut app.station.qth, width);
+        finished |= station_field(ui, &labels[2], "", &mut app.station.grid, width);
         ui.add_space(4.0);
         ui.label(RichText::new(note).size(LABEL).weak());
         ui.add_space(16.0);
@@ -45,7 +46,7 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
     if finished || closing {
         // Normalizing composes again on its own, and does it with the
         // uppercased callsign rather than with what was typed.
-        app.normalize_station_callsign();
+        app.normalize_station();
     }
     if closing {
         app.station.open = false;
@@ -128,11 +129,21 @@ pub(super) fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
 ///
 /// Returns whether the operator finished with it, which is losing focus to
 /// another field or to the button, or pressing Enter in it.
-pub(super) fn station_field(ui: &mut Ui, label: &str, text: &mut String, width: f32) -> bool {
+pub(super) fn station_field(
+    ui: &mut Ui,
+    label: &str,
+    hint: &str,
+    text: &mut String,
+    width: f32,
+) -> bool {
     ui.horizontal(|ui| {
         field_label(ui, label);
-        ui.add(egui::TextEdit::singleline(text).desired_width(width))
-            .lost_focus()
+        ui.add(
+            egui::TextEdit::singleline(text)
+                .desired_width(width)
+                .hint_text(hint),
+        )
+        .lost_focus()
     })
     .inner
 }

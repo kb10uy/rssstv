@@ -52,6 +52,8 @@ custom-title = Template Variables
 custom-note = A template reads these as ${ "{" }custom.name{ "}" }.
 custom-invalid = A template cannot reference this name.
 custom-add = Add
+hint-callsign = Callsign
+
 qso-call = DX CALL
 qso-rsv-received = RSV/NR (R)
 qso-rsv-nr = RSV/NR (S)

@@ -292,13 +292,21 @@ pub(super) fn qso_panel(ui: &mut Ui, app: &mut App) {
     let full = ui.available_width();
     let fields = full - FIELD_LABEL_WIDTH - gap;
     let call_label = app.i18n.text("qso-call");
+    let call_hint = app.i18n.text("hint-callsign");
     let received_label = app.i18n.text("qso-rsv-received");
     let sent_label = app.i18n.text("qso-rsv-nr");
 
+    // A field is taken up as typed while it is being typed, and trimmed once
+    // the operator has left it.
+    let mut finished = false;
     ui.horizontal(|ui| {
         field_label(ui, &call_label);
-        let edit = egui::TextEdit::singleline(&mut app.qso.call).desired_width(fields);
-        if ui.add(edit).changed() {
+        let edit = egui::TextEdit::singleline(&mut app.qso.call)
+            .desired_width(fields)
+            .hint_text(call_hint.as_str());
+        let response = ui.add(edit);
+        finished |= response.lost_focus();
+        if response.changed() {
             app.normalize_call();
             app.qso_changed();
         }
@@ -308,7 +316,9 @@ pub(super) fn qso_panel(ui: &mut Ui, app: &mut App) {
     ui.horizontal(|ui| {
         field_label(ui, &received_label);
         let edit = egui::TextEdit::singleline(&mut app.qso.rsv_received).desired_width(fields);
-        if ui.add(edit).changed() {
+        let response = ui.add(edit);
+        finished |= response.lost_focus();
+        if response.changed() {
             app.qso_changed();
         }
     });
@@ -322,16 +332,15 @@ pub(super) fn qso_panel(ui: &mut Ui, app: &mut App) {
         // moves with every contact.
         field_label(ui, &sent_label);
         let field_width = (fields - gap) / 2.0;
-        let mut changed = ui
-            .add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width))
-            .changed();
-        changed |= ui
+        let report =
+            ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
+        let serial = ui
             .add_enabled_ui(contest, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width))
-                    .changed()
             })
             .inner;
-        if changed {
+        finished |= report.lost_focus() || serial.lost_focus();
+        if report.changed() || serial.changed() {
             app.qso_changed();
         }
     });
@@ -355,4 +364,7 @@ pub(super) fn qso_panel(ui: &mut Ui, app: &mut App) {
             }
         });
     });
+    if finished {
+        app.finish_qso_edit();
+    }
 }

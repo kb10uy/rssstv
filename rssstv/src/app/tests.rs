@@ -685,15 +685,48 @@ fn station_details_are_kept_and_normalized() {
     let mut app = App::headless();
 
     app.station.callsign = " ja1abc ".to_owned();
-    app.normalize_station_callsign();
-    app.station.qth = "Chiyoda, Tokyo".to_owned();
-    app.station.grid = "PM95uq".to_owned();
+    app.station.qth = "  Chiyoda, Tokyo ".to_owned();
+    app.station.grid = " PM95uq".to_owned();
+    app.normalize_station();
 
     assert_eq!(app.station.callsign, "JA1ABC");
     let settings = app.settings();
     assert_eq!(settings.station_callsign, "JA1ABC");
     assert_eq!(settings.station_qth, "Chiyoda, Tokyo");
     assert_eq!(settings.station_grid, "PM95uq");
+}
+
+/// Every field but the operator's own template variables is a value rather
+/// than text, so what is taken up when one is left is the trimmed field.
+#[test]
+fn leaving_a_qso_field_trims_it() {
+    let mut app = App::headless();
+    app.qso.call = " JA1ABC ".to_owned();
+    app.qso.rsv = " 595 ".to_owned();
+    app.qso.rsv_received = "595  ".to_owned();
+    app.qso.number = " 007".to_owned();
+
+    app.finish_qso_edit();
+
+    assert_eq!(app.qso.call, "JA1ABC");
+    assert_eq!(app.qso.rsv, "595");
+    assert_eq!(app.qso.rsv_received, "595");
+    assert_eq!(app.qso.number, "007");
+}
+
+/// What the operator wrote is what a template reads, spaces and all: these
+/// are the values only they know the shape of.
+#[test]
+fn custom_variables_are_kept_exactly_as_they_were_entered() {
+    let mut app = App::headless();
+    app.custom_draft = vec![("club".to_owned(), "  JARL  ".to_owned())];
+
+    app.commit_custom_variables();
+
+    assert_eq!(
+        app.custom_variables.get("club").map(String::as_str),
+        Some("  JARL  ")
+    );
 }
 
 #[test]

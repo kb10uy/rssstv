@@ -438,13 +438,13 @@ impl App {
             auto_history: settings.auto_history,
             history_format: settings.history_format,
             qso: Qso {
-                number: settings.qso_number.clone(),
+                number: settings.qso_number.trim().to_owned(),
                 ..Qso::default()
             },
             station: Station {
                 callsign: settings.station_callsign.trim().to_ascii_uppercase(),
-                qth: settings.station_qth.clone(),
-                grid: settings.station_grid.clone(),
+                qth: settings.station_qth.trim().to_owned(),
+                grid: settings.station_grid.trim().to_owned(),
                 open: false,
             },
             custom_variables: settings.custom_variables.clone(),
@@ -677,11 +677,31 @@ impl App {
         }
     }
 
-    pub fn normalize_station_callsign(&mut self) {
+    /// Takes up the QSO fields once the operator has left one.
+    ///
+    /// Each of them is a value rather than text — a callsign, a report, a
+    /// serial — and none of them means anything with spaces around it, so what
+    /// is taken up is the trimmed field. Trimmed on leaving rather than on
+    /// every keystroke, because a space deleted from under the cursor is one
+    /// the operator is still typing.
+    pub fn finish_qso_edit(&mut self) {
+        let mut trimmed = trim_in_place(&mut self.qso.call);
+        trimmed |= trim_in_place(&mut self.qso.rsv);
+        trimmed |= trim_in_place(&mut self.qso.rsv_received);
+        trimmed |= trim_in_place(&mut self.qso.number);
+        if trimmed {
+            self.qso_changed();
+        }
+    }
+
+    /// Takes up what the station says about itself, the same way.
+    pub fn normalize_station(&mut self) {
         let normalized = self.station.callsign.trim().to_ascii_uppercase();
         if normalized != self.station.callsign {
             self.station.callsign = normalized;
         }
+        trim_in_place(&mut self.station.qth);
+        trim_in_place(&mut self.station.grid);
         self.request_composition();
     }
 
@@ -1569,6 +1589,21 @@ impl App {
     pub fn output_sample_rate_hz(&self) -> Option<u32> {
         self.playback.as_ref().map(Playback::sample_rate_hz)
     }
+}
+
+/// Takes the spaces off a finished field, reporting whether any were there.
+///
+/// The operator's own template variables are the exception and are never put
+/// through this: what they hold is text the operator wrote, and its spaces are
+/// theirs to keep.
+fn trim_in_place(text: &mut String) -> bool {
+    let trimmed = text.trim();
+    if trimmed.len() == text.len() {
+        return false;
+    }
+    let trimmed = trimmed.to_owned();
+    *text = trimmed;
+    true
 }
 
 /// Which minute the clock is in, counted from the epoch.

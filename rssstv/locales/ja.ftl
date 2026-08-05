@@ -52,6 +52,8 @@ custom-title = テンプレート変数
 custom-note = テンプレートからは ${ "{" }custom.名前{ "}" } で参照します。
 custom-invalid = この名前はテンプレートから参照できません。
 custom-add = 追加
+hint-callsign = Callsign
+
 qso-call = DX CALL
 qso-rsv-received = RSV/NR (R)
 qso-rsv-nr = RSV/NR (S)

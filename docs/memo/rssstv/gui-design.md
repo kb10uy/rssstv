@@ -466,6 +466,23 @@ while it is still being typed fights the operator. The callsign is required to t
 being sent, because it is the only thing that names the station making the
 transmission, and it is the first thing the transmit check reports.
 
+Leaving a field is also what trims it, in that dialog and in the QSO panel
+alike. Every field in both is a value rather than text — a callsign, a report,
+a serial, a locator — and none of them means anything with spaces around it, so
+what is taken up is the trimmed field while what is being typed is left exactly
+as typed: a space deleted from under the cursor is one the operator is still
+putting there. The same trim is applied as these fields are read from the
+configuration file, so a hand-edited value arrives in the shape a typed one
+does. The operator's own template variables are the exception at both points
+and are kept exactly as entered, because what they hold is text the operator
+wrote rather than a value with a shape of its own.
+
+Both callsign fields carry `Callsign` as hint text, which egui draws in the
+field while it is empty and drops the moment anything is typed. It is the one
+field where an empty box says nothing about what belongs in it: the report and
+the serial open with a value already in them, and everything else is named by
+the label beside it.
+
 Names the operator invents for their own templates are edited in a second
 dialog under the same menu. Everything else a template can read is something
 the application already knows; these are the ones only the operator does, so

@@ -67,6 +67,7 @@ action-contest-mode = コンテストモード（ナンバーを送出）
 action-vis-restart = 受信中も VIS を検出して再スタート
 action-transmit = TX
 action-stop-transmit = TX停止
+action-tone = { $frequency } Hz のトーンを送信
 action-open-folder = フォルダーを開く
 action-refresh = 再読み込み
 action-rig-connect = 接続
@@ -103,6 +104,7 @@ state-transmit-leader = TRANSMITTING · LEADER
 state-transmitting = TRANSMITTING · { $row }/{ $total }
 state-transmit-identifying = TRANSMITTING · ID
 state-transmit-complete = TX COMPLETE
+state-transmit-tone = TRANSMITTING · TONE
 
 status-no-audio = 入力デバイスなし
 status-no-output = 出力デバイスなし
@@ -112,6 +114,8 @@ status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル
 
 error-no-transmit-frame = 送信画像がまだ合成されていません
+error-tone-active = トーン送信中です
+error-transmit-active = 送信中です
 error-no-output-device = 出力デバイスを選択してください
 error-invalid-station-call = 自局コールが不正です: { $error }
 error-rig-unavailable = リグコントロールが使用できません: { $error }

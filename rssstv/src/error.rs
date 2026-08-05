@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use rssstv_audio::AudioError;
 use rssstv_demodulator::DemodulatorError;
+use rssstv_dsp::DspError;
 use rssstv_modulator::ModulatorError;
 use rssstv_rig::RigError;
 use rssstv_sstv::SstvError;
@@ -29,6 +30,9 @@ pub enum AppError {
     /// The transmit tone stream rejected its configuration.
     #[error(transparent)]
     Modulator(#[from] ModulatorError),
+    /// A signal-processing primitive rejected its configuration.
+    #[error(transparent)]
+    Dsp(#[from] DspError),
     /// An SSTV protocol value or operation was invalid.
     #[error(transparent)]
     Sstv(#[from] SstvError),

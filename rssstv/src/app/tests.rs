@@ -471,6 +471,80 @@ fn switching_tabs_preserves_receive_progress() {
     assert_eq!(app.decoded_fraction(), 0.4);
 }
 
+/// A tone sends no picture, so the one on the tab is not drawn out under it.
+#[test]
+fn a_tune_tone_leaves_the_transmit_raster_whole() {
+    let mut app = App::headless();
+    app.tab = Tab::Transmit;
+    app.tune_for_test();
+
+    assert_eq!(app.decoded_fraction(), 1.0);
+}
+
+/// The tone asks for less than a picture does: it carries no image and names
+/// no station, so only the output device and the rig stand in its way.
+#[test]
+fn a_tune_tone_needs_only_an_output_device() {
+    let mut app = App::headless();
+    app.station.callsign = String::new();
+    assert!(app.composition.frame.is_none());
+
+    assert_eq!(
+        app.tone_problem(),
+        Some(app.i18n.text("error-no-output-device"))
+    );
+
+    app.start_tone();
+
+    assert!(!app.is_tuning());
+    assert_eq!(app.tx_error, Some(app.i18n.text("error-no-output-device")));
+}
+
+/// One stream and one rig: whichever of the two is running refuses the other.
+#[test]
+fn a_tone_and_a_picture_refuse_each_other() {
+    let mut app = App::headless();
+    app.tx_snapshot.phase = TxPhase::Producing;
+
+    assert_eq!(
+        app.tone_problem(),
+        Some(app.i18n.text("error-transmit-active"))
+    );
+
+    app.tune_for_test();
+
+    assert_eq!(
+        app.transmit_problem(),
+        Some(app.i18n.text("error-tone-active"))
+    );
+    assert!(!app.can_transmit());
+}
+
+/// A keyed carrier is the one thing here that goes out with nobody watching
+/// it, so it gives the rig back on its own.
+#[test]
+fn a_tune_tone_stops_itself_once_its_time_is_up() {
+    let mut app = App::headless();
+    app.tune_for_test();
+    app.tone_until = Some(Instant::now() - Duration::from_millis(1));
+
+    app.poll_transmit();
+
+    assert!(!app.is_tuning());
+    assert_eq!(app.tx_snapshot.phase, TxPhase::Complete);
+}
+
+#[test]
+fn stopping_a_tune_tone_ends_the_transmission() {
+    let mut app = App::headless();
+    app.tune_for_test();
+
+    app.stop_tone();
+
+    assert!(!app.is_tuning());
+    assert_eq!(app.tx_snapshot.phase, TxPhase::Cancelled);
+}
+
 #[test]
 fn an_idle_transmit_tab_draws_a_full_raster() {
     let mut app = App::headless();

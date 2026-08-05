@@ -433,7 +433,7 @@ marked shared are built once and reused across tabs.
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | Radio panel | Shared | Connect and its state, then a band `pick_list`, the frequency, and two step buttons |
 | DSP panel | Receive | Three toggle buttons |
-| Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
+| Transmit trigger | Transmit | The TX button with the tune tone beside it, where the DSP toggles sit |
 | QSO panel | Shared | `text_input` for the DX call and the received report, then the sent report with its list and its serial, and the two serial buttons |
 | Station dialog | Modal | `text_input` for the callsign, QTH, and grid locator |
 | Template variable dialog | Modal | Rows of `text_input` naming and valuing `${custom.*}` |
@@ -509,6 +509,18 @@ of the two it is showing.
 The level bar, mode panel, and the controls below them share one bordered
 container. The mode dropdown fills the container width and no tab shows helper
 text below it.
+
+The side panel is a fixed width rather than a draggable one. Everything in it
+is laid out from the width it is given — the level bar, both dropdowns, the
+frequency readout, and every text field — so a wider panel shows no more than
+the default one does, while the picture beside it is what the rest of the
+window is for.
+
+The transmit trigger shares its row with the tune tone, which takes a quarter
+of it. The tone is captioned with its frequency rather than with a word, the
+way MMSSTV captions the same button, and hovering reads out what pressing it
+does. A quarter is enough for that caption and leaves the trigger the button
+the operator aims for, which is the one pressed on every transmission.
 
 ### Main Image Canvas
 
@@ -638,6 +650,19 @@ cancels the worker. TX is disabled while a prerequisite is missing; its
 disabled hover text reports the missing frame, output device, valid
 station callsign, or unready rig, so the button is never dead without saying
 why.
+
+The tune tone runs through the same worker, stream, and rig keying a picture
+does, so priming, the wait for the rig to switch over, underrun reporting, and
+unkeying are one implementation rather than two. What differs is the source and
+the ending: an oscillator at a fixed 1750 Hz replaces the encoded transmission,
+and nothing about it runs out, so it ends only when the operator presses the
+button again or when the 30-second limit does it for them. That limit is what
+MMSSTV's tune button uses, and it exists because a keyed carrier is the one
+thing here that goes out with nobody watching it. Since the tone sends no
+picture, the transmit raster is not drawn out under it and the state line names
+the tone instead of a row. The two ways of keying the rig refuse each other
+rather than interrupting: whichever is running is what the other's disabled
+hover text reports.
 
 Rig control is implemented against `rigctld`. A worker thread owns the
 transports and a Lua state, keys the rig around a transmission, and reads the

@@ -13,7 +13,7 @@ use crate::{
     worker::{
         receive::RxProgress,
         rig::RigState,
-        transmit::{TxGain, TxPhase, TxProgress},
+        transmit::{TUNE_FREQUENCY_HZ, TxGain, TxPhase, TxProgress},
     },
 };
 
@@ -58,10 +58,12 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     // above the status bar: its sections are read while working in either half
     // of the window, and the library only needs the width the lists are laid
     // out in.
+    // Fixed rather than resizable: everything in it is laid out from the width
+    // it is given, so there is nothing in there a wider panel would show more
+    // of, and the picture beside it is what the rest of the window is for.
     Panel::right(Id::new("side-panel"))
-        .resizable(true)
+        .resizable(false)
         .default_size(SIDE_PANEL_WIDTH)
-        .size_range(182.0..=560.0)
         .show(ui, |ui| side_panel(ui, app));
     Panel::bottom(Id::new("library"))
         .resizable(true)
@@ -112,6 +114,7 @@ fn main_pane(ui: &mut Ui, app: &mut App) {
 /// state alone.
 fn state(app: &App) -> String {
     match app.tab {
+        Tab::Transmit if app.is_tuning() => app.i18n.text("state-transmit-tone"),
         Tab::Transmit => match app.tx_snapshot.phase {
             TxPhase::Priming => app.i18n.text("state-transmit-preparing"),
             TxPhase::Producing | TxPhase::Draining => match app.tx_progress() {
@@ -178,18 +181,35 @@ fn action_bar(ui: &mut Ui, geometry: &str, state: &str) {
     });
 }
 
+/// The transmit trigger, and the tune tone beside it.
+///
+/// The tone takes a quarter of the row: it is pressed far less often than the
+/// trigger is, and it is the width its caption needs rather than a share of
+/// what the operator reaches for.
+fn transmit_controls(ui: &mut Ui, app: &mut App, height: f32) {
+    ui.horizontal(|ui| {
+        let gap = ui.spacing().item_spacing.x;
+        let full = ui.available_width();
+        let tone = ((full - gap) / 4.0).max(0.0);
+        transmit_button(ui, app, full - gap - tone, height);
+        tone_button(ui, app, tone, height);
+    });
+}
+
 /// Starts or stops a transmission.
 ///
 /// It sits where the receive tab keeps its DSP toggles, so the control that
 /// acts on the picture is in the panel beside it rather than under it.
-fn transmit_button(ui: &mut Ui, app: &mut App, height: f32) {
-    let active = app.tx_snapshot.phase.is_active();
+fn transmit_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
+    // A tone is transmitting too, but not this: stopping it is the other
+    // button's, so this one is disabled and says what is holding the rig.
+    let active = app.tx_snapshot.phase.is_active() && !app.is_tuning();
     let label = app.i18n.text(if active {
         "action-stop-transmit"
     } else {
         "action-transmit"
     });
-    let size = egui::vec2(ui.available_width(), height);
+    let size = egui::vec2(width, height);
     // Stopping stays available for as long as something is being sent.
     // Starting does not: with anything missing the button is disabled and says
     // what, rather than taking the press and reporting the same thing as an
@@ -207,6 +227,34 @@ fn transmit_button(ui: &mut Ui, app: &mut App, height: f32) {
             app.stop_transmit();
         } else {
             app.start_transmit();
+        }
+    }
+}
+
+/// Sends the steady tone a repeater is opened with, for as long as it is on.
+///
+/// Captioned with the frequency itself, the way MMSSTV captions it: the button
+/// is asked for by that number rather than by anything it could be called.
+fn tone_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
+    let active = app.is_tuning();
+    let caption = TUNE_FREQUENCY_HZ.to_string();
+    let hint = app
+        .i18n
+        .text_with("action-tone", &[("frequency", arg(&caption))]);
+    let size = egui::vec2(width, height);
+    let problem = (!active).then(|| app.tone_problem()).flatten();
+    let button = egui::Button::new(RichText::new(caption).size(SMALL)).selected(active);
+    let mut response = ui
+        .add_enabled_ui(problem.is_none(), |ui| ui.add_sized(size, button))
+        .inner;
+    if let Some(problem) = problem {
+        response = response.on_disabled_hover_text(problem);
+    }
+    if response.on_hover_text(hint).clicked() {
+        if active {
+            app.stop_tone();
+        } else {
+            app.start_tone();
         }
     }
 }

@@ -3,10 +3,11 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use jiff::{Timestamp, Zoned};
-use rssstv_audio::{InputDevice, OutputDevice, Playback, StreamFault};
+use rssstv_audio::{InputDevice, OutputDevice, Playback, PlaybackWriter, StreamFault};
 use rssstv_fskid::{FskId, FskNumber};
 use rssstv_sstv::{
     image::RgbImage,
@@ -31,7 +32,10 @@ use crate::{
         compose::{ComposeRequest, Composer},
         receive::{Frame, RxProgress},
         rig::{Reading, RigSnapshot, RigState, RigWorker, script},
-        transmit::{Identification, TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
+        transmit::{
+            Identification, TUNE_FREQUENCY_HZ, TUNE_LIMIT, TxGain, TxPhase, TxProgress, TxSnapshot,
+            TxWorker,
+        },
     },
 };
 
@@ -264,6 +268,12 @@ pub struct App {
     playback: Option<Playback>,
     tx_worker: Option<TxWorker>,
     playback_started: bool,
+    /// When a tune tone stops itself, set for as long as one is being sent.
+    ///
+    /// The deadline is what says a tone is running rather than a picture: the
+    /// two use the same worker and the same stream, and everything else about
+    /// them differs only in what the operator is told.
+    tone_until: Option<Instant>,
     rig_worker: Option<RigWorker>,
     /// Set while a transmission has asked for the rig to be keyed.
     ///
@@ -476,6 +486,7 @@ impl App {
             playback: None,
             tx_worker: None,
             playback_started: false,
+            tone_until: None,
             rig_worker: None,
             rig_keyed: false,
             adopted_callsigns: 0,
@@ -1130,7 +1141,9 @@ impl App {
         match self.tab {
             Tab::Receive => self.audio.snapshot().display_fraction,
             Tab::Transmit => {
-                if self.tx_snapshot.phase.is_active() {
+                // A tone sends no picture, so the one on the tab is not being
+                // drawn out and stays whole while it goes out.
+                if self.tx_snapshot.phase.is_active() && !self.is_tuning() {
                     self.tx_progress().fraction()
                 } else {
                     1.0
@@ -1259,6 +1272,15 @@ impl App {
             }
         }
 
+        // Checked before the worker is read, because the tone it produces never
+        // runs out on its own and the deadline is the only thing that ends it.
+        if let Some(deadline) = self.tone_until
+            && Instant::now() >= deadline
+        {
+            self.stop_transmit_with(TxPhase::Complete);
+            return;
+        }
+
         let Some(worker) = self.tx_worker.as_ref() else {
             return;
         };
@@ -1321,6 +1343,12 @@ impl App {
     }
 
     pub fn transmit_problem(&self) -> Option<String> {
+        // The tone holds the stream and the rig, so a picture cannot start over
+        // one; it is reported ahead of everything else because it is the only
+        // problem here the operator ends by pressing the button beside it.
+        if self.is_tuning() {
+            return Some(self.i18n.text("error-tone-active"));
+        }
         // Reported first, and required whether or not the identifier is sent:
         // a transmission is made by a station, and this is the only thing that
         // names it. The rest is about this transmission; this is about being
@@ -1401,31 +1429,14 @@ impl App {
                 return;
             }
         };
-        let (playback, writer) = match self.audio.open_playback(PLAYBACK_QUEUE_SAMPLES) {
-            Ok(playback) => playback,
-            Err(error) => {
-                self.tx_error = Some(error.to_string());
-                return;
-            }
-        };
         let frame = self
             .composition
             .frame
             .clone()
             .expect("transmit availability requires a prepared frame");
-        self.tx_snapshot = TxSnapshot {
-            phase: TxPhase::Priming,
-            ..TxSnapshot::default()
+        let Some(writer) = self.begin_transmission() else {
+            return;
         };
-        self.tx_error = None;
-        self.playback = Some(playback);
-        self.tx_gain.set_travel(self.tx_volume);
-        // Asked for before the audio is generated, so the lead-in the rig
-        // needs runs alongside filling the queue rather than after it.
-        if let Some(worker) = self.rig_worker.as_ref() {
-            worker.transmit();
-            self.rig_keyed = true;
-        }
         self.tx_worker = Some(TxWorker::spawn(
             writer,
             self.tx_mode,
@@ -1433,7 +1444,88 @@ impl App {
             identification,
             Arc::clone(&self.tx_gain),
         ));
+    }
+
+    /// Claims the output stream and the rig for something about to go out.
+    ///
+    /// Returns the writer the worker fills, or nothing when the stream could
+    /// not be opened, in which case the reason is already in front of the
+    /// operator.
+    fn begin_transmission(&mut self) -> Option<PlaybackWriter> {
+        let (playback, writer) = match self.audio.open_playback(PLAYBACK_QUEUE_SAMPLES) {
+            Ok(playback) => playback,
+            Err(error) => {
+                self.tx_error = Some(error.to_string());
+                return None;
+            }
+        };
+        self.tx_snapshot = TxSnapshot {
+            phase: TxPhase::Priming,
+            ..TxSnapshot::default()
+        };
+        self.tx_error = None;
+        self.playback = Some(playback);
         self.playback_started = false;
+        self.tx_gain.set_travel(self.tx_volume);
+        // Asked for before the audio is generated, so the lead-in the rig
+        // needs runs alongside filling the queue rather than after it.
+        if let Some(worker) = self.rig_worker.as_ref() {
+            worker.transmit();
+            self.rig_keyed = true;
+        }
+        Some(writer)
+    }
+
+    /// Reports why the tune tone could not be sent, if it could not.
+    ///
+    /// Less stands in its way than in a picture's: a tone carries no image and
+    /// names no station, so only the output device and the rig are asked.
+    pub fn tone_problem(&self) -> Option<String> {
+        if self.tx_snapshot.phase.is_active() && !self.is_tuning() {
+            return Some(self.i18n.text("error-transmit-active"));
+        }
+        if self.audio.output_device.is_none() {
+            return Some(self.i18n.text("error-no-output-device"));
+        }
+        self.rig_problem()
+    }
+
+    /// Keys the rig and sends the steady tone a repeater is opened with.
+    pub fn start_tone(&mut self) {
+        if let Some(error) = self.tone_problem() {
+            self.tx_error = Some(error);
+            return;
+        }
+        let Some(writer) = self.begin_transmission() else {
+            return;
+        };
+        self.tone_until = Some(Instant::now() + TUNE_LIMIT);
+        self.tx_worker = Some(TxWorker::spawn_tone(
+            writer,
+            TUNE_FREQUENCY_HZ,
+            Arc::clone(&self.tx_gain),
+        ));
+    }
+
+    pub fn stop_tone(&mut self) {
+        if self.is_tuning() {
+            self.stop_transmit_with(TxPhase::Cancelled);
+        }
+    }
+
+    /// Whether a tune tone is what the rig is currently keyed for.
+    pub const fn is_tuning(&self) -> bool {
+        self.tone_until.is_some()
+    }
+
+    /// Puts the interface in the state a running tone leaves it in.
+    ///
+    /// Tests have no device to send one on, and what is asserted about a tone
+    /// is what the operator can do while it runs rather than its audio.
+    #[cfg(test)]
+    pub(crate) fn tune_for_test(&mut self) {
+        self.tone_until = Some(Instant::now() + TUNE_LIMIT);
+        self.tx_snapshot.phase = TxPhase::Producing;
     }
 
     pub fn stop_transmit(&mut self) {
@@ -1446,6 +1538,7 @@ impl App {
         self.playback = None;
         self.tx_worker = None;
         self.playback_started = false;
+        self.tone_until = None;
         self.unkey_rig();
         self.tx_snapshot.phase = phase;
         // Whatever was chosen while the transmission was running takes effect

@@ -3628,6 +3628,7 @@ dependencies = [
  "raw-window-handle",
  "rssstv-audio",
  "rssstv-demodulator",
+ "rssstv-dsp",
  "rssstv-fskid",
  "rssstv-modulator",
  "rssstv-rig",

@@ -8,6 +8,7 @@ use std::{
 };
 
 use rssstv_audio::PlaybackWriter;
+use rssstv_dsp::oscillator::Vco;
 use rssstv_fskid::{FskId, FskNumber};
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{TransmissionEncoder, image::RgbImage, mode::Mode};
@@ -15,6 +16,19 @@ use rssstv_sstv::{TransmissionEncoder, image::RgbImage, mode::Mode};
 use crate::{error::AppError, worker::update};
 
 const PCM_BLOCK_SIZE: usize = 1_024;
+
+/// The tone the tune button sends, in hertz.
+///
+/// MMSSTV lets this be edited and captions the button with it; the same number
+/// is what a repeater is opened with, so it is fixed here and the button is
+/// named after it.
+pub const TUNE_FREQUENCY_HZ: u32 = 1_750;
+
+/// How long a tune tone may key the rig before it gives it back.
+///
+/// A carrier is the one thing here that goes out with nobody watching it, so
+/// it stops on its own the way MMSSTV's does.
+pub const TUNE_LIMIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TxPhase {
@@ -172,6 +186,26 @@ impl TxWorker {
         identification: Option<Identification>,
         gain: Arc<TxGain>,
     ) -> Self {
+        Self::start("rssstv-transmit", move |snapshot, cancel| {
+            transmit_loop(writer, mode, frame, identification, gain, snapshot, cancel);
+        })
+    }
+
+    /// Spawns a worker sending one steady tone until it is stopped.
+    ///
+    /// Nothing about it ends, so it drives the same phases a picture does
+    /// except the last: it primes, produces, and then keeps producing until the
+    /// operator or the time limit takes it down.
+    pub fn spawn_tone(writer: PlaybackWriter, frequency_hz: u32, gain: Arc<TxGain>) -> Self {
+        Self::start("rssstv-tune", move |snapshot, cancel| {
+            tone_loop(writer, frequency_hz, gain, snapshot, cancel);
+        })
+    }
+
+    fn start(
+        name: &str,
+        body: impl FnOnce(Arc<Mutex<TxSnapshot>>, Arc<AtomicBool>) + Send + 'static,
+    ) -> Self {
         let snapshot = Arc::new(Mutex::new(TxSnapshot {
             phase: TxPhase::Priming,
             ..TxSnapshot::default()
@@ -180,18 +214,8 @@ impl TxWorker {
         let worker_snapshot = Arc::clone(&snapshot);
         let worker_cancel = Arc::clone(&cancel);
         let thread = thread::Builder::new()
-            .name("rssstv-transmit".to_owned())
-            .spawn(move || {
-                transmit_loop(
-                    writer,
-                    mode,
-                    frame,
-                    identification,
-                    gain,
-                    worker_snapshot,
-                    worker_cancel,
-                )
-            })
+            .name(name.to_owned())
+            .spawn(move || body(worker_snapshot, worker_cancel))
             .expect("the transmit thread should start");
         Self {
             snapshot,
@@ -321,6 +345,55 @@ fn transmit_loop(
     }
 }
 
+fn tone_loop(
+    mut writer: PlaybackWriter,
+    frequency_hz: u32,
+    gain: Arc<TxGain>,
+    snapshot: Arc<Mutex<TxSnapshot>>,
+    cancel: Arc<AtomicBool>,
+) {
+    let sample_rate_hz = writer.sample_rate_hz();
+    let mut oscillator = match Vco::new(f64::from(sample_rate_hz), f64::from(frequency_hz), 0.0) {
+        Ok(oscillator) => oscillator,
+        Err(error) => return fail(&snapshot, error),
+    };
+    let prefill = writer.vacant().min((sample_rate_hz as usize / 4).max(1));
+    let mut block = [0.0_f32; PCM_BLOCK_SIZE];
+    let mut count = 0;
+    let mut offset = 0;
+    let mut primed = false;
+    loop {
+        if cancel.load(Ordering::Acquire) || writer.is_cancelled() {
+            update(&snapshot, |state| state.phase = TxPhase::Cancelled);
+            return;
+        }
+        if offset == count {
+            let level = gain.get();
+            for sample in &mut block {
+                match oscillator.process_sample(0.0) {
+                    Ok(value) => *sample = value as f32 * level,
+                    Err(error) => return fail(&snapshot, error),
+                }
+            }
+            count = block.len();
+            offset = 0;
+        }
+        let written = writer.write(&block[offset..count]);
+        if written == 0 {
+            thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        offset += written;
+        update(&snapshot, |state| {
+            state.generated_samples += written as u64;
+            if !primed && state.generated_samples >= prefill as u64 {
+                state.phase = TxPhase::Producing;
+                primed = true;
+            }
+        });
+    }
+}
+
 fn fail(snapshot: &Mutex<TxSnapshot>, error: impl Into<AppError>) {
     update(snapshot, |state| {
         state.phase = TxPhase::Failed;
@@ -431,6 +504,38 @@ mod tests {
             thread::yield_now();
         }
         assert_eq!(gain.get(), 0.0);
+    }
+
+    /// The tone is the frequency the button is captioned with, and it keeps
+    /// coming rather than running out the way a picture does.
+    #[test]
+    fn the_tune_worker_sends_a_steady_tone_at_the_frequency_it_was_given() {
+        let sample_rate_hz = 8_000;
+        let (writer, mut reader) = synthetic_playback(sample_rate_hz, 4_096).unwrap();
+        let worker = TxWorker::spawn_tone(writer, 1_000, Arc::new(TxGain::from_travel(1.0)));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut samples = Vec::new();
+        let mut block = [0.0_f32; 512];
+        while samples.len() < sample_rate_hz as usize {
+            let snapshot = worker.latest();
+            assert!(snapshot.phase != TxPhase::Failed, "{:?}", snapshot.error);
+            assert!(Instant::now() < deadline, "no tone was produced");
+            let read = reader.read(&mut block);
+            samples.extend_from_slice(&block[..read]);
+            thread::yield_now();
+        }
+        samples.truncate(sample_rate_hz as usize);
+
+        let crossings = samples
+            .windows(2)
+            .filter(|pair| pair[0] < 0.0 && pair[1] >= 0.0)
+            .count();
+        assert!(
+            (crossings as i64 - 1_000).abs() <= 1,
+            "{crossings} crossings"
+        );
+        assert_eq!(worker.latest().phase, TxPhase::Producing);
     }
 
     #[test]

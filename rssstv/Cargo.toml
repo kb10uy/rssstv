@@ -19,6 +19,7 @@ jiff.workspace = true
 mlua.workspace = true
 rssstv-audio = { path = "../rssstv-audio" }
 rssstv-demodulator = { path = "../rssstv-demodulator" }
+rssstv-dsp = { path = "../rssstv-dsp" }
 rssstv-fskid = { path = "../rssstv-fskid" }
 rssstv-modulator = { path = "../rssstv-modulator" }
 rssstv-rig = { path = "../rssstv-rig" }

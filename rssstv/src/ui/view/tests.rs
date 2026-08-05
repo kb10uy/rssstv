@@ -512,3 +512,59 @@ fn the_tx_button_refuses_a_transmission_it_cannot_start() {
     assert_eq!(app.tx_error, None);
     assert_eq!(app.tx_snapshot.phase, TxPhase::Idle);
 }
+
+/// The tone is captioned with its frequency and takes a quarter of the row,
+/// so the trigger beside it stays the button the operator aims for.
+#[test]
+fn the_tune_tone_takes_a_quarter_of_the_transmit_row() {
+    let mut app = App::headless();
+    app.tab = Tab::Transmit;
+    let transmit = app.i18n.text("action-transmit");
+    let caption = TUNE_FREQUENCY_HZ.to_string();
+
+    let harness = render(&mut app);
+    let trigger = harness.get_by_label(&transmit).rect();
+    let tone = harness.get_by_label(&caption).rect();
+
+    assert!(tone.left() >= trigger.right());
+    assert!((tone.top() - trigger.top()).abs() < f32::EPSILON);
+    assert!((tone.height() - trigger.height()).abs() < f32::EPSILON);
+    assert!(
+        (trigger.width() - tone.width() * 3.0).abs() < 0.5,
+        "TX is {}, tone is {}",
+        trigger.width(),
+        tone.width()
+    );
+}
+
+/// The two ways of keying the rig cannot both be taken up, so whichever one
+/// is running refuses the other rather than cutting it off.
+#[test]
+fn the_transmit_trigger_is_refused_while_a_tone_is_being_sent() {
+    let mut app = App::headless();
+    app.tab = Tab::Transmit;
+    app.tune_for_test();
+    let caption = TUNE_FREQUENCY_HZ.to_string();
+
+    {
+        let mut harness = render(&mut app);
+        harness.get_by_label("TX").click();
+        harness.run();
+    }
+
+    assert!(app.is_tuning());
+    assert_eq!(app.tx_error, None);
+    assert_eq!(
+        app.transmit_problem(),
+        Some(app.i18n.text("error-tone-active"))
+    );
+
+    // The tone's own button is what gives the rig back.
+    {
+        let mut harness = render(&mut app);
+        harness.get_by_label(&caption).click();
+        harness.run();
+    }
+
+    assert!(!app.is_tuning());
+}

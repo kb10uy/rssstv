@@ -177,7 +177,7 @@ pub(super) fn tab_controls(ui: &mut Ui, app: &mut App) {
             heading(ui, &app.i18n.text("section-dsp"));
             dsp_panel(ui, app);
         }
-        Tab::Transmit => transmit_button(ui, app, signal_controls_height),
+        Tab::Transmit => transmit_controls(ui, app, signal_controls_height),
     }
 }
 

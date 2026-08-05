@@ -67,6 +67,7 @@ action-contest-mode = Contest mode (send number)
 action-vis-restart = Restart on a new VIS header
 action-transmit = TX
 action-stop-transmit = Stop TX
+action-tone = Send a { $frequency } Hz tone
 action-open-folder = Open folder
 action-refresh = Refresh
 action-rig-connect = Connect
@@ -103,6 +104,7 @@ state-transmit-leader = TRANSMITTING · LEADER
 state-transmitting = TRANSMITTING · { $row }/{ $total }
 state-transmit-identifying = TRANSMITTING · ID
 state-transmit-complete = TX COMPLETE
+state-transmit-tone = TRANSMITTING · TONE
 
 status-no-audio = No input device
 status-no-output = No output device
@@ -112,6 +114,8 @@ status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
 
 error-no-transmit-frame = No transmit image has been composed yet
+error-tone-active = A tone is being sent
+error-transmit-active = A picture is being sent
 error-no-output-device = Select an output device first
 error-invalid-station-call = Invalid station callsign: { $error }
 error-rig-unavailable = Rig control is not ready: { $error }

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs, io, path::PathBuf, sync::Arc};
 
 use resvg::{
     tiny_skia::{Pixmap, Transform},
@@ -46,6 +46,37 @@ pub struct EmptyAssetProvider;
 impl AssetProvider for EmptyAssetProvider {
     fn load(&self, _reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
         Ok(None)
+    }
+}
+
+/// An asset provider that reads references from one directory.
+///
+/// A reference is joined to the directory as it was written, so a template
+/// carried alongside its images resolves them without being told where it
+/// lives.
+#[derive(Clone, Debug)]
+pub struct FileAssetProvider {
+    base: PathBuf,
+}
+
+impl FileAssetProvider {
+    /// Resolves references against `base`.
+    pub fn new(base: impl Into<PathBuf>) -> Self {
+        Self { base: base.into() }
+    }
+}
+
+impl AssetProvider for FileAssetProvider {
+    fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
+        let path = self.base.join(reference);
+        match fs::read(&path) {
+            Ok(bytes) => Ok(Some(EncodedAsset::png(bytes))),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(AssetError::new(format!(
+                "failed to read {}: {error}",
+                path.display()
+            ))),
+        }
     }
 }
 

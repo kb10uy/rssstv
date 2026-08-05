@@ -1,33 +1,9 @@
-use std::{
-    env,
-    error::Error,
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::{env, error::Error, fs, io, path::Path};
 
 use rssstv_sstv::image::{ImageSize, Rgb8, RgbImage};
 use rssstv_template::{
-    AssetError, AssetProvider, EncodedAsset, RenderContext, RenderSize, Renderer, Template,
-    Variables, composite,
+    FileAssetProvider, RenderContext, RenderSize, Renderer, Template, Variables, composite,
 };
-
-struct CwdAssetProvider {
-    cwd: PathBuf,
-}
-
-impl AssetProvider for CwdAssetProvider {
-    fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
-        let path = self.cwd.join(reference);
-        match fs::read(&path) {
-            Ok(bytes) => Ok(Some(EncodedAsset::png(bytes))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(AssetError::new(format!(
-                "failed to read {}: {error}",
-                path.display()
-            ))),
-        }
-    }
-}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let [template_path, background_path, output_path] = env::args()
@@ -49,9 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     )?;
     let received_image = RgbImage::new(background.size(), Rgb8::new(255, 255, 255));
 
-    let assets = CwdAssetProvider {
-        cwd: env::current_dir()?,
-    };
+    let assets = FileAssetProvider::new(env::current_dir()?);
     let variables = Variables::new();
     let mut context = RenderContext::new(&variables, &assets);
     context.received_image = Some(&received_image);

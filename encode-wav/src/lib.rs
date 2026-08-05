@@ -1,7 +1,4 @@
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavSpec, WavWriter};
@@ -15,8 +12,8 @@ use rssstv_sstv::{
     mode::{Mode, Support},
 };
 use rssstv_template::{
-    AssetError, AssetProvider, EncodedAsset, RenderContext, RenderSize, Renderer, Template,
-    VariableValue, Variables, composite,
+    FileAssetProvider, RenderContext, RenderSize, Renderer, Template, VariableValue, Variables,
+    composite,
 };
 
 const SAMPLE_RATE_HZ: u32 = 48_000;
@@ -176,12 +173,7 @@ fn render_frame(
         u32::try_from(background.size().width())?,
         u32::try_from(background.size().height())?,
     )?;
-    let assets = TemplateAssetProvider {
-        base: template_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf(),
-    };
+    let assets = FileAssetProvider::new(template_path.parent().unwrap_or_else(|| Path::new(".")));
     let variables = template_variables(callsign);
     let mut context = RenderContext::new(&variables, &assets);
     context.received_image = Some(background);
@@ -207,24 +199,6 @@ fn template_variables(callsign: &str) -> Variables {
     );
     variables.insert("tx.timestamp.local", VariableValue::Timestamp(now));
     variables
-}
-
-struct TemplateAssetProvider {
-    base: PathBuf,
-}
-
-impl AssetProvider for TemplateAssetProvider {
-    fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
-        let path = self.base.join(reference);
-        match fs::read(&path) {
-            Ok(bytes) => Ok(Some(EncodedAsset::png(bytes))),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(AssetError::new(format!(
-                "failed to read {}: {error}",
-                path.display()
-            ))),
-        }
-    }
 }
 
 #[cfg(test)]

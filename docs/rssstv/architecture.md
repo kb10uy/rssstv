@@ -492,6 +492,9 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - Template editing.
+- Rig control driven by an operator script rather than command lists, a serial
+  transport beside the `rigctld` one, and tuning from the interface. Designed in
+  [rig-control.md](rig-control.md).
 - Real-world received-audio regression fixtures.
 
 These should extend the dependency structure above rather than placing platform

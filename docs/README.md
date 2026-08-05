@@ -41,7 +41,8 @@ The Rust implementation: what it is meant to be, and what it currently is.
   current crate structure.
 - [rssstv/gui-design.md](rssstv/gui-design.md): the desktop application, its
   audio boundary, and its platform integration.
-- [rssstv/rig-control.md](rssstv/rig-control.md): how the rig is reached
-  through `rigctld`, and the commands the operator attaches to each moment.
+- [rssstv/rig-control.md](rssstv/rig-control.md): the transports the rig is
+  reached over, the script that decides what is sent, and the band plan both
+  read. Describes a target design ahead of what is implemented.
 - [rssstv/template-design.md](rssstv/template-design.md): the portable transmit
   overlay format.

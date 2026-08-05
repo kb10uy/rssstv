@@ -1,32 +1,294 @@
 # Rig Control
 
-The application controls the station's rig through Hamlib, and reaches Hamlib
-through a `rigctld` the operator already has running rather than through a
-library linked into the build.
+The application keys the station's rig, reads what it is tuned to, and moves it
+between bands. How any of that is actually done differs by station, so the
+application supplies the moments and the operator supplies the means.
 
-## Why `rigctld`
+This document describes the target design. What is currently implemented is
+narrower; see [Status](#status).
 
-Linking `libhamlib` would put an autotools C build into every platform's
-toolchain, ship a shared library beside the executable, and complicate cross
-compilation, all so that this application could own the serial port. Owning it
-is itself the problem: a CAT port takes one process, and an SSTV session
-normally runs beside a logger that wants the same rig. `rigctld` is Hamlib's own
-answer to both — it holds the port and serves any number of clients over TCP —
-so talking to it costs a socket and no build integration at all.
+## Why a Script
+
+A station keys its rig in more ways than one protocol covers. MMSSTV lets the
+operator write a custom PTT command as raw CI-V bytes on a serial port; EXTFSK
+hands keying to an external plugin driving DTR or RTS; Hamlib does it through
+`rigctld` over a socket. A station may use two at once — CAT through `rigctld`
+for frequency, a separate serial line for PTT — and the three have no operation
+in common that could be modelled once.
+
+So the boundary is not *which commands* but *which transport*, and the choice
+between them is the operator's. The application opens the transports named in
+the configuration and calls a Lua script at each moment it reaches; what the
+script sends over which transport is its own business.
+
+An earlier design put command lines directly in `config.toml`. It could express
+a Hamlib command and nothing else, could not branch, and could not read an
+answer back. This replaces it.
+
+## Why `rigctld` Rather Than Linked Hamlib
+
+The Hamlib transport is a socket to a `rigctld` the operator already has
+running, rather than `libhamlib` linked into the build.
+
+Linking it would put an autotools C build into every platform's toolchain, ship
+a shared library beside the executable, and complicate cross compilation, all
+so that this application could own the serial port. Owning it is itself the
+problem: a CAT port takes one process, and an SSTV session normally runs beside
+a logger that wants the same rig. `rigctld` is Hamlib's own answer to both — it
+holds the port and serves any number of clients — so talking to it costs a
+socket and no build integration at all.
 
 The consequence is that the operator starts `rigctld` themselves. That is the
 same arrangement WSJT-X offers as its `Hamlib NET rigctl` rig type, and it is
 what a station running more than one program is doing anyway.
 
-## The Protocol
+## Layering
+
+| Layer | Holds | Where |
+| --- | --- | --- |
+| Transports | Sockets and serial ports, framed and typed | `rssstv-rig` |
+| Policy | What to send, and when, for this station | `rigcontrol.lua` |
+| Band data | Where each band is and what to do on it | `bands.toml` |
+| Timing and wiring | Which transports exist, keying delays, poll rate | `config.toml` |
+
+The Lua host and the worker thread live in the application crate rather than in
+`rssstv-rig`: a scripting host is application policy, and the reusable crate
+stays what it is now, a description of how to talk to a rig.
+
+## Status
+
+Implemented today, in the shape this document replaces:
+
+- The `rigctld` transport, its extended-response framing, and `\chk_vfo`.
+- Keying around a transmission with a lead-in and a tail, and refusing a
+  transmission the rig would not take.
+- Frequency polling into `${radio.frequency}` and `${radio.band}`.
+- Command lists written as text in `config.toml` under `[rig.commands]`, and
+  per-band command lists under `[rig.bands]`.
+- A built-in amateur band table in `rssstv-rig`.
+
+Not yet implemented, and described here as the target:
+
+- The Lua host, the script, and everything in [The Script](#the-script).
+- Named transports; the address is currently a single `[rig] address` key.
+- `bands.toml`, which replaces both the built-in band table and
+  `[rig.bands]`.
+- Setting the frequency, changing band, and the interface controls for both.
+- The serial transport, and with it the CI-V and DTR/RTS keying that motivates
+  the design.
+
+## The Script
+
+The script lives beside `config.toml` as `rigcontrol.lua`.
+
+A default is compiled into the application and used whenever the file is
+absent. It is **not** written to disk on first run: a file written once is a
+file that never gains a later fix, and most operators never need to edit it.
+The Rig Control menu offers to write it out for those who do, and from then on
+their copy is what runs.
+
+### Module Shape
+
+The script is a module: it returns a table of functions.
+
+```lua
+local function transmit(ctx)
+  ctx.ports.rig:send("T 1")
+end
+
+local function receive(ctx)
+  ctx.ports.rig:send("T 0")
+end
+
+local function poll_frequency(ctx)
+  return ctx.ports.rig:frequency()
+end
+
+local function set_frequency(ctx, hz)
+  ctx.ports.rig:send(("F %d"):format(hz))
+end
+
+local function change_band(ctx, band)
+  set_frequency(ctx, band.target)
+  if band.receive_mode then
+    ctx.ports.rig:send(("M %s %d"):format(band.receive_mode, band.bandwidth or 0))
+  end
+end
+
+return {
+  transmit = transmit,
+  receive = receive,
+  poll_frequency = poll_frequency,
+  set_frequency = set_frequency,
+  change_band = change_band,
+}
+```
+
+Every entry point is optional. A table without `transmit` keys nothing, which
+is what a station running VOX wants, and needs no separate way of saying so.
+
+### Entry Points
+
+| Function | Called | Contract |
+| --- | --- | --- |
+| `open(ctx)` | After the transports are opened | Failure means rig control failed; nothing else is called |
+| `close(ctx)` | Before the transports are given up | Failure is reported only |
+| `transmit(ctx)` | Starting a transmission, before any audio | Failure abandons the transmission |
+| `receive(ctx)` | After the last sample, plus the tail | Failure is reported; the rig may still be keyed |
+| `poll_frequency(ctx)` | Every poll interval, never while keyed | Returns hertz, or nothing when unknown |
+| `set_frequency(ctx, hz)` | The operator asked to tune | Failure is reported |
+| `change_band(ctx, band)` | The operator chose a band | Receives the band's whole table |
+
+These are the only functions the application calls. A script is free to share
+code between them however it likes; `change_band` calling `set_frequency` above
+is the script's own arrangement, not a call the application makes twice.
+
+### The Context
+
+`ctx` is a table, rebuilt for each call:
+
+| Field | Holds |
+| --- | --- |
+| `ctx.ports` | The transports, by the name they were configured under |
+| `ctx.band` | The band the rig is on, or `nil` between bands |
+| `ctx.frequency` | The last frequency read, in hertz, or `nil` |
+| `ctx.log(message)` | Writes to the application log |
+
+`ctx.band` is the same table `change_band` receives, so a script reads a band's
+settings the same way whether it was handed one or is acting on the one the rig
+is already on.
+
+### Ports
+
+A port of kind `rigctld`:
+
+| Method | Does |
+| --- | --- |
+| `port:send(line)` | Sends one command, returns its answer as a list of lines |
+| `port:frequency()` | Reads the frequency in hertz, addressed for the VFO mode in use |
+
+`send` raises when the rig refuses the command, carrying Hamlib's status
+number. A script that wants to go on regardless wraps it in `pcall`.
+
+A port of kind `serial`, which the CI-V and EXTFSK cases need:
+
+| Method | Does |
+| --- | --- |
+| `port:write(bytes)` | Writes bytes, given as a Lua string |
+| `port:read(count, timeout_ms)` | Reads up to `count` bytes |
+| `port:set_rts(on)`, `port:set_dtr(on)` | Drives the modem control lines |
+
+### Bounding and Failure
+
+The script runs on the rig worker's thread, and `transmit` runs in front of a
+transmission, so it cannot be allowed to run forever. The host installs an
+instruction-count hook and aborts a script that exceeds it; an aborted script
+is a failed call.
+
+`transmit` failing — by raising, by being aborted, or by the rig refusing a
+command — abandons the transmission before any audio is sent, and `receive` is
+called afterwards regardless. Commands already sent cannot be taken back, so
+the rig is put back the only way there is rather than being left keyed.
+
+The script is not a security boundary. It is the operator's own file, at the
+same level of trust as `config.toml`, and gets the ordinary Lua standard
+library.
+
+## Band Definitions
+
+Bands live in `bands.toml`, beside `config.toml`. A default ships with the
+application and is used when the file is absent; it is the band plan the
+operator can replace, which is why it is a file of its own rather than a
+section of `config.toml`. Band plans are regional and worth swapping whole.
+
+```toml
+[[bands]]
+name = "40m"
+start = 7_000_000
+end = 7_300_000
+target = 7_178_000
+transmit-mode = "PKTUSB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "20m"
+start = 14_000_000
+end = 14_350_000
+target = 14_230_000
+transmit-mode = "PKTUSB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+monitor-gain = 0.15
+```
+
+A list rather than a table of named sections, because the order is the order
+the band selector offers them in, and because a name like `1.25m` would have to
+be quoted as a key.
+
+The application reads `name`, `start`, and `end` — they are what names a
+frequency for `${radio.band}` and what decides which band the rig is on. Every
+other key is the operator's, passed through to the script untouched. `target`,
+`step`, `transmit-mode`, `receive-mode`, and `bandwidth` are conventions the
+default script follows; `monitor-gain` above is one this station invented, and
+its own script is what would act on it.
+
+Keys reach Lua with hyphens turned into underscores, because a hyphen cannot
+appear in a Lua identifier: `receive-mode` in the file is `band.receive_mode`
+in the script.
+
+This replaces both the built-in band table in `rssstv-rig` and the per-band
+command lists of the earlier design. A band with an extra setting no longer
+needs a mechanism of its own — it is a key the script reads.
+
+## Configuration
+
+What stays in `config.toml`:
+
+```toml
+[rig]
+enabled = true
+lead-in = 0.2
+tail = 0.05
+poll-interval = 1.0
+
+[rig.ports.rig]
+kind = "rigctld"
+address = "127.0.0.1:4532"
+
+[rig.ports.ptt]
+kind = "serial"
+device = "COM3"
+baud = 19200
+```
+
+| Key | Meaning |
+| --- | --- |
+| `enabled` | Whether to connect at all. The Rig Control menu is the same switch. |
+| `lead-in` | Seconds between `transmit` returning and the first audio sample. |
+| `tail` | Seconds between the last audio sample and `receive` being called. |
+| `poll-interval` | Seconds between calls to `poll_frequency`. `0` never calls it. |
+
+`lead-in` covers the time a rig takes to switch to transmit, which its audio
+path does not wait for: anything sent inside it is lost. `tail` covers the
+opposite end, where the ring buffer is empty but the device has not finished
+playing what it was handed.
+
+Each entry under `[rig.ports]` becomes one member of `ctx.ports` under the same
+name. The names above are the ones the default script expects, and a station
+with only a `rigctld` needs only the first.
+
+## The rigctld Transport
 
 `rssstv-rig` speaks the `rigctld` text protocol on a plain TCP socket.
 
 Every command is sent in the protocol's extended form, prefixed with `+`.
 Without it, a `rigctld` that succeeds at a `get` command answers with the value
 alone and no terminator, so how many lines an answer runs to is a fact about
-the particular command. The operator's commands are exactly the ones this crate
-has no such fact about. The extended form answers with a terminating
+the particular command. The commands a script sends are exactly the ones this
+crate has no such fact about. The extended form answers with a terminating
 `RPRT <status>` line whatever the command was and whether or not it succeeded,
 which makes the end of an answer readable without knowing what was asked. That
 it also labels its values, so nothing has to be read by position, is a
@@ -38,22 +300,19 @@ commands is a sequence of round trips.
 
 On connecting, the session asks `\chk_vfo` to find out whether `rigctld` was
 started with `--vfo` and therefore wants every command addressed to a VFO. The
-answer is applied to the commands this crate sends for itself — currently only
-`\get_freq`. The operator's commands go out exactly as written: which of them
-take a VFO is a property of the command, and guessing would break the ones that
-do not. A `rigctld` too old to answer the question is one that does not want the
+answer is applied to `port:frequency()` and to anything else the transport
+sends for itself. What a script passes to `port:send` goes out as written:
+which commands take a VFO is a property of the command, and the operator
+writing them knows how their own `rigctld` was started better than a guess here
+would. A `rigctld` too old to answer the question is one that does not want the
 argument either, so a refusal settles as no VFO rather than as a failure.
-
-A command the rig refuses is reported with Hamlib's own status number and
-leaves the connection open. A transport that fails ends the session.
 
 ### One Command per Line
 
-A command must be one command. Whitespace is normalized when a script is read
-and a newline is whitespace, so a command can never carry one and each is
-written to the socket as exactly one line — that much holds by construction.
-What does not hold by construction is the other direction: two commands' worth
-of words on a single line, such as `T 1 T 0`.
+A command must be one command. `port:send` writes exactly one line, so a
+newline inside its argument is refused rather than framed as two commands.
+What cannot be refused is two commands' worth of words on a single line, such
+as `T 1 T 0`.
 
 That reaches `rigctld` as one line and one answer is read back, but the far end
 may find a second command in the words left over and answer twice. The extra
@@ -61,7 +320,7 @@ may find a second command in the words left over and answer twice. The extra
 damage is bounded — a read that never terminates hits the command timeout and
 ends the session, and the interface reports a failed rig rather than
 transmitting — but an answer read one behind can also be a stale `RPRT 0`,
-which is a keying failure mistaken for success. Write one command per line and
+which is a keying failure mistaken for success. Send one command per call and
 the question does not arise.
 
 This is the shape of the risk rather than an observed failure: exactly how
@@ -70,151 +329,91 @@ the tests in this crate answer from a stand-in rather than from Hamlib. Nothing
 detects the desynchronization if it happens; draining the socket before each
 command would, and is not implemented.
 
-## Configuration
-
-Everything the rig is told lives in `config.toml` under `[rig]`. The
-application writes the section out with its defaults on the first save, so the
-keys are there to be edited rather than having to be discovered.
-
-```toml
-[rig]
-enabled = true
-address = "127.0.0.1:4532"
-poll-interval = 1.0
-lead-in = 0.2
-tail = 0.05
-
-[rig.commands]
-open = ""
-close = ""
-transmit = """
-L MONITOR_GAIN 0.15
-T 1"""
-receive = "T 0"
-
-[rig.bands]
-"40m" = '\set_ant 1 0'
-"20m" = '\set_ant 2 0'
-```
-
-| Key | Meaning |
-| --- | --- |
-| `enabled` | Whether to connect at all. The Rig Control menu is the same switch. |
-| `address` | Where `rigctld` is listening. |
-| `poll-interval` | Seconds between frequency reads. `0` never reads the frequency. |
-| `lead-in` | Seconds between keying the rig and the first audio sample. |
-| `tail` | Seconds between the last audio sample and unkeying. |
-
-`lead-in` covers the time a rig takes to switch to transmit, which its audio
-path does not wait for: anything sent inside it is lost. `tail` covers the
-opposite end, where the ring buffer is empty but the device has not finished
-playing what it was handed.
-
-### Commands
-
-An event holds one string: the commands to send, one per line, written exactly
-as they would be typed at `rigctl`. Both the short forms and the long
-`\set_level` forms work, because neither is interpreted here — the line is
-passed through, and `rigctld` splits it on whitespace itself. A blank line is
-spacing rather than a command, and a line is one command rather than several,
-for the reason given under [One Command per Line](#one-command-per-line).
-
-A single command needs no ceremony:
-
-```toml
-transmit = "T 1"
-```
-
-Several want TOML's multi-line form. Use the literal `'''` quoting for anything
-containing a backslash, which is every Hamlib command written in full:
-
-```toml
-transmit = '''
-\set_mode PKTUSB 3000
-\set_ptt 1'''
-```
-
-Each line is its own round trip, in the order it was written:
-
-```text
--> +\set_mode PKTUSB 3000
-<- set_mode:
-<- RPRT 0
--> +\set_ptt 1
-<- set_ptt:
-<- RPRT 0
-```
-
-The commands attached to an event run in the order they are written and stop at
-the first one the rig refuses. A sequence that selects a data mode before keying
-only means anything if the keying does not happen when the mode change failed.
-
-| Event | When it runs |
-| --- | --- |
-| `open` | Immediately after connecting. |
-| `close` | Before the connection is given up. |
-| `transmit` | At the start of a transmission, before any audio. |
-| `receive` | After the last sample has been played, plus `tail`. |
-
-`transmit` and `receive` default to `T 1` and `T 0`, so keying works before
-anything is configured. A key that is present replaces the default outright,
-including with nothing: a station keyed by VOX writes `transmit = ""` and means
-it. A key that is absent, or that holds something that is not text, leaves the
-default in place.
-
-### Bands
-
-`[rig.bands]` attaches commands to an amateur band, sent when the polled
-frequency arrives on it. Connecting while already on a band counts as arriving,
-so a station that selects an antenna per band selects one without waiting for
-the operator to tune somewhere else first. Staying on a band does not resend
-them, and leaving the bands entirely and coming back is an arrival again.
-
-Band names are the ones an operator writes: `160m` through `10m`, `6m`, `4m`,
-`2m`, `1.25m`, `70cm`, `33cm`, `23cm`, plus `2200m` and `630m`. A name outside
-that list is dropped rather than carried around, and is not written back on the
-next save.
-
-The band edges are the widest any region allocates. They name a frequency and
-pick the commands attached to it; deciding what may be transmitted where is the
-operator's licence rather than this table's job.
-
 ## Behavior Around a Transmission
 
-The connection is owned by a worker thread. Keying means a socket round trip and
-then the lead-in, and neither belongs in a frame.
+The transports and the Lua state are owned by a worker thread. Keying means a
+socket round trip and then the lead-in, and neither belongs in a frame.
 
 1. The interface asks for keying as the transmission is set up, so the lead-in
    runs alongside filling the audio queue rather than after it.
-2. The worker runs the `transmit` commands, waits out `lead-in`, and reports
-   that it is transmitting.
-3. The interface starts the audio device only once the rig has said so. A rig
-   that was asked to key and refused stops the transmission instead: a
-   transmission nobody hears is worse than one that did not happen.
-4. When the queue has drained, the worker waits out `tail` and runs the
-   `receive` commands.
+2. The worker calls `transmit`, waits out `lead-in`, and reports that it is
+   transmitting.
+3. The interface starts the audio device only once the rig has said so. A
+   `transmit` that failed stops the transmission instead: a transmission nobody
+   hears is worse than one that did not happen.
+4. When the queue has drained, the worker waits out `tail` and calls `receive`.
 
 A transmission that is cancelled or that fails unkeys by the same path, as does
 switching rig control off while one is running.
 
-Polling stops while the rig is keyed. Reading the frequency back
-mid-transmission says nothing the operator cannot see, and it puts CAT traffic
-on the wire during the one part of a session that has to be left alone.
+`poll_frequency` is not called while the rig is keyed. Reading the frequency
+back mid-transmission says nothing the operator cannot see, and it puts CAT
+traffic on the wire during the one part of a session that has to be left alone.
+`set_frequency` and `change_band` are refused while keyed for the same reason.
 
 While rig control is switched on and not connected, a transmission is refused
-with what the rig said. Switching it off transmits anyway, which is the whole of
-what the menu offers besides the connection's state.
+with what the rig said. Switching it off transmits anyway.
 
 ## Template Variables
 
-`${radio.frequency}` and `${radio.band}` are filled from the polled frequency.
-Without a connection they hold a fixed placeholder, because the transmit tab has
-to compose to something before there is a radio to ask and a missing variable
+`${radio.frequency}` and `${radio.band}` are filled from what
+`poll_frequency` returned and the band that frequency falls in. Without a
+connection they hold a fixed placeholder, because the transmit tab has to
+compose to something before there is a radio to ask and a missing variable
 would refuse to render at all. A rig tuned between the bands leaves
 `${radio.band}` empty: the frequency beside it is real, and a band that
 contradicted it would be worse than none.
 
 A frame that prints either of them stops being true the moment the operator
 tunes, so it is composed again when the rig moves — and only then, for the same
-reason a frame that prints the clock is composed again on the minute. A template
-that says nothing about the frequency is left alone.
+reason a frame that prints the clock is composed again on the minute. A
+template that says nothing about the frequency is left alone.
+
+## Interface
+
+The Rig Control menu keeps what it has: the switch, the connection's state or
+the failure that ended it, what the rig is tuned to, and reconnecting after a
+failure. It gains an entry that writes the default script out for editing.
+
+Tuning is worth reaching without a menu, so it goes in the window as a radio
+panel shared by both tabs:
+
+| Control | Does |
+| --- | --- |
+| Band selector | Calls `change_band` with the chosen band from `bands.toml` |
+| Frequency | Shows what `poll_frequency` last returned |
+| Step down, step up | Calls `set_frequency` with the current frequency moved by the band's `step` |
+
+The panel is present only while rig control is connected, and its controls are
+disabled while transmitting — the same rule that stops the worker polling then.
+A step with no band, or a band with no `step`, has nothing to move by and is
+disabled rather than guessing one.
+
+## Staging
+
+1. The Lua host, the `rigctld` port, and `open`, `close`, `transmit`,
+   `receive`, and `poll_frequency`. Replaces `[rig.commands]` at parity with
+   what works today.
+2. `bands.toml`, `change_band`, `set_frequency`, and the radio panel. Replaces
+   `[rig.bands]` and the built-in band table.
+3. The serial port, and with it CI-V keying and DTR/RTS keying.
+
+Each stage stands on its own. The third is what makes the MMSSTV and EXTFSK
+cases work, and it needs nothing from the first two but the seam they define.
+
+## Verification Strategy
+
+The transport tests answer from a stand-in `rigctld` on a loopback socket, so
+they run without Hamlib installed. They cover the extended-response framing,
+the VFO question, a refused command, and a hangup.
+
+The script host needs its own: that each entry point is called at the moment it
+should be, that a script omitting one is not an error, that a failing
+`transmit` abandons the transmission and still calls `receive`, and that a
+script which does not terminate is aborted rather than holding the worker. A
+test script is easier to write than a test rig, so these are cheap once the
+host exists.
+
+What none of it covers is Hamlib itself. The framing assumption — that `+`
+makes every answer end in `RPRT` — is the thing to confirm against a real
+`rigctld` first.

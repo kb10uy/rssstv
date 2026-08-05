@@ -359,7 +359,7 @@ impl RxDecoder {
                     }
                     continue;
                 }
-                if let Some(row) = self.decode_next(false)? {
+                if let Some(row) = self.decode_next()? {
                     self.queue_event(RxEvent::RowDecoded { row });
                 }
                 if let Some(row) = self.decode.pending_row.take() {
@@ -479,7 +479,7 @@ impl RxDecoder {
         self.rebuilding = true;
         let rebuild_result = (|| {
             while self.decode.raster_unit < units {
-                self.decode_next(true)?;
+                self.decode_next()?;
                 self.decode.pending_row = None;
             }
             Ok(())
@@ -574,7 +574,7 @@ impl RxDecoder {
         self.rebuilding = true;
         let result = (|| {
             while self.decode.raster_unit < units {
-                self.decode_next(true)?;
+                self.decode_next()?;
                 self.decode.pending_row = None;
             }
             Ok(())
@@ -832,7 +832,8 @@ impl RxDecoder {
             .ok_or(SstvError::UnsupportedRxMode(self.mode))
     }
 
-    fn decode_next(&mut self, rebuilding: bool) -> Result<Option<usize>, SstvError> {
+    fn decode_next(&mut self) -> Result<Option<usize>, SstvError> {
+        let rebuilding = self.rebuilding;
         let width = self.decode.image.size().width();
         let unit = self.decode.raster_unit;
         match self.profile.organization {
@@ -2083,9 +2084,9 @@ mod tests {
         decoder.input = Some(input);
         decoder.decode.clock = Some(RasterClock::from_estimate(0.0, SAMPLE_RATE as f64).unwrap());
         assert_eq!(decoder.robot_selector_at(0).unwrap(), None);
-        decoder.decode_next(false).unwrap();
+        decoder.decode_next().unwrap();
         assert_eq!(decoder.decode.robot_selector, Some(RobotSelector::Cb));
-        decoder.decode_next(false).unwrap();
+        decoder.decode_next().unwrap();
         assert_eq!(decoder.decode.robot_selector, Some(RobotSelector::Cr));
     }
 

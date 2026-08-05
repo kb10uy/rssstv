@@ -49,10 +49,7 @@ pub(super) fn encode_received_image(image: &RgbImage) -> Result<Resource, Templa
     let height = u32::try_from(image.size().height()).map_err(|_| {
         TemplateError::InvalidDimensions("received image height exceeds PNG limits".into())
     })?;
-    let mut rgb = Vec::with_capacity(image.pixels().len() * 3);
-    for pixel in image.pixels() {
-        rgb.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
-    }
+    let rgb = image.to_rgb_bytes();
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(Cursor::new(&mut png)).write_image(
         &rgb,

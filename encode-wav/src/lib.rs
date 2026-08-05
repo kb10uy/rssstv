@@ -8,7 +8,7 @@ use rssstv_fskid::FskId;
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{
     TransmissionEncoder,
-    image::{ImageSize, Rgb8, RgbImage},
+    image::{ImageSize, RgbImage},
     mode::{Mode, Support},
 };
 use rssstv_template::{
@@ -125,11 +125,7 @@ fn load_background(path: &Path, mode: Mode) -> Result<RgbImage> {
         u32::from(mode.spec().height()),
     );
     let size = ImageSize::new(prepared.width() as usize, prepared.height() as usize)?;
-    let pixels = prepared
-        .pixels()
-        .map(|pixel| Rgb8::new(pixel[0], pixel[1], pixel[2]))
-        .collect();
-    Ok(RgbImage::from_pixels(size, pixels)?)
+    Ok(RgbImage::from_rgb_bytes(size, prepared.as_raw())?)
 }
 
 fn cover_image(source: &image::RgbImage, target_width: u32, target_height: u32) -> image::RgbImage {

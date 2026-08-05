@@ -41,26 +41,19 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn load_rgb_image(path: &Path) -> Result<RgbImage, Box<dyn Error>> {
     let decoded = image::open(path)?.to_rgb8();
     let size = ImageSize::new(decoded.width() as usize, decoded.height() as usize)?;
-    let pixels = decoded
-        .pixels()
-        .map(|pixel| Rgb8::new(pixel[0], pixel[1], pixel[2]))
-        .collect();
-    Ok(RgbImage::from_pixels(size, pixels)?)
+    Ok(RgbImage::from_rgb_bytes(size, decoded.as_raw())?)
 }
 
 fn save_rgb_image(image: &RgbImage, path: &Path) -> Result<(), Box<dyn Error>> {
     let width = u32::try_from(image.size().width())?;
     let height = u32::try_from(image.size().height())?;
-    let mut bytes = Vec::with_capacity(image.pixels().len() * 3);
-    for pixel in image.pixels() {
-        bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
-    }
-    let output = image::RgbImage::from_raw(width, height, bytes).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "composed image dimensions do not match its pixels",
-        )
-    })?;
+    let output =
+        image::RgbImage::from_raw(width, height, image.to_rgb_bytes()).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "composed image dimensions do not match its pixels",
+            )
+        })?;
     output.save(path)?;
     Ok(())
 }

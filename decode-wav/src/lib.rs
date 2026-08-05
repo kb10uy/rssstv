@@ -253,12 +253,12 @@ where
 
 fn save_image(image: &RgbImage, path: &Path) -> Result<()> {
     let size = image.size();
-    let mut bytes = Vec::with_capacity(size.pixel_count() * 3);
-    for pixel in image.pixels() {
-        bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
-    }
-    let output = image::RgbImage::from_raw(size.width() as u32, size.height() as u32, bytes)
-        .context("decoded image dimensions are invalid")?;
+    let output = image::RgbImage::from_raw(
+        size.width() as u32,
+        size.height() as u32,
+        image.to_rgb_bytes(),
+    )
+    .context("decoded image dimensions are invalid")?;
     output
         .save(path)
         .with_context(|| format!("failed to save image {}", path.display()))

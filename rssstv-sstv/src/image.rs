@@ -83,6 +83,30 @@ impl RgbImage {
         Ok(Self { size, pixels })
     }
 
+    /// Validates and unpacks row-major `RGBRGB...` bytes.
+    ///
+    /// This is the form every image codec the workspace uses hands over, so
+    /// the unpacking lives here rather than beside each of them.
+    pub fn from_rgb_bytes(size: ImageSize, bytes: &[u8]) -> Result<Self, SstvError> {
+        if bytes.len() != size.pixel_count() * 3 {
+            return Err(SstvError::InvalidPixelCount);
+        }
+        let pixels = bytes
+            .chunks_exact(3)
+            .map(|chunk| Rgb8::new(chunk[0], chunk[1], chunk[2]))
+            .collect();
+        Ok(Self { size, pixels })
+    }
+
+    /// Packs the pixels into row-major `RGBRGB...` bytes.
+    pub fn to_rgb_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.size.pixel_count() * 3);
+        for pixel in &self.pixels {
+            bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
+        }
+        bytes
+    }
+
     /// Returns the dimensions.
     pub const fn size(&self) -> ImageSize {
         self.size
@@ -146,5 +170,27 @@ mod tests {
         assert_eq!(image.get(2, 0), None);
         assert_eq!(image.row(1), Some(&[Rgb8::new(1, 2, 3); 2][..]));
         assert_eq!(image.row(2), None);
+    }
+
+    #[test]
+    fn rgb_bytes_round_trip() {
+        let size = ImageSize::new(2, 2).unwrap();
+        let image = RgbImage::from_pixels(
+            size,
+            vec![
+                Rgb8::new(1, 2, 3),
+                Rgb8::new(4, 5, 6),
+                Rgb8::new(7, 8, 9),
+                Rgb8::new(10, 11, 12),
+            ],
+        )
+        .unwrap();
+        let bytes = image.to_rgb_bytes();
+        assert_eq!(bytes, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(RgbImage::from_rgb_bytes(size, &bytes), Ok(image));
+        assert_eq!(
+            RgbImage::from_rgb_bytes(size, &bytes[..11]),
+            Err(SstvError::InvalidPixelCount)
+        );
     }
 }

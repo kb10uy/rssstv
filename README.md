@@ -2,8 +2,10 @@
 
 Rust SSTV protocol, DSP, template-rendering, and WAV integration components.
 
-Documentation is in [docs/](docs/README.md), divided into the SSTV protocols
-themselves, the behavior of the original MMSSTV, and this project.
+Development documentation is in [docs/memo/](docs/memo/README.md), divided into
+the SSTV protocols themselves, the behavior of the original MMSSTV, and this
+project. [docs/help/](docs/help/index.md) is the operator's manual the release
+archives carry, rendered to HTML by `docs/help/build.sh`.
 
 ## Application
 
@@ -22,8 +24,9 @@ To transmit, select an output device from Settings, enter My call, select a KDL
 template and stock image, and choose Set for transmit after the composite
 preview is ready. TX streams the complete VOX, VIS, raster, footer, FSKID, and
 trailing-silence sequence to the selected device. The same button stops an
-active transmission. See [docs/rssstv/gui-design.md](docs/rssstv/gui-design.md)
-for the design and remaining work.
+active transmission. See
+[docs/memo/rssstv/gui-design.md](docs/memo/rssstv/gui-design.md) for the design
+and remaining work.
 
 Rig control goes through Hamlib's `rigctld` rather than a linked library, so
 there is nothing to build and the serial port stays available to the logger.
@@ -36,7 +39,7 @@ rig in more ways than one protocol covers. The band plan the radio panel offers
 comes from a file beside it. Both are built in and need no files; write either
 out from Settings › Rig Control, as `rigcontrol.lua` and `bands.toml` beside
 `config.toml`, to take it over. See
-[docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
+[docs/memo/rssstv/rig-control.md](docs/memo/rssstv/rig-control.md).
 
 On Linux the window icon comes from a desktop entry rather than from the
 application, because a Wayland compositor has no other way to learn one. The

@@ -34,6 +34,10 @@ An advisory published against a dependency turns CI red on changes that have
 nothing to do with it. That is the intended behavior: the alternative is
 learning about it when a release is already being cut.
 
+`manual` renders `docs/help/` with pandoc, for the same reason: the archives
+carry the manual, so a source or template that cannot be rendered should fail
+on the change that broke it.
+
 ## Releases
 
 `release.yml` runs on a pushed tag matching `v*`, and can be dispatched
@@ -49,6 +53,13 @@ workspace version, because the executables carry the version compiled into
 them and Windows records it in the resource. Bump `version` in the workspace
 `Cargo.toml` before tagging.
 
+It also renders the manual and uploads it as an artifact the three build jobs
+take. The manual is the same text on all three platforms, unlike the license
+page below, so building it once is both cheaper and the only way the three
+archives are guaranteed to carry the same pages; the alternative is installing
+pandoc on a Windows and a macOS runner to produce a copy that should be
+identical anyway.
+
 `build` is a matrix of three targets, each on its own runner:
 
 | Target | Runner | Archive |
@@ -61,8 +72,11 @@ Each builds `rssstv`, `encode-wav`, and `decode-wav` with `--locked`, so a
 release is built from the committed `Cargo.lock` and not from whatever resolves
 that day.
 
-Each archive holds the three executables, `LICENSE`, `README.md`, `docs/`,
-`templates/`, and a `licenses.html` generated on that platform. The page is
+Each archive holds the three executables, `LICENSE`, `README.md`, the manual as
+`help/`, `templates/`, and a `licenses.html` generated on that platform. The
+development documentation under `docs/memo/` is not archived: it answers to this
+repository's code rather than to the operator, and a release that carried it
+would be handing out notes on an implementation instead of a manual. The page is
 generated per platform rather than once for all three because the dependency
 graph differs by target: a page built on Linux would list neither `muda` nor
 `windows-sys`. The Linux archive also carries `assets/rssstv.desktop` and

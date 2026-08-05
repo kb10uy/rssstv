@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$title$ — rssstv</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+<a class="brand" href="index.html">rssstv マニュアル</a>
+<nav>
+<a href="index.html"$if(current-index)$ class="current"$endif$>はじめに</a>
+<a href="receive.html"$if(current-receive)$ class="current"$endif$>受信</a>
+<a href="transmit.html"$if(current-transmit)$ class="current"$endif$>送信</a>
+<a href="rig.html"$if(current-rig)$ class="current"$endif$>リグコントロール</a>
+<a href="files.html"$if(current-files)$ class="current"$endif$>ファイルの場所</a>
+<a href="troubleshooting.html"$if(current-troubleshooting)$ class="current"$endif$>困ったとき</a>
+</nav>
+</header>
+<main>
+<h1>$title$</h1>
+$body$
+</main>
+<footer>
+rssstv $if(version)$$version$ $endif$— このマニュアルはアーカイブに同梱されています。
+</footer>
+</body>
+</html>

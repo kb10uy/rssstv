@@ -47,6 +47,25 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      # Rendered once for every archive, unlike the license page: the manual is
+      # the same text on all three platforms, and pandoc is a package the two
+      # other runners would have to install to produce a byte-identical copy.
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pandoc
+
+      - name: Build the manual
+        env:
+          RSSSTV_VERSION: ${{ steps.resolve.outputs.tag }}
+        run: bash docs/help/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manual
+          path: target/help
+          if-no-files-found: error
+
   build:
     name: Build ${{ matrix.target }}
     needs: prepare
@@ -110,6 +129,11 @@ jobs:
       - name: Generate the dependency license page
         run: cargo about generate about.hbs --output-file licenses.html
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: manual
+          path: manual
+
       - name: Stage the archive contents
         shell: bash
         env:
@@ -128,7 +152,8 @@ jobs:
             fi
           done
           cp LICENSE README.md licenses.html "$root/"
-          cp -r docs templates "$root/"
+          cp -r manual "$root/help"
+          cp -r templates "$root/"
           echo "ARCHIVE_NAME=$name" >> "$GITHUB_ENV"
 
       # A Wayland compositor has no way to learn the window icon from the
@@ -183,8 +208,8 @@ jobs:
           cat > notes.md <<'NOTES'
           Each archive holds the `rssstv` application, the `encode-wav` and
           `decode-wav` tools, this project's license, the licenses of its
-          dependencies as `licenses.html`, the documentation, and the MMSSTV
-          templates ported to the KDL format.
+          dependencies as `licenses.html`, the manual under `help/`, and the
+          MMSSTV templates ported to the KDL format.
 
           | Platform | Archive |
           | --- | --- |

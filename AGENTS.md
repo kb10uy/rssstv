@@ -11,18 +11,21 @@ The repository contains:
 - `rssstv/`: the Rust application and workspace crate.
 - `original/mmsstv/`: the original MMSSTV source code, included as a Git
   submodule and used as the behavioral reference.
-- `docs/`: documentation, divided by subject. `docs/README.md` indexes it.
-  - `docs/sstv/`: the protocols themselves — modes, timing, VIS, and FSKID —
-    independent of any one implementation.
-  - `docs/mmsstv/`: the behavior of the original application, including its DSP
-    implementation and where it departs from published descriptions.
-  - `docs/rssstv/`: this project — target architecture, the desktop
+- `docs/memo/`: development documentation, divided by subject.
+  `docs/memo/README.md` indexes it.
+  - `docs/memo/sstv/`: the protocols themselves — modes, timing, VIS, and
+    FSKID — independent of any one implementation.
+  - `docs/memo/mmsstv/`: the behavior of the original application, including
+    its DSP implementation and where it departs from published descriptions.
+  - `docs/memo/rssstv/`: this project — target architecture, the desktop
     application, and the transmit overlay format.
+- `docs/help/`: the manual the release archives carry, written for the operator
+  rather than for this repository.
 
-Put a new document under the directory matching what it is about. A protocol
-description answers to the on-air signal, a description of MMSSTV answers to
-its source, and a description of RSSSTV answers to this repository's code; a
-document that would answer to two of those belongs in two documents.
+Put a new development document under the directory matching what it is about. A
+protocol description answers to the on-air signal, a description of MMSSTV
+answers to its source, and a description of RSSSTV answers to this repository's
+code; a document that would answer to two of those belongs in two documents.
 
 Treat `original/mmsstv/` as reference material. Do not modify the submodule
 unless the task explicitly requires changes to the original source.
@@ -87,10 +90,18 @@ in the original DSP classes.
 
 ## Documentation
 
-- Write documentation in English.
+- Write documentation under `docs/memo/` in English.
+- The manual under `docs/help/` is written in Japanese, for the operator. It
+  describes what the application does, not how it is built, and names controls
+  by the labels `rssstv/locales/ja.ftl` gives them.
+- `docs/help/build.sh` renders the manual with pandoc into `target/help`, which
+  is what a release archive carries as `help/`. Add a page by writing its
+  Markdown source, listing it in the script, and linking it from the navigation
+  in `docs/help/template.html`.
 - When a new implementation or fix changes behavior, APIs, architecture, mode
   support, limitations, or any other documented area, update the relevant
-  documentation in the same change.
+  documentation in the same change. A change to what the operator sees or does
+  belongs in the manual as well.
 
 ## Build and Test
 

@@ -1,0 +1,154 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1a1a1a;
+  --bg: #ffffff;
+  --muted: #5c5c5c;
+  --rule: #d8d8d8;
+  --accent: #1c6b4a;
+  --code-bg: #f2f2f2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e6e6;
+    --bg: #161616;
+    --muted: #a0a0a0;
+    --rule: #3a3a3a;
+    --accent: #6fcf9a;
+    --code-bg: #232323;
+  }
+}
+
+html {
+  font-family: "Yu Gothic UI", "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
+  line-height: 1.8;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 0 1.5rem 4rem;
+}
+
+header {
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 2.5rem;
+  padding-top: 1.5rem;
+}
+
+.brand {
+  display: block;
+  font-weight: bold;
+  text-decoration: none;
+  color: var(--fg);
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1.2rem;
+  padding: 0.4rem 0 0.8rem;
+}
+
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+
+nav a.current {
+  color: var(--accent);
+  font-weight: bold;
+}
+
+h1 {
+  font-size: 1.7rem;
+  line-height: 1.4;
+  margin: 0 0 1.5rem;
+}
+
+h2 {
+  border-bottom: 1px solid var(--rule);
+  font-size: 1.25rem;
+  margin: 2.5rem 0 1rem;
+  padding-bottom: 0.3rem;
+}
+
+h3 {
+  font-size: 1.05rem;
+  margin: 2rem 0 0.6rem;
+}
+
+p, ul, ol, table, pre, blockquote {
+  margin: 0 0 1rem;
+}
+
+ul, ol {
+  padding-left: 1.6rem;
+}
+
+li {
+  margin-bottom: 0.3rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  background: var(--code-bg);
+  border-radius: 3px;
+  font-family: "Consolas", "SF Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.9em;
+  padding: 0.1em 0.35em;
+}
+
+pre {
+  background: var(--code-bg);
+  border-radius: 4px;
+  overflow-x: auto;
+  padding: 0.8rem 1rem;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+}
+
+table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+}
+
+th, td {
+  border-bottom: 1px solid var(--rule);
+  padding: 0.4rem 0.8rem 0.4rem 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  white-space: nowrap;
+}
+
+blockquote {
+  border-left: 3px solid var(--rule);
+  color: var(--muted);
+  margin-left: 0;
+  padding-left: 1rem;
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 3rem;
+  padding-top: 1rem;
+}

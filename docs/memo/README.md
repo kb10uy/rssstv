@@ -1,9 +1,13 @@
-# RSSSTV Documentation
+# RSSSTV Development Documentation
 
 The documentation is divided by what each document is about, because the three
 subjects answer to different authorities. A protocol description answers to the
 on-air signal, a description of MMSSTV answers to its source, and a description
 of RSSSTV answers to this repository's code.
+
+None of it is written for the operator. The manual the release archives carry
+is [../help/index.md](../help/index.md), which describes the application from
+the outside and is the only documentation a release ships.
 
 ## `sstv/` — the protocols
 

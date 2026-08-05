@@ -71,3 +71,20 @@ jobs:
       # that cannot produce it should fail here rather than during a release.
       - name: Check that the license page can be generated
         run: cargo about generate about.hbs --output-file licenses.html
+
+  # For the same reason the license page is checked above: the archives carry
+  # the manual, and a source or template that cannot be rendered should fail on
+  # the change that broke it.
+  manual:
+    name: Manual
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pandoc
+
+      - name: Build the manual
+        run: bash docs/help/build.sh

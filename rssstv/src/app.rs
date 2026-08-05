@@ -20,6 +20,7 @@ use crate::{
     i18n::{I18n, Locale},
     platform::{self, Activity, Platform},
     storage::{
+        bands::{BandDefinition, BandPlan},
         config::{Config, RigSettings, Settings, UI_SCALE_RANGE},
         paths::{AppPaths, Folder},
     },
@@ -215,6 +216,11 @@ pub struct App {
     pub rig: RigSettings,
     /// What rig control last reported, read once per frame.
     pub rig_snapshot: RigSnapshot,
+    /// Where each band is, and what the script does on it.
+    ///
+    /// Shared with the worker rather than copied into it, because the plan is
+    /// read once and the interface and the script both work from the same one.
+    pub bands: Arc<BandPlan>,
     paths: AppPaths,
     config: Config,
     /// The settings as last written to disk.
@@ -335,7 +341,9 @@ impl App {
         settings: &Settings,
         platform: Box<dyn Platform>,
     ) -> Self {
+        let (bands, bands_error) = BandPlan::load(paths.config_dir());
         Self {
+            library_error: bands_error,
             tab: Tab::default(),
             i18n: I18n::new(settings.locale),
             audio,
@@ -363,7 +371,6 @@ impl App {
             template: None,
             stocks: Vec::new(),
             stock: None,
-            library_error: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
             tx_snapshot: TxSnapshot::default(),
@@ -372,6 +379,7 @@ impl App {
             ui_scale: settings.ui_scale,
             rig: settings.rig.clone(),
             rig_snapshot: RigSnapshot::default(),
+            bands: Arc::new(bands),
             paths,
             config,
             saved: settings.clone(),
@@ -688,7 +696,8 @@ impl App {
     fn poll_rig(&mut self) {
         match (self.rig.enabled, self.rig_worker.is_some()) {
             (true, false) => {
-                let worker = RigWorker::spawn(&self.rig, self.paths.config_dir());
+                let worker =
+                    RigWorker::spawn(&self.rig, self.paths.config_dir(), Arc::clone(&self.bands));
                 self.rig_worker = Some(worker);
                 self.rig_snapshot = RigSnapshot::default();
             }
@@ -717,6 +726,57 @@ impl App {
         self.rig_snapshot = RigSnapshot::default();
     }
 
+    /// Whether the rig may be tuned from the interface.
+    ///
+    /// Not while transmitting: moving a rig that is on the air moves the
+    /// transmission with it.
+    pub fn can_tune(&self) -> bool {
+        self.rig_snapshot.state == RigState::Receiving && !self.bands.is_empty()
+    }
+
+    /// The band the rig is on, as the plan describes it.
+    pub fn tuned_band(&self) -> Option<&BandDefinition> {
+        let name = self.rig_snapshot.reading.as_ref()?.band.as_deref()?;
+        self.bands.by_name(name)
+    }
+
+    /// Moves the rig to `name`, handing the script the whole band.
+    pub fn change_band(&mut self, name: &str) {
+        if !self.can_tune() {
+            return;
+        }
+        if let Some(worker) = self.rig_worker.as_ref() {
+            worker.change_band(name);
+        }
+    }
+
+    /// Where a press of the step buttons would put the rig, if anywhere.
+    ///
+    /// Stepping out of the band is not tuning, so the edge is where it stops
+    /// rather than somewhere the operator is not licensed to be. A band with
+    /// no step has nowhere to go, which is what disables the buttons.
+    pub fn stepped_frequency(&self, steps: i64) -> Option<u64> {
+        let frequency_hz = self.rig_snapshot.reading.as_ref()?.frequency_hz;
+        let band = self.tuned_band()?;
+        let moved = i64::try_from(frequency_hz).ok()?
+            + steps.checked_mul(i64::try_from(band.step_hz()?).ok()?)?;
+        let moved = u64::try_from(moved).ok()?;
+        band.contains(moved).then_some(moved)
+    }
+
+    /// Steps the rig by that many of the band's steps.
+    pub fn step_frequency(&mut self, steps: i64) {
+        if !self.can_tune() {
+            return;
+        }
+        let Some(target_hz) = self.stepped_frequency(steps) else {
+            return;
+        };
+        if let Some(worker) = self.rig_worker.as_ref() {
+            worker.set_frequency(target_hz);
+        }
+    }
+
     /// Writes the default script out for the operator to edit.
     ///
     /// Refuses to write over one that is already there: the file only exists
@@ -726,12 +786,27 @@ impl App {
     /// way.
     pub fn write_rig_script(&mut self) {
         let path = self.paths.config_dir().join(script::SCRIPT_FILE);
-        if path.exists() {
-            self.reveal(Folder::Config);
-            return;
-        }
-        match fs::write(&path, script::DEFAULT_SCRIPT) {
-            Ok(()) => {
+        let written = if path.exists() {
+            Ok(path)
+        } else {
+            fs::write(&path, script::DEFAULT_SCRIPT).map(|()| path)
+        };
+        self.report_written(written);
+    }
+
+    /// Writes the built-in band plan out for the operator to edit.
+    ///
+    /// Refuses to write over one that is already there, for the same reason.
+    /// The plan in use is not reloaded: a file being edited is not one to act
+    /// on halfway through, so the next start is when it takes effect.
+    pub fn write_band_plan(&mut self) {
+        let written = BandPlan::write_default(self.paths.config_dir());
+        self.report_written(written);
+    }
+
+    fn report_written(&mut self, written: io::Result<PathBuf>) {
+        match written {
+            Ok(path) => {
                 self.library_error = Some(self.i18n.text_with(
                     "rig-script-written",
                     &[("path", path.display().to_string().into())],
@@ -931,7 +1006,7 @@ impl App {
         // off is not also asked for again on every frame that follows.
         self.composition_minute = current_minute();
         self.composition_timed = false;
-        self.composition_reading = self.rig_snapshot.reading;
+        self.composition_reading = self.rig_snapshot.reading.clone();
         self.composition_tuned = false;
         // A transmission is sending the frame currently on the tab. Replacing
         // it would show something that is not going out, so the change waits
@@ -966,7 +1041,7 @@ impl App {
             number: self.qso.number.clone(),
             report_received: self.qso.rsv_received.clone(),
             custom: self.custom_variables.clone(),
-            radio: self.composition_reading,
+            radio: self.composition_reading.clone(),
         });
     }
 
@@ -1615,6 +1690,66 @@ mod tests {
         let problem = app.rig_problem().unwrap();
 
         assert!(problem.contains("connection refused"), "{problem}");
+    }
+
+    fn tuned_to(app: &mut App, frequency_hz: u64) {
+        app.rig.enabled = true;
+        app.rig_snapshot.state = RigState::Receiving;
+        app.rig_snapshot.reading = Some(Reading {
+            frequency_hz,
+            band: app
+                .bands
+                .for_frequency(frequency_hz)
+                .map(|band| band.name.clone()),
+        });
+    }
+
+    /// Stepping out of the band is not tuning, so the edge is where it stops
+    /// rather than somewhere the operator may not be licensed to be.
+    #[rstest]
+    #[case::down(7_100_000, -1, Some(7_099_000))]
+    #[case::up(7_100_000, 1, Some(7_101_000))]
+    #[case::several(7_100_000, 5, Some(7_105_000))]
+    #[case::at_the_bottom_edge(7_000_000, -1, None)]
+    #[case::at_the_top_edge(7_300_000, 1, None)]
+    // Between the bands there is no plan entry, and so no step to take.
+    #[case::off_band(6_000_000, 1, None)]
+    fn stepping_stays_inside_the_band(
+        #[case] frequency_hz: u64,
+        #[case] steps: i64,
+        #[case] expected: Option<u64>,
+    ) {
+        let mut app = App::headless();
+        tuned_to(&mut app, frequency_hz);
+
+        assert_eq!(app.stepped_frequency(steps), expected);
+    }
+
+    #[test]
+    fn a_band_with_no_step_has_nothing_to_move_by() {
+        let mut app = App::headless();
+        app.bands = Arc::new(
+            BandPlan::parse("[[bands]]\nname = \"40m\"\nlow = 7000000\nhigh = 7300000\n").unwrap(),
+        );
+        tuned_to(&mut app, 7_100_000);
+
+        assert_eq!(app.stepped_frequency(1), None);
+    }
+
+    /// Moving a rig that is on the air moves the transmission with it.
+    #[rstest]
+    #[case(RigState::Receiving, true)]
+    #[case(RigState::Transmitting, false)]
+    #[case(RigState::Connecting, false)]
+    #[case(RigState::Failed, false)]
+    fn a_keyed_rig_is_not_tunable_from_the_interface(
+        #[case] state: RigState,
+        #[case] expected: bool,
+    ) {
+        let mut app = App::headless();
+        app.rig_snapshot.state = state;
+
+        assert_eq!(app.can_tune(), expected);
     }
 
     /// A platform that records what the interface asked it for.

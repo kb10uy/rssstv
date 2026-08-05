@@ -29,8 +29,25 @@ local function poll_frequency(ctx)
   return ctx.ports.rig:frequency()
 end
 
+local function set_frequency(ctx, hz)
+  ctx.ports.rig:send(("F %d"):format(hz))
+end
+
+-- The band is the whole entry from bands.toml, so anything you add there
+-- arrives here beside these. Hyphens become underscores on the way.
+local function change_band(ctx, band)
+  if band.target then
+    set_frequency(ctx, band.target)
+  end
+  if band.receive_mode then
+    ctx.ports.rig:send(("M %s %d"):format(band.receive_mode, band.bandwidth or 0))
+  end
+end
+
 return {
   transmit = transmit,
   receive = receive,
   poll_frequency = poll_frequency,
+  set_frequency = set_frequency,
+  change_band = change_band,
 }

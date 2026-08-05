@@ -38,6 +38,7 @@ pub enum Action {
     ToggleRig,
     RetryRig,
     WriteRigScript,
+    WriteBandPlan,
     ToggleAutoHistory,
     SelectHistoryFormat(HistoryFormat),
     ZoomIn,
@@ -302,6 +303,10 @@ fn rig_items(app: &App) -> Vec<Item> {
         label: app.i18n.text("action-rig-write-script"),
         action: Action::WriteRigScript,
     });
+    items.push(Item::Command {
+        label: app.i18n.text("action-rig-write-bands"),
+        action: Action::WriteBandPlan,
+    });
     items.push(Item::Pending(app.i18n.text("rig-script-note")));
     items
 }
@@ -315,18 +320,18 @@ const fn port_address(port: &PortSettings) -> &str {
 
 /// What the rig is tuned to, as the menu says it.
 fn rig_frequency(app: &App) -> String {
-    let Some(reading) = app.rig_snapshot.reading else {
+    let Some(reading) = app.rig_snapshot.reading.as_ref() else {
         return app.i18n.text("rig-frequency-unknown");
     };
     // Formatted here rather than by the message, because the message would
     // group the digits by locale and a frequency is read as one number.
     let megahertz = format!("{:.3}", reading.frequency_hz as f64 / 1_000_000.0);
-    match reading.band {
+    match reading.band.as_deref() {
         Some(band) => app.i18n.text_with(
             "rig-frequency",
             &[
                 ("frequency", crate::i18n::text(&megahertz)),
-                ("band", crate::i18n::text(band.name())),
+                ("band", crate::i18n::text(band)),
             ],
         ),
         None => app.i18n.text_with(
@@ -351,6 +356,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ToggleRig => app.rig.enabled = !app.rig.enabled,
         Action::RetryRig => app.retry_rig(),
         Action::WriteRigScript => app.write_rig_script(),
+        Action::WriteBandPlan => app.write_band_plan(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
         Action::SelectHistoryFormat(format) => app.history_format = format,
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
@@ -558,7 +564,7 @@ mod tests {
 
         app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
             frequency_hz: 14_230_000,
-            band: rssstv_rig::Band::for_frequency(14_230_000),
+            band: Some("20m".to_owned()),
         });
         let shown = rig_frequency(&app);
         assert!(shown.contains("14.230"), "{shown}");

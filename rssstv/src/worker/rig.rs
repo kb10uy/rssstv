@@ -12,12 +12,26 @@ use std::{
 pub mod script;
 
 use rssstv_rig::DEFAULT_TIMEOUT;
-pub use rssstv_rig::Reading;
 
 use crate::{
-    storage::config::{PortSettings, RigSettings},
-    worker::rig::script::{Entry, ScriptHost},
+    storage::{
+        bands::BandPlan,
+        config::{PortSettings, RigSettings},
+    },
+    worker::rig::script::{Entry, ScriptError, ScriptHost},
 };
+
+/// What the rig was found to be tuned to.
+///
+/// The band is a name rather than a definition, because this crosses to the
+/// interface and to a composition: what either does with it is print it or
+/// compare it, and the settings behind it belong to the script.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reading {
+    pub frequency_hz: u64,
+    /// The band it falls in, named as the plan names it.
+    pub band: Option<String>,
+}
 
 /// How long the worker waits on a request when there is no polling to do.
 ///
@@ -74,6 +88,8 @@ pub struct RigSnapshot {
 enum Request {
     Transmit,
     Receive,
+    SetFrequency(u64),
+    ChangeBand(String),
 }
 
 /// The thread that owns the transports and the operator's script.
@@ -89,14 +105,14 @@ pub struct RigWorker {
 }
 
 impl RigWorker {
-    pub fn spawn(settings: &RigSettings, config_dir: &Path) -> Self {
+    pub fn spawn(settings: &RigSettings, config_dir: &Path, bands: Arc<BandPlan>) -> Self {
         let snapshot = Arc::new(Mutex::new(RigSnapshot {
             state: RigState::Connecting,
             ..RigSnapshot::default()
         }));
         let (requests, incoming) = mpsc::channel();
         let worker_snapshot = Arc::clone(&snapshot);
-        let plan = Plan::new(settings, config_dir);
+        let plan = Plan::new(settings, config_dir, bands);
         let thread = thread::spawn(move || rig_loop(plan, &incoming, &worker_snapshot));
         Self {
             snapshot,
@@ -131,6 +147,16 @@ impl RigWorker {
         self.request(Request::Receive);
     }
 
+    /// Asks for the rig to be tuned.
+    pub fn set_frequency(&self, target_hz: u64) {
+        self.request(Request::SetFrequency(target_hz));
+    }
+
+    /// Asks for the rig to be moved to a band, named as the plan names it.
+    pub fn change_band(&self, name: &str) {
+        self.request(Request::ChangeBand(name.to_owned()));
+    }
+
     fn request(&self, request: Request) {
         if let Some(requests) = self.requests.as_ref() {
             // A worker that has already stopped is one whose failure is
@@ -162,6 +188,7 @@ impl core::fmt::Debug for RigWorker {
 struct Plan {
     config_dir: PathBuf,
     ports: BTreeMap<String, PortSettings>,
+    bands: Arc<BandPlan>,
     /// How long between frequency reads, or nothing to never read it.
     poll: Option<Duration>,
     lead_in: Duration,
@@ -169,10 +196,11 @@ struct Plan {
 }
 
 impl Plan {
-    fn new(settings: &RigSettings, config_dir: &Path) -> Self {
+    fn new(settings: &RigSettings, config_dir: &Path, bands: Arc<BandPlan>) -> Self {
         Self {
             config_dir: config_dir.to_path_buf(),
             ports: settings.ports.clone(),
+            bands,
             poll: (settings.poll_seconds > 0.0)
                 .then(|| Duration::from_secs_f32(settings.poll_seconds)),
             lead_in: Duration::from_secs_f32(settings.lead_in_seconds),
@@ -182,9 +210,14 @@ impl Plan {
 }
 
 fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSnapshot>>) {
-    let host = match ScriptHost::source(&plan.config_dir)
-        .and_then(|source| ScriptHost::load(&source, &plan.ports, DEFAULT_TIMEOUT))
-    {
+    let host = match ScriptHost::source(&plan.config_dir).and_then(|source| {
+        ScriptHost::load(
+            &source,
+            &plan.ports,
+            Arc::clone(&plan.bands),
+            DEFAULT_TIMEOUT,
+        )
+    }) {
         Ok(host) => host,
         Err(error) => {
             update(snapshot, |state| {
@@ -203,7 +236,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
     }
     update(snapshot, |state| state.state = RigState::Receiving);
     let mut keyed = false;
-    let mut reading: Option<Reading> = None;
+    let mut frequency: Option<u64> = None;
     loop {
         // Polling stops while the rig is keyed. Reading the frequency back
         // mid-transmission says nothing the operator cannot see, and it puts
@@ -215,7 +248,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
         };
         let outcome = match requests.recv_timeout(gap) {
             Ok(Request::Transmit) => {
-                let outcome = host.call(Entry::Transmit, reading);
+                let outcome = host.call(Entry::Transmit, frequency);
                 if outcome.is_ok() {
                     // The rig switches over on its own time, and anything sent
                     // inside that is lost. Waiting here rather than in the
@@ -230,17 +263,25 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
                 thread::sleep(plan.tail);
                 keyed = false;
                 update(snapshot, |state| state.state = RigState::Receiving);
-                host.call(Entry::Receive, reading)
+                host.call(Entry::Receive, frequency)
             }
+            // Tuning a keyed rig would move a transmission that is on the air.
+            // The interface disables the controls while transmitting, so a
+            // request arriving anyway is one to drop rather than report.
+            Ok(Request::SetFrequency(_) | Request::ChangeBand(_)) if keyed => Ok(()),
+            Ok(Request::SetFrequency(target_hz)) => host
+                .set_frequency(frequency, target_hz)
+                .and_then(|()| read_frequency(&host, &plan, snapshot, &mut frequency)),
+            Ok(Request::ChangeBand(name)) => match plan.bands.by_name(&name) {
+                Some(band) => host
+                    .change_band(frequency, band)
+                    .and_then(|()| read_frequency(&host, &plan, snapshot, &mut frequency)),
+                // The plan was reloaded out from under the interface, which is
+                // not a failure: the band it offered is simply gone.
+                None => Ok(()),
+            },
             Err(RecvTimeoutError::Timeout) if !keyed && plan.poll.is_some() => {
-                match host.poll_frequency(reading) {
-                    Ok(frequency) => {
-                        reading = frequency.map(Reading::at);
-                        update(snapshot, |state| state.reading = reading);
-                        Ok(())
-                    }
-                    Err(error) => Err(error),
-                }
+                read_frequency(&host, &plan, snapshot, &mut frequency)
             }
             Err(RecvTimeoutError::Timeout) => Ok(()),
             Err(RecvTimeoutError::Disconnected) => break,
@@ -263,10 +304,33 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
     }
     // Reported but not acted on: the session is being given up either way, and
     // a close that failed leaves nothing behind to recover.
-    if let Err(error) = host.call(Entry::Close, reading) {
+    if let Err(error) = host.call(Entry::Close, frequency) {
         update(snapshot, |state| state.error = Some(error.to_string()));
     }
     update(snapshot, |state| state.state = RigState::Disconnected);
+}
+
+/// Reads the frequency and publishes the band it names.
+///
+/// Called after tuning as well as on the poll, so the interface shows where
+/// the rig went rather than where it was until the next poll comes round.
+fn read_frequency(
+    host: &ScriptHost,
+    plan: &Plan,
+    snapshot: &Mutex<RigSnapshot>,
+    frequency: &mut Option<u64>,
+) -> Result<(), ScriptError> {
+    let read = host.poll_frequency(*frequency)?;
+    *frequency = read;
+    let reading = read.map(|frequency_hz| Reading {
+        frequency_hz,
+        band: plan
+            .bands
+            .for_frequency(frequency_hz)
+            .map(|band| band.name.clone()),
+    });
+    update(snapshot, |state| state.reading = reading);
+    Ok(())
 }
 
 fn update(snapshot: &Mutex<RigSnapshot>, update: impl FnOnce(&mut RigSnapshot)) {
@@ -285,9 +349,8 @@ mod tests {
         time::Instant,
     };
 
-    use rssstv_rig::Band;
-
     use super::*;
+    use crate::storage::bands::BandPlan;
 
     static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
 
@@ -359,6 +422,12 @@ mod tests {
         }
     }
 
+    /// The band plan the application ships, which is what a station that has
+    /// written no bands.toml of its own runs on.
+    fn plan() -> Arc<BandPlan> {
+        Arc::new(BandPlan::built_in())
+    }
+
     fn settings(address: &str) -> RigSettings {
         RigSettings {
             enabled: true,
@@ -396,7 +465,7 @@ mod tests {
     fn the_default_script_keys_and_unkeys() {
         let fake = FakeRig::spawn(14_230_000);
         let config = TestDirectory::new();
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -414,7 +483,7 @@ mod tests {
     fn a_script_that_exports_nothing_keys_nothing_and_still_connects() {
         let fake = FakeRig::spawn(14_230_000);
         let config = TestDirectory::with_script("return {}");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -436,6 +505,7 @@ mod tests {
                 ..settings(&fake.address)
             },
             &config.0,
+            plan(),
         );
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
@@ -460,13 +530,14 @@ mod tests {
                 ..settings(&fake.address)
             },
             &config.0,
+            plan(),
         );
 
         let snapshot = settle(&worker, |snapshot| snapshot.reading.is_some());
 
         let reading = snapshot.reading.unwrap();
         assert_eq!(reading.frequency_hz, 7_178_000);
-        assert_eq!(reading.band.map(Band::name), Some("40m"));
+        assert_eq!(reading.band.as_deref(), Some("40m"));
     }
 
     /// A keyed rig has to be left alone: a poll landing mid-transmission is
@@ -481,6 +552,7 @@ mod tests {
                 ..settings(&fake.address)
             },
             &config.0,
+            plan(),
         );
         settle(&worker, |snapshot| snapshot.reading.is_some());
 
@@ -513,6 +585,7 @@ mod tests {
                 ..settings(&fake.address)
             },
             &config.0,
+            plan(),
         );
         settle(&worker, |snapshot| snapshot.reading.is_some());
 
@@ -533,7 +606,7 @@ mod tests {
         let fake = FakeRig::spawn(14_230_000);
         let config =
             TestDirectory::with_script("return { transmit = function() error('no antenna') end }");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -554,7 +627,7 @@ mod tests {
         let fake = FakeRig::spawn(14_230_000);
         let config =
             TestDirectory::with_script("return { transmit = function() while true do end end }");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -571,7 +644,7 @@ mod tests {
     fn a_script_that_does_not_return_a_module_is_reported() {
         let fake = FakeRig::spawn(14_230_000);
         let config = TestDirectory::with_script("return 3");
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
 
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
 
@@ -581,17 +654,83 @@ mod tests {
         );
     }
 
+    /// Port 1 rather than one this test freed a moment ago: the tests here run
+    /// alongside each other, and a port just released is one the next stand-in
+    /// to ask for an ephemeral port can be handed, which would have this test
+    /// connect to somebody else's rig and pass for the wrong reason.
+    const NOTHING_LISTENING: &str = "127.0.0.1:1";
+
     #[test]
     fn a_rig_that_is_not_listening_is_reported_rather_than_waited_on() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap().to_string();
-        drop(listener);
         let config = TestDirectory::new();
 
-        let worker = RigWorker::spawn(&settings(&address), &config.0);
+        let worker = RigWorker::spawn(&settings(NOTHING_LISTENING), &config.0, plan());
 
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
         assert!(snapshot.error.is_some());
+    }
+
+    /// A band is handed over whole, so a setting the operator invented reaches
+    /// the script beside the ones the plan ships with.
+    #[test]
+    fn changing_band_hands_the_script_the_whole_band() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config = TestDirectory::with_script(
+            r#"
+            return {
+              change_band = function(ctx, band)
+                ctx.ports.rig:send(("BAND %s %d %s %s"):format(
+                  band.name, band.target, band.receive_mode, tostring(band.amplifier)))
+              end,
+            }
+            "#,
+        );
+        let plan = BandPlan::parse(concat!(
+            "[[bands]]\n",
+            "name = \"40m\"\n",
+            "low = 7000000\n",
+            "high = 7300000\n",
+            "target = 7171000\n",
+            "receive-mode = \"LSB\"\n",
+            "amplifier = true\n",
+        ))
+        .unwrap();
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, Arc::new(plan));
+        settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
+
+        worker.change_band("40m");
+        settle(&worker, |_| {
+            fake.received().iter().any(|line| line.starts_with("+BAND"))
+        });
+
+        assert!(
+            fake.received()
+                .contains(&"+BAND 40m 7171000 LSB true".to_owned()),
+            "{:?}",
+            fake.received()
+        );
+    }
+
+    /// Tuning a keyed rig would move a transmission that is on the air.
+    #[test]
+    fn a_keyed_rig_is_not_tuned() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config = TestDirectory::with_script(
+            "return { set_frequency = function(ctx, hz) ctx.ports.rig:send('F ' .. hz) end }",
+        );
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
+        settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
+
+        worker.transmit();
+        settle(&worker, |snapshot| snapshot.state == RigState::Transmitting);
+        worker.set_frequency(14_240_000);
+        thread::sleep(Duration::from_millis(200));
+
+        assert!(
+            !fake.received().iter().any(|line| line.starts_with("+F ")),
+            "{:?}",
+            fake.received()
+        );
     }
 
     /// Closing is the operator's, and giving up the connection is what it
@@ -602,7 +741,7 @@ mod tests {
         let config = TestDirectory::with_script(
             "return { close = function(ctx) ctx.ports.rig:send('T 0') end }",
         );
-        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0, plan());
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         drop(worker);

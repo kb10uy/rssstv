@@ -327,7 +327,7 @@ The workspace currently contains eleven packages:
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
 | `rssstv-audio` | Host audio adapters | Bounded capture and playback implemented |
-| `rssstv-rig` | Rig transports | `rigctld` client and band table implemented |
+| `rssstv-rig` | Rig transports | `rigctld` client implemented |
 | `rssstv` | Application composition root | egui interface with live receive and transmit |
 
 Their current dependency direction is:
@@ -493,8 +493,8 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - Template editing.
-- A serial rig transport beside the `rigctld` one, band definitions in a file of
-  their own, and tuning from the interface. Designed in
+- A serial rig transport beside the `rigctld` one, which is what the CI-V and
+  EXTFSK keying arrangements need. Designed in
   [rig-control.md](rig-control.md).
 - Real-world received-audio regression fixtures.
 

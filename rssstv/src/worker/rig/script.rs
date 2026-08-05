@@ -4,14 +4,18 @@ use std::{
     fs, io,
     path::Path,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use mlua::{Function, HookTriggers, Lua, Table, UserData, UserDataMethods, VmState};
-use rssstv_rig::{Reading, RigError, Rigctld};
+use mlua::{Function, HookTriggers, Lua, Table, UserData, UserDataMethods, Value, VmState};
+use rssstv_rig::{RigError, Rigctld};
 use thiserror::Error;
 
-use crate::storage::config::PortSettings;
+use crate::storage::{
+    bands::{BandDefinition, BandPlan, BandValue},
+    config::PortSettings,
+};
 
 /// The file the operator's own script is read from, beside `config.toml`.
 pub const SCRIPT_FILE: &str = "rigcontrol.lua";
@@ -41,6 +45,8 @@ pub enum Entry {
     Transmit,
     Receive,
     PollFrequency,
+    SetFrequency,
+    ChangeBand,
 }
 
 impl Entry {
@@ -52,6 +58,8 @@ impl Entry {
             Self::Transmit => "transmit",
             Self::Receive => "receive",
             Self::PollFrequency => "poll_frequency",
+            Self::SetFrequency => "set_frequency",
+            Self::ChangeBand => "change_band",
         }
     }
 }
@@ -78,6 +86,9 @@ pub struct ScriptHost {
     lua: Lua,
     module: Table,
     ports: Table,
+    /// The bands, so that a call knows which one the rig is on without the
+    /// worker having to say.
+    bands: Arc<BandPlan>,
     /// When the call currently running has to be abandoned by.
     deadline: Rc<Cell<Option<Instant>>>,
     /// Set once a transport fails in a way the next command would not survive.
@@ -107,6 +118,7 @@ impl ScriptHost {
     pub fn load(
         source: &str,
         ports: &BTreeMap<String, PortSettings>,
+        bands: Arc<BandPlan>,
         timeout: Duration,
     ) -> Result<Self, ScriptError> {
         let lua = Lua::new();
@@ -145,6 +157,7 @@ impl ScriptHost {
             lua,
             module,
             ports: table,
+            bands,
             deadline,
             broken,
         })
@@ -160,31 +173,66 @@ impl ScriptHost {
     /// A module that omits one is not in error: a station keyed by VOX exports
     /// no `transmit`, and saying so by leaving it out is the whole of what it
     /// has to say.
-    pub fn call(&self, entry: Entry, reading: Option<Reading>) -> Result<(), ScriptError> {
-        let Some(function) = self.function(entry) else {
-            return Ok(());
-        };
-        let context = self
-            .context(reading)
+    pub fn call(&self, entry: Entry, frequency_hz: Option<u64>) -> Result<(), ScriptError> {
+        self.invoke(entry, frequency_hz, None)
+    }
+
+    /// Asks the script to tune the rig.
+    pub fn set_frequency(
+        &self,
+        frequency_hz: Option<u64>,
+        target_hz: u64,
+    ) -> Result<(), ScriptError> {
+        let target = Value::Integer(i64::try_from(target_hz).unwrap_or(i64::MAX));
+        self.invoke(Entry::SetFrequency, frequency_hz, Some(target))
+    }
+
+    /// Asks the script to move the rig to `band`, which it is handed whole.
+    pub fn change_band(
+        &self,
+        frequency_hz: Option<u64>,
+        band: &BandDefinition,
+    ) -> Result<(), ScriptError> {
+        let entry = Entry::ChangeBand;
+        let table = self
+            .band_table(band)
             .map_err(|error| call_error(entry, &error))?;
-        self.guarded(|| function.call::<()>(context))
-            .map_err(|error| call_error(entry, &error))
+        self.invoke(entry, frequency_hz, Some(Value::Table(table)))
     }
 
     /// Calls `poll_frequency`, returning what the rig is tuned to.
     ///
     /// A script that reports nothing is one that could not read the frequency,
     /// which is a state rather than a failure: keying does not depend on it.
-    pub fn poll_frequency(&self, reading: Option<Reading>) -> Result<Option<u64>, ScriptError> {
+    pub fn poll_frequency(&self, frequency_hz: Option<u64>) -> Result<Option<u64>, ScriptError> {
         let entry = Entry::PollFrequency;
         let Some(function) = self.function(entry) else {
             return Ok(None);
         };
         let context = self
-            .context(reading)
+            .context(frequency_hz)
             .map_err(|error| call_error(entry, &error))?;
         self.guarded(|| function.call::<Option<u64>>(context))
             .map_err(|error| call_error(entry, &error))
+    }
+
+    fn invoke(
+        &self,
+        entry: Entry,
+        frequency_hz: Option<u64>,
+        argument: Option<Value>,
+    ) -> Result<(), ScriptError> {
+        let Some(function) = self.function(entry) else {
+            return Ok(());
+        };
+        let context = self
+            .context(frequency_hz)
+            .map_err(|error| call_error(entry, &error))?;
+        self.guarded(|| match argument {
+            Some(argument) => function.call::<()>((context, argument)),
+            None => function.call::<()>(context),
+        })
+        .map_err(|error| call_error(entry, &error))
     }
 
     fn function(&self, entry: Entry) -> Option<Function> {
@@ -192,15 +240,13 @@ impl ScriptHost {
     }
 
     /// Builds the table a call is handed, fresh each time.
-    fn context(&self, reading: Option<Reading>) -> mlua::Result<Table> {
+    fn context(&self, frequency_hz: Option<u64>) -> mlua::Result<Table> {
         let context = self.lua.create_table()?;
         context.set("ports", self.ports.clone())?;
-        if let Some(reading) = reading {
-            context.set("frequency", reading.frequency_hz)?;
-            if let Some(band) = reading.band {
-                let table = self.lua.create_table()?;
-                table.set("name", band.name())?;
-                context.set("band", table)?;
+        if let Some(frequency_hz) = frequency_hz {
+            context.set("frequency", frequency_hz)?;
+            if let Some(band) = self.bands.for_frequency(frequency_hz) {
+                context.set("band", self.band_table(band)?)?;
             }
         }
         context.set(
@@ -211,6 +257,29 @@ impl ScriptHost {
             })?,
         )?;
         Ok(context)
+    }
+
+    /// Builds the table a band is handed as.
+    ///
+    /// Every setting the operator wrote comes through, because what to do on a
+    /// band is the script's. Hyphens become underscores on the way, since a
+    /// hyphen cannot appear in a Lua identifier and `band["receive-mode"]`
+    /// would be a worse thing to have to write.
+    fn band_table(&self, band: &BandDefinition) -> mlua::Result<Table> {
+        let table = self.lua.create_table()?;
+        table.set("name", band.name.as_str())?;
+        table.set("low", band.low_hz)?;
+        table.set("high", band.high_hz)?;
+        for (key, value) in &band.settings {
+            let key = key.replace('-', "_");
+            match value {
+                BandValue::Text(text) => table.set(key, text.as_str())?,
+                BandValue::Integer(number) => table.set(key, *number)?,
+                BandValue::Decimal(number) => table.set(key, *number)?,
+                BandValue::Flag(flag) => table.set(key, *flag)?,
+            }
+        }
+        Ok(table)
     }
 
     /// Runs `call` under a deadline, so a script that does not finish is

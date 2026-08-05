@@ -397,10 +397,84 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
             ui.set_width(ui.available_width());
             tab_controls(ui, app);
         });
+        if app.rig.enabled {
+            ui.add_space(16.0);
+            let radio_title = app.i18n.text("section-radio");
+            section(ui, &radio_title, |ui| radio_panel(ui, app));
+        }
         ui.add_space(16.0);
         let qso_title = app.i18n.text("section-qso");
         section(ui, &qso_title, |ui| qso_panel(ui, app));
     });
+}
+
+/// Where the rig is, and the two ways the interface moves it.
+///
+/// Shown while rig control is switched on rather than only once it is
+/// connected, so that the panel does not appear and vanish as a connection is
+/// made or lost. Its controls follow what the rig can actually be asked for:
+/// nothing may move a rig that is on the air.
+fn radio_panel(ui: &mut Ui, app: &mut App) {
+    let tunable = app.can_tune();
+    let selected = app
+        .rig_snapshot
+        .reading
+        .as_ref()
+        .and_then(|reading| reading.band.clone());
+    let unknown = app.i18n.text("radio-band-unknown");
+    let readout = frequency_readout(app);
+    let (down, up) = (app.stepped_frequency(-1), app.stepped_frequency(1));
+    let mut chosen = None;
+    let mut stepped = 0;
+    ui.add_enabled_ui(tunable, |ui| {
+        ComboBox::from_id_salt("band")
+            .selected_text(RichText::new(selected.clone().unwrap_or(unknown)).size(SMALL))
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for band in app.bands.bands() {
+                    let picked = selected.as_deref() == Some(band.name.as_str());
+                    if ui.selectable_label(picked, &band.name).clicked() {
+                        chosen = Some(band.name.clone());
+                    }
+                }
+            });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let height = ui.spacing().interact_size.y;
+            let step = height * 1.6;
+            let gaps = ui.spacing().item_spacing.x * 2.0;
+            let width = (ui.available_width() - gaps - step * 2.0).max(0.0);
+            // Disabled at the band edges rather than clamped: a button that
+            // moves nothing is better than one that says it moved something.
+            let back = egui::Button::new("−").min_size([step, height].into());
+            if ui.add_enabled(down.is_some(), back).clicked() {
+                stepped = -1;
+            }
+            let label = egui::Label::new(RichText::new(readout).size(SMALL));
+            ui.add_sized([width, height], label);
+            let forward = egui::Button::new("+").min_size([step, height].into());
+            if ui.add_enabled(up.is_some(), forward).clicked() {
+                stepped = 1;
+            }
+        });
+    });
+    if let Some(name) = chosen {
+        app.change_band(&name);
+    }
+    if stepped != 0 {
+        app.step_frequency(stepped);
+    }
+}
+
+fn frequency_readout(app: &App) -> String {
+    let Some(reading) = app.rig_snapshot.reading.as_ref() else {
+        return app.i18n.text("rig-frequency-unknown");
+    };
+    // Formatted here rather than by the message, because the message would
+    // group the digits by locale and a frequency is read as one number.
+    let megahertz = format!("{:.3}", reading.frequency_hz as f64 / 1_000_000.0);
+    app.i18n
+        .text_with("radio-frequency", &[("frequency", arg(&megahertz))])
 }
 
 /// The controls for whichever half of the application is in front.
@@ -872,6 +946,33 @@ mod tests {
         let harness = render(&mut app);
 
         harness.get_by_label(&title);
+    }
+
+    /// A panel that cannot act on anything is one more thing between the
+    /// operator and the image, so it arrives with rig control and not before.
+    #[test]
+    fn the_radio_panel_appears_with_rig_control() {
+        let mut app = App::headless();
+        let title = app.i18n.text("section-radio");
+        let readout = app
+            .i18n
+            .text_with("radio-frequency", &[("frequency", arg("7.100"))]);
+
+        {
+            let harness = render(&mut app);
+            assert!(harness.query_by_label(&title).is_none());
+        }
+
+        app.rig.enabled = true;
+        app.rig_snapshot.state = crate::worker::rig::RigState::Receiving;
+        app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
+            frequency_hz: 7_100_000,
+            band: Some("40m".to_owned()),
+        });
+        let harness = render(&mut app);
+
+        harness.get_by_label(&title);
+        harness.get_by_label(&readout);
     }
 
     #[test]

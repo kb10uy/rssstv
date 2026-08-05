@@ -12,10 +12,8 @@
 //! everything else the station runs at the same time, because sharing one rig
 //! between programs is what `rigctld` is for.
 
-mod band;
 mod error;
 mod rigctld;
 
-pub use band::{Band, Reading};
 pub use error::RigError;
 pub use rigctld::{DEFAULT_ADDRESS, DEFAULT_TIMEOUT, Response, Rigctld};

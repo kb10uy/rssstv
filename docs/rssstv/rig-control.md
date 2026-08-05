@@ -62,18 +62,14 @@ Implemented:
 - The `rigctld` transport, its extended-response framing, and `\chk_vfo`.
 - Named transports under `[rig.ports]`.
 - The Lua host: `rigcontrol.lua`, the compiled-in default, the context, ports
-  as script objects, the call deadline, and `open`, `close`, `transmit`,
-  `receive`, and `poll_frequency`.
+  as script objects, the call deadline, and every entry point.
 - Keying around a transmission with a lead-in and a tail, and refusing a
   transmission the rig would not take.
+- `bands.toml`, the compiled-in default plan, and the radio panel.
 - Frequency polling into `${radio.frequency}` and `${radio.band}`.
 
 Not yet implemented, and described here as the target:
 
-- `bands.toml`. Bands are still the built-in table in `rssstv-rig`, so
-  `ctx.band` carries only a name and none of the settings under
-  [Band Definitions](#band-definitions).
-- `set_frequency` and `change_band`, and the interface controls for both.
 - The serial transport, and with it the CI-V and DTR/RTS keying that motivates
   the design.
 
@@ -211,20 +207,20 @@ section of `config.toml`. Band plans are regional and worth swapping whole.
 ```toml
 [[bands]]
 name = "40m"
-start = 7_000_000
-end = 7_300_000
-target = 7_178_000
-transmit-mode = "PKTUSB"
-receive-mode = "USB"
+low = 7_000_000
+high = 7_300_000
+target = 7_171_000
+transmit-mode = "LSB"
+receive-mode = "LSB"
 bandwidth = 3_000
 step = 1_000
 
 [[bands]]
 name = "20m"
-start = 14_000_000
-end = 14_350_000
+low = 14_000_000
+high = 14_350_000
 target = 14_230_000
-transmit-mode = "PKTUSB"
+transmit-mode = "USB"
 receive-mode = "USB"
 bandwidth = 3_000
 step = 1_000
@@ -235,20 +231,28 @@ A list rather than a table of named sections, because the order is the order
 the band selector offers them in, and because a name like `1.25m` would have to
 be quoted as a key.
 
-The application reads `name`, `start`, and `end` — they are what names a
-frequency for `${radio.band}` and what decides which band the rig is on. Every
-other key is the operator's, passed through to the script untouched. `target`,
-`step`, `transmit-mode`, `receive-mode`, and `bandwidth` are conventions the
-default script follows; `monitor-gain` above is one this station invented, and
-its own script is what would act on it.
+`low` and `high` rather than `start` and `end`, because `end` is a reserved
+word in Lua and `band["end"]` is a worse thing to have to write than a pair of
+names chosen to avoid it.
+
+The application reads `name`, `low`, and `high` — they are what names a
+frequency for `${radio.band}` and what decides which band the rig is on — and
+`step`, which is what the interface's step buttons move by. Every other key is
+the operator's, passed through to the script untouched. `target`,
+`transmit-mode`, `receive-mode`, and `bandwidth` are conventions the default
+script follows; `monitor-gain` above is one this station invented, and its own
+script is what would act on it.
 
 Keys reach Lua with hyphens turned into underscores, because a hyphen cannot
 appear in a Lua identifier: `receive-mode` in the file is `band.receive_mode`
 in the script.
 
-This replaces both the built-in band table in `rssstv-rig` and the per-band
-command lists of the earlier design. A band with an extra setting no longer
-needs a mechanism of its own — it is a key the script reads.
+A band with an extra setting needs no mechanism of its own — it is a key the
+script reads.
+
+The plan in use is read at startup. Writing the default out from the menu does
+not reload it: a file being edited is not one to act on halfway through, so the
+next start is when a changed plan takes effect.
 
 ## Configuration
 
@@ -384,9 +388,10 @@ template that says nothing about the frequency is left alone.
 
 ## Interface
 
-The Rig Control menu keeps what it has: the switch, the connection's state or
-the failure that ended it, what the rig is tuned to, and reconnecting after a
-failure. It gains an entry that writes the default script out for editing.
+The Rig Control menu holds the switch, each transport and where it reaches, the
+connection's state or the failure that ended it, what the rig is tuned to, and
+reconnecting after a failure. It also writes the default script and the default
+band plan out for editing, and opens the folder holding them.
 
 Tuning is worth reaching without a menu, so it goes in the window as a radio
 panel shared by both tabs:
@@ -397,18 +402,24 @@ panel shared by both tabs:
 | Frequency | Shows what `poll_frequency` last returned |
 | Step down, step up | Calls `set_frequency` with the current frequency moved by the band's `step` |
 
-The panel is present only while rig control is connected, and its controls are
-disabled while transmitting — the same rule that stops the worker polling then.
-A step with no band, or a band with no `step`, has nothing to move by and is
-disabled rather than guessing one.
+The panel is shown while rig control is switched on rather than only once it is
+connected, so that it does not appear and vanish as a connection is made or
+lost. Its controls are disabled unless the rig is connected and not keyed — the
+same rule that stops the worker polling during a transmission, for the same
+reason: moving a rig that is on the air moves the transmission with it.
+
+A step that would leave the band is disabled rather than clamped, as is one on
+a band with no `step` and one off the bands entirely. A button that moves
+nothing is better than one that says it moved something.
 
 ## Staging
 
 1. **Done.** The Lua host, the `rigctld` port, and `open`, `close`,
    `transmit`, `receive`, and `poll_frequency`. Replaced `[rig.commands]` at
    parity with what worked before it.
-2. `bands.toml`, `change_band`, `set_frequency`, and the radio panel. Replaces
-   `[rig.bands]` and the built-in band table.
+2. **Done.** `bands.toml`, `change_band`, `set_frequency`, and the radio panel.
+   Replaced `[rig.bands]` and the built-in band table, which left `rssstv-rig`
+   holding transports and nothing else.
 3. The serial port, and with it CI-V keying and DTR/RTS keying.
 
 Each stage stands on its own. The third is what makes the MMSSTV and EXTFSK

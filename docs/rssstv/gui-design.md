@@ -421,6 +421,7 @@ marked shared are built once and reused across tabs.
 | State line | Shared | Mode, size, and what the tab is doing, under the image |
 | Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
+| Radio panel | Shared | Band `pick_list`, the frequency, and two step buttons; only while rig control is on |
 | DSP panel | Receive | Three toggle buttons |
 | Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
 | QSO panel | Shared | `text_input` for the contact call, RSV, serial number, and received RSV |
@@ -607,9 +608,10 @@ frequency between transmissions; the interface starts playback only once the
 rig has reported that it has switched over, and a script that failed to key
 stops the transmission rather than sending into a receiver. What is sent at
 each moment comes from `rigcontrol.lua`, which is built in until the operator
-writes their own from the Rig Control menu.
-[rig-control.md](rig-control.md) describes the transports, the script, and the
-timing.
+writes their own from the Rig Control menu. The radio panel moves the rig
+between bands and up and down them, from `bands.toml`, which is built in the
+same way. [rig-control.md](rig-control.md) describes the transports, the
+script, the band plan, and the timing.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.

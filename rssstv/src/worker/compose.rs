@@ -12,7 +12,6 @@ use std::{
 
 use image::imageops::FilterType;
 use jiff::{Zoned, tz::TimeZone};
-use rssstv_rig::Reading;
 use rssstv_sstv::{
     image::{ImageSize, Rgb8, RgbImage},
     mode::Mode,
@@ -21,6 +20,8 @@ use rssstv_template::{
     AssetError, AssetProvider, EncodedAsset, RenderContext, RenderSize, Renderer, Template,
     VariableValue, Variables, composite,
 };
+
+use crate::worker::rig::Reading;
 
 #[derive(Clone, Debug)]
 pub struct ComposeRequest {
@@ -330,13 +331,10 @@ const PLACEHOLDER_BAND: &str = "40m";
 /// empty rather than filled with the placeholder: the frequency beside it is
 /// real, and a band that contradicts it would be worse than none.
 fn radio(request: &ComposeRequest) -> (f64, String) {
-    match request.radio {
+    match &request.radio {
         Some(reading) => (
             reading.frequency_hz as f64 / 1_000_000.0,
-            reading
-                .band
-                .map(|band| band.name().to_owned())
-                .unwrap_or_default(),
+            reading.band.clone().unwrap_or_default(),
         ),
         None => (PLACEHOLDER_FREQUENCY_MHZ, PLACEHOLDER_BAND.to_owned()),
     }
@@ -418,7 +416,6 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use jiff::civil::date;
-    use rssstv_rig::Band;
 
     use super::*;
 
@@ -497,7 +494,7 @@ mod tests {
         let variables = variables(&ComposeRequest {
             radio: Some(Reading {
                 frequency_hz: 14_230_000,
-                band: Band::for_frequency(14_230_000),
+                band: Some("20m".to_owned()),
             }),
             ..request()
         });

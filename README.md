@@ -31,9 +31,10 @@ Start `rigctld` for your rig, switch Rig Control on, and transmissions key it
 and read its frequency into `${radio.frequency}` and `${radio.band}`.
 
 What is actually sent is decided by a Lua script, because a station keys its
-rig in more ways than one protocol covers. A default is built in and needs no
-file; write it out from the Rig Control menu as `rigcontrol.lua` beside
-`config.toml` to take it over. See
+rig in more ways than one protocol covers. The band plan the radio panel offers
+comes from a file beside it. Both are built in and need no files; write either
+out from the Rig Control menu, as `rigcontrol.lua` and `bands.toml` beside
+`config.toml`, to take it over. See
 [docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
 
 On Linux the window icon comes from a desktop entry rather than from the

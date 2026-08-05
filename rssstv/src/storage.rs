@@ -3,6 +3,7 @@
 //! The directories it owns, the settings that survive a restart, the received
 //! images it keeps, and the diagnostics it leaves behind.
 
+pub mod bands;
 pub mod config;
 pub mod history;
 pub mod log;

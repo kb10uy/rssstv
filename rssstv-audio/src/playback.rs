@@ -320,10 +320,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PREFERRED_SAMPLE_RATE_HZ;
 
     #[test]
     fn synthetic_queue_is_bounded_and_reports_completion() {
-        let (mut writer, mut reader) = synthetic_playback(48_000, 3).unwrap();
+        let (mut writer, mut reader) = synthetic_playback(PREFERRED_SAMPLE_RATE_HZ, 3).unwrap();
         assert_eq!(writer.write(&[0.1, 0.2, 0.3, 0.4]), 3);
         assert_eq!(writer.vacant(), 0);
         writer.finish();
@@ -337,7 +338,7 @@ mod tests {
 
     #[test]
     fn callback_duplicates_mono_and_fills_underflow_with_silence() {
-        let (mut writer, mut consumer, state) = queue(48_000, 4).unwrap();
+        let (mut writer, mut consumer, state) = queue(PREFERRED_SAMPLE_RATE_HZ, 4).unwrap();
         writer.write(&[0.25, -0.5]);
         let mut output = [1.0_f32; 6];
 
@@ -350,7 +351,7 @@ mod tests {
 
     #[test]
     fn finished_queue_does_not_count_trailing_silence_as_underrun() {
-        let (writer, mut consumer, state) = queue(48_000, 2).unwrap();
+        let (writer, mut consumer, state) = queue(PREFERRED_SAMPLE_RATE_HZ, 2).unwrap();
         writer.finish();
         let mut output = [1_i16; 4];
 
@@ -363,7 +364,7 @@ mod tests {
     #[test]
     fn invalid_synthetic_configuration_is_rejected() {
         assert!(matches!(
-            synthetic_playback(48_000, 0),
+            synthetic_playback(PREFERRED_SAMPLE_RATE_HZ, 0),
             Err(AudioError::EmptyCapacity)
         ));
         assert!(matches!(

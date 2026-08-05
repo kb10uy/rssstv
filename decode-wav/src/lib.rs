@@ -11,7 +11,8 @@ use rssstv_sstv::{
     rx::{DemodulatedBlock, RxConfig, RxOutcome, RxState, Staging},
 };
 
-const DEFAULT_PCM_PACKET_SIZE: usize = 1_024;
+/// First-channel mono PCM samples handed to the pipeline per packet.
+pub const DEFAULT_PCM_PACKET_SIZE: usize = 1_024;
 
 /// Configuration for the offline packetized receive pipeline.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

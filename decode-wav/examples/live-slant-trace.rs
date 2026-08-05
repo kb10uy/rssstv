@@ -115,7 +115,7 @@ fn main() -> Result<()> {
     let mut demodulator = Demodulator::new(rate)?;
     let mut decoder: Option<RxDecoder> = None;
     let mut rows = 0_usize;
-    for packet in samples.chunks(1_024) {
+    for packet in samples.chunks(decode_wav::DEFAULT_PCM_PACKET_SIZE) {
         let chunk = demodulator.process(packet)?;
         if let Some(mode) = chunk.detected_mode() {
             println!("detected {}", mode.spec().name());

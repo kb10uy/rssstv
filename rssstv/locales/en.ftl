@@ -35,7 +35,6 @@ section-rx-level = Receive level
 section-tx-level = Transmit level
 section-mode = Mode
 label-auto-vis = Automatic detection (VIS)
-mode-detecting = { $mode } (detecting)
 
 section-dsp = DSP
 dsp-afc = AFC
@@ -111,7 +110,6 @@ status-output-ready = Output ready
 status-output-audio = Output { $rate } Hz
 status-dropped = Dropped { $samples } samples
 status-audio = { $rate } Hz / mono
-status-afc = AFC { $offset } Hz
 
 error-no-transmit-frame = No transmit image has been composed yet
 error-no-output-device = Select an output device first

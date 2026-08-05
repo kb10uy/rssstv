@@ -35,7 +35,6 @@ section-rx-level = 受信レベル
 section-tx-level = 送信レベル
 section-mode = モード
 label-auto-vis = 自動判定 (VIS)
-mode-detecting = { $mode }（自動検出中）
 
 section-dsp = DSP
 dsp-afc = AFC
@@ -111,7 +110,6 @@ status-output-ready = 出力準備完了
 status-output-audio = 出力 { $rate } Hz
 status-dropped = { $samples } サンプル欠落
 status-audio = { $rate } Hz / モノラル
-status-afc = AFC { $offset } Hz
 
 error-no-transmit-frame = 送信画像がまだ合成されていません
 error-no-output-device = 出力デバイスを選択してください

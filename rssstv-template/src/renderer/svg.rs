@@ -8,10 +8,19 @@ use crate::{
         variable::interpolate,
     },
     scene::{
-        Anchor, Color, Gradient, GradientKind, GroupLayer, ImageFit, ImageLayer, Layer, LayerSize,
-        Length, Paint, Position, ReceivedImageLayer, Stroke, TextLayer,
+        Anchor, Clip, Color, Gradient, GradientKind, GroupLayer, ImageFit, ImageLayer, Layer,
+        LayerSize, Length, Paint, Position, ReceivedImageLayer, Stroke, TextLayer,
     },
 };
+
+/// Where one image layer lands, independent of which layer supplied it.
+#[derive(Clone, Copy)]
+struct ImagePlacement {
+    position: Position,
+    size: LayerSize,
+    clip: Option<Clip>,
+    offset: (f64, f64),
+}
 
 pub(super) struct SvgGenerator<'a> {
     size: RenderSize,
@@ -22,6 +31,7 @@ pub(super) struct SvgGenerator<'a> {
     next_resource: usize,
     definitions: String,
     next_gradient: usize,
+    next_clip: usize,
 }
 
 impl<'a> SvgGenerator<'a> {
@@ -35,6 +45,7 @@ impl<'a> SvgGenerator<'a> {
             next_resource: 0,
             definitions: String::new(),
             next_gradient: 0,
+            next_clip: 0,
         }
     }
 
@@ -78,7 +89,12 @@ impl<'a> SvgGenerator<'a> {
                         "<rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\""
                     )
                     .unwrap();
+                    if let Some(radius) = layer.size.radius {
+                        let radius = resolve_length(radius, self.size, None)?;
+                        write!(svg, " rx=\"{radius}\" ry=\"{radius}\"").unwrap();
+                    }
                     self.write_paint(svg, layer.fill.as_ref(), layer.stroke, None)?;
+                    write_rotation(svg, layer.position, offset_x, offset_y, self.size, None)?;
                     svg.push_str("/>");
                 }
                 Layer::Ellipse(layer) => {
@@ -94,6 +110,7 @@ impl<'a> SvgGenerator<'a> {
                     )
                     .unwrap();
                     self.write_paint(svg, layer.fill.as_ref(), layer.stroke, None)?;
+                    write_rotation(svg, layer.position, offset_x, offset_y, self.size, None)?;
                     svg.push_str("/>");
                 }
                 Layer::Line(layer) => {
@@ -130,7 +147,11 @@ impl<'a> SvgGenerator<'a> {
         } else {
             (0.0, 0.0)
         };
-        svg.push_str("<g>");
+        svg.push_str("<g");
+        if let Some(position) = group.position {
+            write_rotation(svg, position, offset_x, offset_y, self.size, None)?;
+        }
+        svg.push('>');
         self.write_layers(svg, &group.layers, offset_x + group_x, offset_y + group_y)?;
         svg.push_str("</g>");
         Ok(())
@@ -144,14 +165,13 @@ impl<'a> SvgGenerator<'a> {
         offset_y: f64,
     ) -> Result<(), TemplateError> {
         let (uri, resource) = self.asset_resource(&layer.reference)?;
-        self.write_image_element(
-            svg,
-            layer.position,
-            layer.size,
-            &uri,
-            &resource,
-            (offset_x, offset_y),
-        )
+        let placement = ImagePlacement {
+            position: layer.position,
+            size: layer.size,
+            clip: layer.clip,
+            offset: (offset_x, offset_y),
+        };
+        self.write_image_element(svg, placement, &uri, &resource)
     }
 
     fn write_received_image(
@@ -162,25 +182,28 @@ impl<'a> SvgGenerator<'a> {
         offset_y: f64,
     ) -> Result<(), TemplateError> {
         let (uri, resource) = self.received_resource()?;
-        self.write_image_element(
-            svg,
-            layer.position,
-            layer.size,
-            &uri,
-            &resource,
-            (offset_x, offset_y),
-        )
+        let placement = ImagePlacement {
+            position: layer.position,
+            size: layer.size,
+            clip: layer.clip,
+            offset: (offset_x, offset_y),
+        };
+        self.write_image_element(svg, placement, &uri, &resource)
     }
 
     fn write_image_element(
-        &self,
+        &mut self,
         svg: &mut String,
-        position: Position,
-        size: LayerSize,
+        placement: ImagePlacement,
         uri: &str,
         resource: &Resource,
-        offset: (f64, f64),
     ) -> Result<(), TemplateError> {
+        let ImagePlacement {
+            position,
+            size,
+            clip,
+            offset,
+        } = placement;
         let intrinsic = Some((f64::from(resource.width), f64::from(resource.height)));
         let (x, y, width, height) =
             self.box_geometry(position, size, offset.0, offset.1, intrinsic)?;
@@ -191,11 +214,57 @@ impl<'a> SvgGenerator<'a> {
         };
         write!(
             svg,
-            "<image href=\"{}\" x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" preserveAspectRatio=\"{preserve}\"/>",
+            "<image href=\"{}\" x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" preserveAspectRatio=\"{preserve}\"",
             escape_xml(uri)
         )
         .unwrap();
+        let radius = size
+            .radius
+            .map(|radius| resolve_length(radius, self.size, None))
+            .transpose()?;
+        if let Some(id) = self.define_clip(clip, radius, (x, y, width, height)) {
+            write!(svg, " clip-path=\"url(#{id})\"").unwrap();
+        }
+        write_rotation(svg, position, offset.0, offset.1, self.size, None)?;
+        svg.push_str("/>");
         Ok(())
+    }
+
+    fn define_clip(
+        &mut self,
+        clip: Option<Clip>,
+        radius: Option<f64>,
+        box_geometry: (f64, f64, f64, f64),
+    ) -> Option<String> {
+        let (x, y, width, height) = box_geometry;
+        let id = format!("clip{}", self.next_clip);
+        match (clip, radius) {
+            (Some(Clip::Circle), _) => write!(
+                self.definitions,
+                "<clipPath id=\"{id}\"><circle cx=\"{}\" cy=\"{}\" r=\"{}\"/></clipPath>",
+                x + width / 2.0,
+                y + height / 2.0,
+                width.min(height) / 2.0
+            )
+            .unwrap(),
+            (Some(Clip::Ellipse), _) => write!(
+                self.definitions,
+                "<clipPath id=\"{id}\"><ellipse cx=\"{}\" cy=\"{}\" rx=\"{}\" ry=\"{}\"/></clipPath>",
+                x + width / 2.0,
+                y + height / 2.0,
+                width / 2.0,
+                height / 2.0
+            )
+            .unwrap(),
+            (None, Some(radius)) => write!(
+                self.definitions,
+                "<clipPath id=\"{id}\"><rect x=\"{x}\" y=\"{y}\" width=\"{width}\" height=\"{height}\" rx=\"{radius}\" ry=\"{radius}\"/></clipPath>"
+            )
+            .unwrap(),
+            (None, None) => return None,
+        }
+        self.next_clip += 1;
+        Some(id)
     }
 
     fn write_text(
@@ -210,9 +279,16 @@ impl<'a> SvgGenerator<'a> {
         let y = offset_y + resolve_length(layer.position.y, self.size, Some(font_size))?;
         let (text_anchor, baseline) = text_anchor(layer.position.anchor);
         let text = interpolate(&layer.text, self.context.variables)?;
+        let lines: Vec<&str> = text
+            .split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line))
+            .collect();
+        let leading = layer.font.leading * font_size;
+        let block = leading * (lines.len() - 1) as f64;
+        let first = y - block * block_shift(layer.position.anchor);
         write!(
             svg,
-            "<text x=\"{x}\" y=\"{y}\" text-anchor=\"{text_anchor}\" dominant-baseline=\"{baseline}\" font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{}\" font-style=\"{}\"",
+            "<text x=\"{x}\" y=\"{first}\" text-anchor=\"{text_anchor}\" dominant-baseline=\"{baseline}\" font-family=\"{}\" font-size=\"{font_size}\" font-weight=\"{}\" font-style=\"{}\"",
             escape_xml(&layer.font.family),
             layer.font.weight,
             layer.font.style.as_svg()
@@ -223,7 +299,28 @@ impl<'a> SvgGenerator<'a> {
             write_stroke(svg, stroke, self.size, Some(font_size))?;
             svg.push_str(" paint-order=\"stroke fill\" stroke-linejoin=\"round\"");
         }
-        write!(svg, ">{}</text>", escape_xml(&text)).unwrap();
+        write_rotation(
+            svg,
+            layer.position,
+            offset_x,
+            offset_y,
+            self.size,
+            Some(font_size),
+        )?;
+        svg.push('>');
+        match lines.as_slice() {
+            [line] => svg.push_str(&escape_xml(line)),
+            lines => {
+                for (index, line) in lines.iter().enumerate() {
+                    write!(svg, "<tspan x=\"{x}\"").unwrap();
+                    if index > 0 {
+                        write!(svg, " dy=\"{leading}\"").unwrap();
+                    }
+                    write!(svg, ">{}</tspan>", escape_xml(line)).unwrap();
+                }
+            }
+        }
+        svg.push_str("</text>");
         Ok(())
     }
 
@@ -408,6 +505,33 @@ fn resolve_length(
 
 fn unit_coordinate(value: f64) -> f64 {
     (value * 1e6).round() / 1e6
+}
+
+/// How far a block of wrapped lines moves up so the block, rather than its
+/// first line, sits where the anchor asked for.
+fn block_shift(anchor: Anchor) -> f64 {
+    match anchor {
+        Anchor::TopLeft | Anchor::TopCenter | Anchor::TopRight => 0.0,
+        Anchor::Center => 0.5,
+        Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => 1.0,
+    }
+}
+
+fn write_rotation(
+    svg: &mut String,
+    position: Position,
+    offset_x: f64,
+    offset_y: f64,
+    size: RenderSize,
+    font_size: Option<f64>,
+) -> Result<(), TemplateError> {
+    if position.rotation == 0.0 {
+        return Ok(());
+    }
+    let x = offset_x + resolve_length(position.x, size, font_size)?;
+    let y = offset_y + resolve_length(position.y, size, font_size)?;
+    write!(svg, " transform=\"rotate({} {x} {y})\"", position.rotation).unwrap();
+    Ok(())
 }
 
 fn anchor_offset(anchor: Anchor, width: f64, height: f64) -> (f64, f64) {

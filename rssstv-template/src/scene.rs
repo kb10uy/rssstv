@@ -123,6 +123,7 @@ pub(crate) struct Position {
     pub x: Length,
     pub y: Length,
     pub anchor: Anchor,
+    pub rotation: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,6 +131,16 @@ pub(crate) struct LayerSize {
     pub width: Option<Length>,
     pub height: Option<Length>,
     pub fit: ImageFit,
+    pub radius: Option<Length>,
+}
+
+/// The non-rectangular region an image layer is cut down to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Clip {
+    /// The largest circle centered in the layer box.
+    Circle,
+    /// The ellipse inscribed in the layer box.
+    Ellipse,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -184,6 +195,7 @@ pub(crate) struct Font {
     pub size: Length,
     pub weight: u16,
     pub style: FontStyle,
+    pub leading: f64,
 }
 
 /// A template layer.
@@ -193,7 +205,7 @@ pub enum Layer {
     Image(ImageLayer),
     /// The caller-provided final received image.
     ReceivedImage(ReceivedImageLayer),
-    /// A single line of interpolated text.
+    /// Interpolated text, one line per newline it contains.
     Text(TextLayer),
     /// A rectangle.
     Rectangle(RectangleLayer),
@@ -211,6 +223,7 @@ pub struct ImageLayer {
     pub(crate) reference: String,
     pub(crate) position: Position,
     pub(crate) size: LayerSize,
+    pub(crate) clip: Option<Clip>,
 }
 
 /// A final received-image layer.
@@ -218,6 +231,7 @@ pub struct ImageLayer {
 pub struct ReceivedImageLayer {
     pub(crate) position: Position,
     pub(crate) size: LayerSize,
+    pub(crate) clip: Option<Clip>,
 }
 
 /// An interpolated text layer.

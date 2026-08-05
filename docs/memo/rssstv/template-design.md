@@ -91,8 +91,8 @@ The initial implementation supports these layer forms:
 
 | Layer | Argument | Required children | Optional children |
 | --- | --- | --- | --- |
-| `image` | PNG asset reference | `position`, `size` | None |
-| `rximage` | None | `position`, `size` | None |
+| `image` | PNG asset reference | `position`, `size` | `clip` |
+| `rximage` | None | `position`, `size` | `clip` |
 | `text` | Interpolated text | `position`, `font`, `fill` | `stroke` |
 | `rect` | None | `position`, `size`, at least one paint | `fill`, `stroke` |
 | `ellipse` | None | `position`, `size`, at least one paint | `fill`, `stroke` |
@@ -102,13 +102,14 @@ The initial implementation supports these layer forms:
 The supported child properties are:
 
 ```kdl
-position x=(fw)0 y=(fh)0 anchor="top-left"
-size width=(fw)10 height=(fh)10 fit="contain"
+position x=(fw)0 y=(fh)0 anchor="top-left" rotate=-12
+size width=(fw)10 height=(fh)10 fit="contain" radius=(fh)2
 start x=(fw)0 y=(fh)0
 end x=(fw)100 y=(fh)100
-font family="Noto Sans" size=(fh)9 weight=700 style="italic"
+font family="Noto Sans" size=(fh)9 weight=700 style="italic" leading=1.2
 fill color="#ffffff"
 stroke color="#182030" width=(em)0.08
+clip shape="circle"
 ```
 
 A `fill` states either one color or a gradient, described below. A `stroke` is
@@ -123,6 +124,10 @@ case it is derived from the PNG aspect ratio.
 `font.style` is optional, defaults to `normal`, and accepts `normal` or
 `italic`.
 
+`position.rotate`, `size.radius`, `font.leading`, and `clip` are described in
+the sections below. A line endpoint takes coordinates alone, so `rotate` is an
+error on `start` and `end`.
+
 Colors use `#RRGGBB` or `#RRGGBBAA`. Layer nodes, child nodes, and properties
 outside this schema are errors. Duplicate properties and duplicate singleton
 children are also errors. Dimensions must be finite and non-negative;
@@ -131,8 +136,95 @@ rasterization.
 
 Groups add their optional `position` to every nested layer. Child coordinates
 remain frame-relative rather than becoming percentages of a group bounding box.
-The initial implementation does not provide rotation, arbitrary transforms,
-clipping, shadows, rounded rectangles, or multiline text.
+The initial implementation does not provide arbitrary transforms, shadows, or
+pattern fills.
+
+### Rotation
+
+Any `position` that anchors a layer, and a group's own `position`, accepts a
+`rotate` in degrees:
+
+```kdl
+text "CQ SSTV" {
+    position x=(fw)50 y=(fh)55 anchor="center" rotate=-12
+    font family="Noto Sans" size=(fh)12 weight=700
+    fill color="#ffffff"
+}
+```
+
+The angle is measured clockwise, the same convention a linear gradient uses,
+and defaults to 0. A layer turns about the point its `position` names rather
+than about its own center, so the anchor keeps meaning what it meant: a layer
+anchored `bottom-right` against a frame corner stays pinned to that corner as
+it turns. A rotated group turns its whole subtree about the group's own point.
+
+Rotation is stated on the point it turns about rather than as a separate child
+node, because there is nothing else for a rotation to be about, and because a
+group then gets one without a second spelling.
+
+A gradient fill resolves against the layer's box before the layer turns, so the
+gradient turns with what it paints.
+
+### Rounded Corners and Clipping
+
+A `size` on a `rect`, an `image`, or an `rximage` accepts a `radius`, which
+rounds the corners of that layer's box:
+
+```kdl
+rect {
+    position x=(fw)5 y=(fh)78
+    size width=(fw)90 height=(fh)17 radius=(fh)2
+    fill color="#101820cc"
+}
+```
+
+An `ellipse` has no corner to round, so `radius` is an error on one.
+
+An image layer also accepts a `clip`, which cuts it to a shape that is not a
+box:
+
+```kdl
+rximage {
+    position x=(fw)5 y=(fh)22
+    size width=(fw)35 height=(fh)35 fit="cover"
+    clip shape="circle"
+}
+```
+
+`clip.shape` accepts `circle`, which is the largest circle centered in the
+layer box, and `ellipse`, which is the ellipse inscribed in it. A layer cannot
+both round its corners and be clipped, since the clip decides the outline.
+
+Rounded corners and clipping are separate spellings because they are separate
+things. A shape's rounding belongs to the outline that its `fill` and `stroke`
+follow, so a stroke turns the corner. A clip only cuts, so a stroked shape
+would come out sliced in half rather than followed. Images carry neither fill
+nor stroke, so for them the two produce the same picture and `radius` is
+implemented as a clip.
+
+### Wrapped Text
+
+A newline in a text layer starts a new line. Nothing else about the layer
+changes; the lines share one position, one anchor, one font, and one fill:
+
+```kdl
+text "CQ CQ CQ\nde ${station.callsign}\npse K" {
+    position x=(fw)5 y=(fh)10 anchor="top-left"
+    font family="Noto Sans" size=(fh)8 weight=700 leading=1.4
+    fill color="#ffffff"
+}
+```
+
+`font.leading` is the multiple of the font size between one baseline and the
+next, and defaults to 1.2. The anchor applies to the block rather than to its
+first line, so a `bottom-*` anchor holds the last line where a single line
+would have sat, and `center` centers the block.
+
+A newline that arrives through `${...}` wraps the same way a newline written in
+the template does, since the text is split after interpolation.
+
+A gradient fill spans the whole block rather than restarting on each line,
+because the lines are one text layer and the gradient resolves against its box.
 
 ### Gradient Fills
 
@@ -356,8 +448,8 @@ The ports follow one set of rules:
 ## Text Rendering
 
 Text style is independent of the platform font API. A text layer can specify a
-font family, relative size, weight, normal or italic style, fill, alignment, and
-effects.
+font family, relative size, weight, normal or italic style, leading, fill,
+alignment, and effects.
 
 Outlining is a text effect rather than part of the font identity:
 

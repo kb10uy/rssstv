@@ -5,11 +5,47 @@ use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 use crate::{
     TemplateError,
     scene::{
-        Anchor, Color, EllipseLayer, Font, FontStyle, Gradient, GradientKind, GradientStop,
+        Anchor, Clip, Color, EllipseLayer, Font, FontStyle, Gradient, GradientKind, GradientStop,
         GroupLayer, ImageFit, ImageLayer, Layer, LayerSize, Length, LineLayer, Paint, Position,
         ReceivedImageLayer, RectangleLayer, Stroke, Template, TextLayer,
     },
 };
+
+/// The multiple of the font size between the baselines of wrapped lines.
+const DEFAULT_LEADING: f64 = 1.2;
+
+/// What a `position` node is allowed to say beyond its coordinates.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PositionKind {
+    /// A layer's own placement: it anchors and it rotates.
+    Anchored,
+    /// A group's offset: it rotates, but there is no box to anchor.
+    Offset,
+    /// A line endpoint: coordinates alone.
+    Endpoint,
+}
+
+/// What a `size` node is allowed to say beyond its extent.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SizeKind {
+    /// An image, which may derive one dimension from its own aspect ratio and
+    /// may round its corners.
+    Image,
+    /// A rectangle, which requires both dimensions and may round its corners.
+    Rectangle,
+    /// A shape whose outline is not a box, so there is no corner to round.
+    Shape,
+}
+
+impl SizeKind {
+    const fn requires_both(self) -> bool {
+        !matches!(self, Self::Image)
+    }
+
+    const fn allows_radius(self) -> bool {
+        !matches!(self, Self::Shape)
+    }
+}
 
 impl Template {
     /// Parses a KDL v2 template document.
@@ -42,12 +78,16 @@ fn parse_layer(node: &KdlNode) -> Result<Layer, TemplateError> {
 fn parse_image(node: &KdlNode) -> Result<ImageLayer, TemplateError> {
     let reference = one_string_argument(node)?.to_owned();
     let children = required_children(node)?;
-    validate_child_names(children, &["position", "size"])?;
-    let position = parse_position(required_unique_child(children, "position")?, true)?;
-    let size = parse_size(required_unique_child(children, "size")?, false)?;
+    validate_child_names(children, &["position", "size", "clip"])?;
+    let position = parse_position(
+        required_unique_child(children, "position")?,
+        PositionKind::Anchored,
+    )?;
+    let size = parse_size(required_unique_child(children, "size")?, SizeKind::Image)?;
     Ok(ImageLayer {
         reference,
         position,
+        clip: parse_image_clip(children, size)?,
         size,
     })
 }
@@ -55,11 +95,29 @@ fn parse_image(node: &KdlNode) -> Result<ImageLayer, TemplateError> {
 fn parse_received_image(node: &KdlNode) -> Result<ReceivedImageLayer, TemplateError> {
     no_entries(node)?;
     let children = required_children(node)?;
-    validate_child_names(children, &["position", "size"])?;
+    validate_child_names(children, &["position", "size", "clip"])?;
+    let size = parse_size(required_unique_child(children, "size")?, SizeKind::Image)?;
     Ok(ReceivedImageLayer {
-        position: parse_position(required_unique_child(children, "position")?, true)?,
-        size: parse_size(required_unique_child(children, "size")?, false)?,
+        position: parse_position(
+            required_unique_child(children, "position")?,
+            PositionKind::Anchored,
+        )?,
+        clip: parse_image_clip(children, size)?,
+        size,
     })
+}
+
+fn parse_image_clip(
+    children: &KdlDocument,
+    size: LayerSize,
+) -> Result<Option<Clip>, TemplateError> {
+    let clip = optional_unique_child(children, "clip")?
+        .map(parse_clip)
+        .transpose()?;
+    if clip.is_some() && size.radius.is_some() {
+        return schema("a clipped layer has no corner to round");
+    }
+    Ok(clip)
 }
 
 fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
@@ -67,7 +125,11 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
     let children = required_children(node)?;
     validate_child_names(children, &["position", "font", "fill", "stroke"])?;
     let font_node = required_unique_child(children, "font")?;
-    validate_properties(font_node, &["family", "size", "weight", "style"], 0)?;
+    validate_properties(
+        font_node,
+        &["family", "size", "weight", "style", "leading"],
+        0,
+    )?;
     let family = required_string(font_node, "family")?.to_owned();
     if family.is_empty() {
         return schema("font family must not be empty");
@@ -82,16 +144,24 @@ fn parse_text(node: &KdlNode) -> Result<TextLayer, TemplateError> {
         .map(|_| required_string(font_node, "style").and_then(parse_font_style))
         .transpose()?
         .unwrap_or_default();
+    let leading = optional_number(font_node, "leading")?.unwrap_or(DEFAULT_LEADING);
+    if leading < 0.0 {
+        return schema("font leading must not be negative");
+    }
     let fill = parse_fill(required_unique_child(children, "fill")?)?;
 
     Ok(TextLayer {
         text,
-        position: parse_position(required_unique_child(children, "position")?, true)?,
+        position: parse_position(
+            required_unique_child(children, "position")?,
+            PositionKind::Anchored,
+        )?,
         font: Font {
             family,
             size: required_length(font_node, "size")?,
             weight,
             style,
+            leading,
         },
         fill,
         stroke: optional_unique_child(children, "stroke")?
@@ -112,8 +182,14 @@ fn parse_rectangle(node: &KdlNode) -> Result<RectangleLayer, TemplateError> {
         .transpose()?;
     require_paint(fill.as_ref(), stroke)?;
     Ok(RectangleLayer {
-        position: parse_position(required_unique_child(children, "position")?, true)?,
-        size: parse_size(required_unique_child(children, "size")?, true)?,
+        position: parse_position(
+            required_unique_child(children, "position")?,
+            PositionKind::Anchored,
+        )?,
+        size: parse_size(
+            required_unique_child(children, "size")?,
+            SizeKind::Rectangle,
+        )?,
         fill,
         stroke,
     })
@@ -131,8 +207,11 @@ fn parse_ellipse(node: &KdlNode) -> Result<EllipseLayer, TemplateError> {
         .transpose()?;
     require_paint(fill.as_ref(), stroke)?;
     Ok(EllipseLayer {
-        position: parse_position(required_unique_child(children, "position")?, true)?,
-        size: parse_size(required_unique_child(children, "size")?, true)?,
+        position: parse_position(
+            required_unique_child(children, "position")?,
+            PositionKind::Anchored,
+        )?,
+        size: parse_size(required_unique_child(children, "size")?, SizeKind::Shape)?,
         fill,
         stroke,
     })
@@ -143,8 +222,14 @@ fn parse_line(node: &KdlNode) -> Result<LineLayer, TemplateError> {
     let children = required_children(node)?;
     validate_child_names(children, &["start", "end", "stroke"])?;
     Ok(LineLayer {
-        start: parse_position(required_unique_child(children, "start")?, false)?,
-        end: parse_position(required_unique_child(children, "end")?, false)?,
+        start: parse_position(
+            required_unique_child(children, "start")?,
+            PositionKind::Endpoint,
+        )?,
+        end: parse_position(
+            required_unique_child(children, "end")?,
+            PositionKind::Endpoint,
+        )?,
         stroke: parse_stroke(required_unique_child(children, "stroke")?)?,
     })
 }
@@ -159,7 +244,7 @@ fn parse_group(node: &KdlNode) -> Result<GroupLayer, TemplateError> {
             if position.is_some() {
                 return schema("group contains duplicate `position` nodes");
             }
-            position = Some(parse_position(child, false)?);
+            position = Some(parse_position(child, PositionKind::Offset)?);
         } else {
             layers.push(parse_layer(child)?);
         }
@@ -170,11 +255,11 @@ fn parse_group(node: &KdlNode) -> Result<GroupLayer, TemplateError> {
     Ok(GroupLayer { position, layers })
 }
 
-fn parse_position(node: &KdlNode, allow_anchor: bool) -> Result<Position, TemplateError> {
-    let allowed = if allow_anchor {
-        &["x", "y", "anchor"][..]
-    } else {
-        &["x", "y"][..]
+fn parse_position(node: &KdlNode, kind: PositionKind) -> Result<Position, TemplateError> {
+    let allowed = match kind {
+        PositionKind::Anchored => &["x", "y", "anchor", "rotate"][..],
+        PositionKind::Offset => &["x", "y", "rotate"][..],
+        PositionKind::Endpoint => &["x", "y"][..],
     };
     validate_properties(node, allowed, 0)?;
     let anchor = node
@@ -186,17 +271,18 @@ fn parse_position(node: &KdlNode, allow_anchor: bool) -> Result<Position, Templa
         x: required_coordinate(node, "x")?,
         y: required_coordinate(node, "y")?,
         anchor,
+        rotation: optional_number(node, "rotate")?.unwrap_or(0.0),
     })
 }
 
-fn parse_size(node: &KdlNode, require_both: bool) -> Result<LayerSize, TemplateError> {
-    validate_properties(node, &["width", "height", "fit", "aspect"], 0)?;
+fn parse_size(node: &KdlNode, kind: SizeKind) -> Result<LayerSize, TemplateError> {
+    validate_properties(node, &["width", "height", "fit", "aspect", "radius"], 0)?;
     let width = optional_length(node, "width")?;
     let height = optional_length(node, "height")?;
     if width.is_none() && height.is_none() {
         return schema("size requires width or height");
     }
-    if require_both && (width.is_none() || height.is_none()) {
+    if kind.requires_both() && (width.is_none() || height.is_none()) {
         return schema("shape size requires both width and height");
     }
     if node.get("fit").is_some() && node.get("aspect").is_some() {
@@ -211,7 +297,25 @@ fn parse_size(node: &KdlNode, require_both: bool) -> Result<LayerSize, TemplateE
         })
         .transpose()?
         .unwrap_or_default();
-    Ok(LayerSize { width, height, fit })
+    let radius = optional_length(node, "radius")?;
+    if radius.is_some() && !kind.allows_radius() {
+        return schema("this layer has no corner to round");
+    }
+    Ok(LayerSize {
+        width,
+        height,
+        fit,
+        radius,
+    })
+}
+
+fn parse_clip(node: &KdlNode) -> Result<Clip, TemplateError> {
+    validate_properties(node, &["shape"], 0)?;
+    match required_string(node, "shape")? {
+        "circle" => Ok(Clip::Circle),
+        "ellipse" => Ok(Clip::Ellipse),
+        value => schema(format!("unknown clip shape `{value}`")),
+    }
 }
 
 fn parse_fill(node: &KdlNode) -> Result<Paint, TemplateError> {
@@ -710,6 +814,97 @@ ellipse {
             "rect {{\nposition x=(fw)0 y=(fh)0\nsize width=(fw)1 height=(fh)1\n{fill}\n}}"
         ))
         .unwrap_err();
+        assert!(
+            error.to_string().contains(message),
+            "expected `{message}` in `{error}`"
+        );
+    }
+
+    #[test]
+    fn parses_rotation_rounding_clipping_and_leading() {
+        let template = Template::parse(
+            r##"
+rximage {
+    position x=(fw)0 y=(fh)0 rotate=-12.5
+    size width=(fw)30 height=(fh)30
+    clip shape="circle"
+}
+rect {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)30 height=(fh)30 radius=(fh)2
+    fill color="#ffffff"
+}
+text "one\ntwo" {
+    position x=(fw)0 y=(fh)0
+    font family="Noto Sans" size=(fh)9 weight=400 leading=1.5
+    fill color="#ffffff"
+}
+group {
+    position x=(fw)5 y=(fh)5 rotate=90
+    rect {
+        position x=(fw)0 y=(fh)0
+        size width=(fw)1 height=(fh)1
+        fill color="#ffffff"
+    }
+}
+"##,
+        )
+        .unwrap();
+        let Layer::ReceivedImage(received) = &template.layers()[0] else {
+            panic!("expected rximage");
+        };
+        assert_eq!(received.position.rotation, -12.5);
+        assert_eq!(received.clip, Some(Clip::Circle));
+
+        let Layer::Rectangle(rectangle) = &template.layers()[1] else {
+            panic!("expected rectangle");
+        };
+        assert_eq!(rectangle.size.radius, Some(Length::FrameHeight(2.0)));
+        assert_eq!(rectangle.position.rotation, 0.0);
+
+        let Layer::Text(text) = &template.layers()[2] else {
+            panic!("expected text");
+        };
+        assert_eq!(text.text, "one\ntwo");
+        assert_eq!(text.font.leading, 1.5);
+
+        let Layer::Group(group) = &template.layers()[3] else {
+            panic!("expected group");
+        };
+        assert_eq!(group.position.expect("the group is placed").rotation, 90.0);
+    }
+
+    #[rstest]
+    #[case(
+        "ellipse { position x=(fw)0 y=(fh)0; size width=(fw)1 height=(fh)1 radius=(fh)1; fill color=\"#ffffff\"; }",
+        "no corner to round"
+    )]
+    #[case(
+        "rximage { position x=(fw)0 y=(fh)0; size width=(fw)1 height=(fh)1 radius=(fh)1; clip shape=\"circle\"; }",
+        "no corner to round"
+    )]
+    #[case(
+        "rximage { position x=(fw)0 y=(fh)0; size width=(fw)1 height=(fh)1; clip shape=\"star\"; }",
+        "unknown clip shape"
+    )]
+    #[case(
+        "line { start x=(fw)0 y=(fh)0 rotate=90; end x=(fw)1 y=(fh)1; stroke color=\"#ffffff\" width=(fh)1; }",
+        "unknown property `rotate`"
+    )]
+    #[case(
+        "rect { position x=(fw)0 y=(fh)0 rotate=(fh)90; size width=(fw)1 height=(fh)1; fill color=\"#ffffff\"; }",
+        "must not have a unit"
+    )]
+    #[case(
+        "text \"a\" { position x=(fw)0 y=(fh)0; font family=\"Noto Sans\" size=(fh)9 weight=400 leading=-1; fill color=\"#ffffff\"; }",
+        "leading must not be negative"
+    )]
+    #[case(
+        "rect { position x=(fw)0 y=(fh)0; size width=(fw)1 height=(fh)1; clip shape=\"circle\"; fill color=\"#ffffff\"; }",
+        "unknown child `clip`"
+    )]
+    fn rejects_misplaced_geometry(#[case] source: &str, #[case] message: &str) {
+        let error = Template::parse(source).unwrap_err();
         assert!(
             error.to_string().contains(message),
             "expected `{message}` in `{error}`"

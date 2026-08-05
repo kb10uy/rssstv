@@ -230,6 +230,86 @@ text "CQ SSTV" {
     }
 
     #[test]
+    fn wraps_text_at_newlines_under_one_gradient() {
+        let template = Template::parse(
+            r##"
+text "AAA\nBBB\nCCC" {
+    position x=(fw)0 y=(fh)50 anchor="center"
+    font family="Monaspace Argon" size=(fh)10 weight=400 leading=1.5
+    fill color="#ffffff"
+}
+"##,
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let mut generator = SvgGenerator::new(RenderSize::new(100, 100).unwrap(), &context);
+        let svg = generator.generate(template.layers()).unwrap();
+
+        assert!(svg.contains("<tspan x=\"0\">AAA</tspan>"));
+        assert!(svg.contains("<tspan x=\"0\" dy=\"15\">BBB</tspan>"));
+        assert!(svg.contains("<tspan x=\"0\" dy=\"15\">CCC</tspan>"));
+        assert!(svg.contains("y=\"35\""));
+    }
+
+    #[test]
+    fn keeps_one_line_free_of_wrapping_markup() {
+        let template = Template::parse(
+            "text \"CQ\" { position x=(fw)0 y=(fh)50; font family=\"Monaspace Argon\" size=(fh)10 weight=400; fill color=\"#ffffff\"; }",
+        )
+        .unwrap();
+        let variables = Variables::new();
+        let context = RenderContext::new(&variables, &EmptyAssetProvider);
+        let mut generator = SvgGenerator::new(RenderSize::new(100, 100).unwrap(), &context);
+        let svg = generator.generate(template.layers()).unwrap();
+
+        assert!(!svg.contains("tspan"));
+        assert!(svg.contains(">CQ</text>"));
+        assert!(svg.contains("y=\"50\""));
+    }
+
+    #[test]
+    fn clips_rounds_and_rotates_layers() {
+        let template = Template::parse(
+            r##"
+rximage {
+    position x=(fw)0 y=(fh)0
+    size width=(fw)50 height=(fh)100 fit="stretch"
+    clip shape="circle"
+}
+rect {
+    position x=(fw)50 y=(fh)0
+    size width=(fw)50 height=(fh)50 radius=(fw)10
+    fill color="#ff0000"
+}
+rect {
+    position x=(fw)75 y=(fh)75 anchor="center" rotate=90
+    size width=(fw)30 height=(fh)4
+    fill color="#0000ff"
+}
+"##,
+        )
+        .unwrap();
+        let received = RgbImage::new(ImageSize::new(2, 2).unwrap(), Rgb8::new(0, 255, 0));
+        let variables = Variables::new();
+        let mut context = RenderContext::new(&variables, &EmptyAssetProvider);
+        context.received_image = Some(&received);
+        let image = Renderer::new()
+            .render(&template, RenderSize::new(100, 100).unwrap(), &context)
+            .unwrap();
+        let pixel = |x: usize, y: usize| image.pixels()[y * 100 + x];
+
+        assert_eq!(pixel(1, 1), Rgba8::default());
+        assert_eq!(pixel(25, 50), Rgba8::new(0, 255, 0, 255));
+
+        assert_eq!(pixel(51, 1), Rgba8::default());
+        assert_eq!(pixel(75, 25), Rgba8::new(255, 0, 0, 255));
+
+        assert_eq!(pixel(75, 65), Rgba8::new(0, 0, 255, 255));
+        assert_eq!(pixel(65, 75), Rgba8::default());
+    }
+
+    #[test]
     fn renders_shapes_as_a_transparent_overlay() {
         let template = Template::parse(
             r##"

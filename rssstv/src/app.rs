@@ -555,7 +555,22 @@ impl App {
     /// browsing them is the file manager's job and the interface only has to
     /// point at the folder.
     pub fn reveal(&mut self, folder: Folder) {
-        let opened = self.platform.reveal_directory(self.paths.folder(folder));
+        let opened = self.platform.open_path(self.paths.folder(folder));
+        self.library_error = opened.err().map(|error| error.to_string());
+    }
+
+    /// Opens the bundled manual.
+    ///
+    /// The pages are HTML and go to the browser rather than to a viewer of the
+    /// application's own, which would be a worse browser reachable from one
+    /// program. A build run from the source tree has no manual beside it, so
+    /// the interface says so instead of opening nothing.
+    pub fn open_manual(&mut self) {
+        let Some(manual) = manual_path() else {
+            self.library_error = Some(self.i18n.text("error-manual-missing"));
+            return;
+        };
+        let opened = self.platform.open_path(&manual);
         self.library_error = opened.err().map(|error| error.to_string());
     }
 
@@ -1298,6 +1313,19 @@ fn current_minute() -> i64 {
     Timestamp::now().as_second().div_euclid(60)
 }
 
+/// The manual's first page, where a release archive puts it.
+///
+/// Found beside the executable rather than under the application's own
+/// directories: the manual belongs to the copy that was extracted, so two
+/// versions on one machine each answer with their own, and nothing has to
+/// install it anywhere. `None` when it is not there, which is every build run
+/// from the source tree.
+fn manual_path() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let manual = executable.parent()?.join("help").join("index.html");
+    manual.is_file().then_some(manual)
+}
+
 fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {
     Mode::ALL
         .into_iter()
@@ -1771,7 +1799,7 @@ mod tests {
             self.0.borrow_mut().push(activity);
         }
 
-        fn reveal_directory(&mut self, _path: &Path) -> io::Result<()> {
+        fn open_path(&mut self, _path: &Path) -> io::Result<()> {
             Ok(())
         }
     }

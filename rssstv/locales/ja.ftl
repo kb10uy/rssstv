@@ -21,6 +21,7 @@ menu-transmit = 送信
 menu-receive = 受信
 menu-history = 受信画像
 menu-help = ヘルプ
+menu-manual = マニュアル
 
 tab-receive = 受信
 tab-transmit = 送信
@@ -114,6 +115,7 @@ error-no-transmit-frame = 送信画像がまだ合成されていません
 error-no-output-device = 出力デバイスを選択してください
 error-invalid-station-call = 自局コールが不正です: { $error }
 error-rig-unavailable = リグコントロールが使用できません: { $error }
+error-manual-missing = マニュアルが見つかりません。リリースアーカイブの help フォルダーを実行ファイルと同じ場所に置いてください。
 
 geometry = { $mode } · { $width }×{ $height }
 

@@ -104,14 +104,14 @@ pub trait Platform {
     /// each call as a transition rather than a repeat.
     fn set_activity(&mut self, activity: Activity);
 
-    /// Opens `path` in the file manager.
+    /// Opens `path` with whatever the platform opens it with.
     ///
     /// Reached through the platform rather than called directly so a test can
     /// hold one that answers without launching anything: the interface offers
     /// this on every directory it keeps, and a suite that took each of them at
     /// its word would bury the machine in file manager windows.
-    fn reveal_directory(&mut self, path: &Path) -> io::Result<()> {
-        reveal_directory(path)
+    fn open_path(&mut self, path: &Path) -> io::Result<()> {
+        open_path(path)
     }
 }
 
@@ -148,7 +148,7 @@ pub struct QuietPlatform;
 impl Platform for QuietPlatform {
     fn set_activity(&mut self, _activity: Activity) {}
 
-    fn reveal_directory(&mut self, _path: &Path) -> io::Result<()> {
+    fn open_path(&mut self, _path: &Path) -> io::Result<()> {
         Ok(())
     }
 }
@@ -218,12 +218,16 @@ fn lock_file_claim() -> Option<FileLock> {
     Some(FileLock { file })
 }
 
-/// Opens `path` in the platform's file manager.
+/// Opens `path` with whatever the platform opens it with.
+///
+/// A directory reaches the file manager and the manual reaches the browser
+/// through one command, because each platform's file manager is also its shell
+/// opener. There is nothing to choose between here, so nothing does.
 ///
 /// The child is waited on by a detached thread rather than left unclaimed, so
 /// a long-lived session does not accumulate zombies on the platforms that
 /// create them.
-pub fn reveal_directory(path: &Path) -> io::Result<()> {
+pub fn open_path(path: &Path) -> io::Result<()> {
     let Some(program) = imp::FILE_MANAGER else {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,

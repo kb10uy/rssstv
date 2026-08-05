@@ -36,6 +36,16 @@ those directories are defined by, so a new one cannot be added without also
 being reachable. The application stores nothing of its own to save or reopen,
 so there is nothing else for the menu to offer.
 
+The Help menu opens `help/index.html`, which the release archive puts beside
+the executable, through the same platform call a directory goes through: every
+platform's file manager is also its shell opener, so HTML reaches the browser
+without a second mechanism. The manual is found beside the executable rather
+than under the application's directories because it belongs to the copy that
+was extracted — two versions on one machine each answer with their own, and
+nothing has to install it anywhere. A build run from the source tree has no
+manual beside it and the entry says so, since an entry that reports nothing
+cannot be told from one that is broken.
+
 ## Platform Integration
 
 Everything that only makes sense on one operating system lives in the

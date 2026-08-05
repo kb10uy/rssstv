@@ -38,6 +38,7 @@ pub enum Action {
     WriteBandPlan,
     ToggleAutoHistory,
     SelectHistoryFormat(HistoryFormat),
+    OpenManual,
     ZoomIn,
     ZoomOut,
     ZoomReset,
@@ -173,7 +174,10 @@ pub fn model(app: &App) -> Vec<Menu> {
         },
         Menu {
             label: text("menu-help"),
-            items: vec![Item::Pending(text("menu-help"))],
+            items: vec![Item::Command {
+                label: text("menu-manual"),
+                action: Action::OpenManual,
+            }],
         },
     ]
 }
@@ -281,6 +285,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::WriteBandPlan => app.write_band_plan(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
         Action::SelectHistoryFormat(format) => app.history_format = format,
+        Action::OpenManual => app.open_manual(),
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
         Action::ZoomOut => app.zoom_by(-ZOOM_STEP),
         Action::ZoomReset => app.set_ui_scale(crate::storage::config::DEFAULT_UI_SCALE),
@@ -459,6 +464,39 @@ mod tests {
             let key = folder.label_key();
             assert_ne!(app.i18n.text(key), key, "{key} is not translated");
         }
+    }
+
+    /// A manual nothing opens is a manual nobody reads, so the Help menu has
+    /// to carry a command rather than the placeholder it started as.
+    #[test]
+    fn the_help_menu_opens_the_manual() {
+        let app = App::headless();
+        let model = model(&app);
+        let help = model.last().expect("the menu should end with Help");
+
+        assert!(matches!(
+            help.items.as_slice(),
+            [Item::Command {
+                action: Action::OpenManual,
+                ..
+            }]
+        ));
+        assert_ne!(app.i18n.text("menu-manual"), "menu-manual");
+    }
+
+    /// A build run from the source tree has no manual beside it. The entry
+    /// still has to say so, because an entry that reports nothing is
+    /// indistinguishable from one that is broken.
+    #[test]
+    fn a_missing_manual_is_reported() {
+        let mut app = App::headless();
+
+        apply(&mut app, Action::OpenManual);
+
+        assert_eq!(
+            app.library_error.as_deref(),
+            Some(app.i18n.text("error-manual-missing").as_str())
+        );
     }
 
     /// Every action the model offers has to be handled, or a menu entry does

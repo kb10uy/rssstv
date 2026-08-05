@@ -21,6 +21,7 @@ menu-transmit = Transmit
 menu-receive = Reception
 menu-history = Received Images
 menu-help = Help
+menu-manual = Manual
 
 tab-receive = Receive
 tab-transmit = Transmit
@@ -114,6 +115,7 @@ error-no-transmit-frame = No transmit image has been composed yet
 error-no-output-device = Select an output device first
 error-invalid-station-call = Invalid station callsign: { $error }
 error-rig-unavailable = Rig control is not ready: { $error }
+error-manual-missing = The manual was not found. It is the help folder the release archive puts beside the executable.
 
 geometry = { $mode } · { $width }×{ $height }
 

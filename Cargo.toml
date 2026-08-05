@@ -38,6 +38,11 @@ image = { version = "0.25", default-features = false, features = ["bmp", "jpeg",
 image-webp = "0.2"
 kdl = "6.7"
 libm = "0.2"
+# Lua is built from its own vendored C sources: it is a few dozen files of
+# portable C with no configure step and no external dependencies, which is a
+# different proposition from linking Hamlib and is why the rig is scripted
+# rather than driven by a fixed set of commands.
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
 proptest = "1.7"
 png = "0.18"
 resvg = "0.47"

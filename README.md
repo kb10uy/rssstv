@@ -28,9 +28,12 @@ for the design and remaining work.
 Rig control goes through Hamlib's `rigctld` rather than a linked library, so
 there is nothing to build and the serial port stays available to the logger.
 Start `rigctld` for your rig, switch Rig Control on, and transmissions key it
-and read its frequency into `${radio.frequency}` and `${radio.band}`. What is
-sent at each moment — keying, unkeying, connecting, or arriving on a band — is
-written in `config.toml` and defaults to plain PTT. See
+and read its frequency into `${radio.frequency}` and `${radio.band}`.
+
+What is actually sent is decided by a Lua script, because a station keys its
+rig in more ways than one protocol covers. A default is built in and needs no
+file; write it out from the Rig Control menu as `rigcontrol.lua` beside
+`config.toml` to take it over. See
 [docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
 
 On Linux the window icon comes from a desktop entry rather than from the

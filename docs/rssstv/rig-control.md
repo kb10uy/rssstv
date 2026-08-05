@@ -57,23 +57,23 @@ stays what it is now, a description of how to talk to a rig.
 
 ## Status
 
-Implemented today, in the shape this document replaces:
+Implemented:
 
 - The `rigctld` transport, its extended-response framing, and `\chk_vfo`.
+- Named transports under `[rig.ports]`.
+- The Lua host: `rigcontrol.lua`, the compiled-in default, the context, ports
+  as script objects, the call deadline, and `open`, `close`, `transmit`,
+  `receive`, and `poll_frequency`.
 - Keying around a transmission with a lead-in and a tail, and refusing a
   transmission the rig would not take.
 - Frequency polling into `${radio.frequency}` and `${radio.band}`.
-- Command lists written as text in `config.toml` under `[rig.commands]`, and
-  per-band command lists under `[rig.bands]`.
-- A built-in amateur band table in `rssstv-rig`.
 
 Not yet implemented, and described here as the target:
 
-- The Lua host, the script, and everything in [The Script](#the-script).
-- Named transports; the address is currently a single `[rig] address` key.
-- `bands.toml`, which replaces both the built-in band table and
-  `[rig.bands]`.
-- Setting the frequency, changing band, and the interface controls for both.
+- `bands.toml`. Bands are still the built-in table in `rssstv-rig`, so
+  `ctx.band` carries only a name and none of the settings under
+  [Band Definitions](#band-definitions).
+- `set_frequency` and `change_band`, and the interface controls for both.
 - The serial transport, and with it the CI-V and DTR/RTS keying that motivates
   the design.
 
@@ -154,6 +154,9 @@ is the script's own arrangement, not a call the application makes twice.
 | `ctx.frequency` | The last frequency read, in hertz, or `nil` |
 | `ctx.log(message)` | Writes to the application log |
 
+Absent fields are `nil` rather than empty: a rig that has not been read has no
+frequency, and one between the bands has no band.
+
 `ctx.band` is the same table `change_band` receives, so a script reads a band's
 settings the same way whether it was handed one or is acting on the one the rig
 is already on.
@@ -181,9 +184,13 @@ A port of kind `serial`, which the CI-V and EXTFSK cases need:
 ### Bounding and Failure
 
 The script runs on the rig worker's thread, and `transmit` runs in front of a
-transmission, so it cannot be allowed to run forever. The host installs an
-instruction-count hook and aborts a script that exceeds it; an aborted script
-is a failed call.
+transmission, so it cannot be allowed to run forever. Each call is given a
+deadline, checked from an instruction-count hook, and a call that outstays it
+is abandoned as a failure.
+
+That bounds computation rather than waiting: time spent inside `port:send`
+does not advance the instruction count, so a script that only talks to the rig
+is bounded instead by the transport's own timeout, once per command.
 
 `transmit` failing — by raising, by being aborted, or by the rig refusing a
 command — abandons the transmission before any audio is sent, and `receive` is
@@ -279,6 +286,12 @@ playing what it was handed.
 Each entry under `[rig.ports]` becomes one member of `ctx.ports` under the same
 name. The names above are the ones the default script expects, and a station
 with only a `rigctld` needs only the first.
+
+A missing `[rig.ports]` section is one port named `rig` on the default address,
+so that switching rig control on works for a station running nothing but
+`rigctld`. A section that is present is taken as written: a port of a kind this
+build cannot open is dropped rather than replaced, because handing back the
+default would put the script on a rig the operator did not ask for.
 
 ## The rigctld Transport
 
@@ -391,9 +404,9 @@ disabled rather than guessing one.
 
 ## Staging
 
-1. The Lua host, the `rigctld` port, and `open`, `close`, `transmit`,
-   `receive`, and `poll_frequency`. Replaces `[rig.commands]` at parity with
-   what works today.
+1. **Done.** The Lua host, the `rigctld` port, and `open`, `close`,
+   `transmit`, `receive`, and `poll_frequency`. Replaced `[rig.commands]` at
+   parity with what worked before it.
 2. `bands.toml`, `change_band`, `set_frequency`, and the radio panel. Replaces
    `[rig.bands]` and the built-in band table.
 3. The serial port, and with it CI-V keying and DTR/RTS keying.
@@ -401,18 +414,22 @@ disabled rather than guessing one.
 Each stage stands on its own. The third is what makes the MMSSTV and EXTFSK
 cases work, and it needs nothing from the first two but the seam they define.
 
+The keys of the arrangement before the first stage — `[rig] address`,
+`[rig.commands]`, and `[rig.bands]` — are removed from the file when it is next
+saved, rather than left behind looking like settings that still do something.
+
 ## Verification Strategy
 
 The transport tests answer from a stand-in `rigctld` on a loopback socket, so
 they run without Hamlib installed. They cover the extended-response framing,
 the VFO question, a refused command, and a hangup.
 
-The script host needs its own: that each entry point is called at the moment it
-should be, that a script omitting one is not an error, that a failing
-`transmit` abandons the transmission and still calls `receive`, and that a
-script which does not terminate is aborted rather than holding the worker. A
-test script is easier to write than a test rig, so these are cheap once the
-host exists.
+The script host is tested against the same stand-in, with the script under test
+written into a temporary configuration directory: that the shipped default keys
+and unkeys, that a module exporting nothing still connects and sends nothing,
+that the band reaches the script, that a script which raises is reported
+without taking the connection down, that one which never returns is abandoned,
+and that a chunk returning something other than a table is refused.
 
 What none of it covers is Hamlib itself. The framing assumption — that `+`
 makes every answer end in `RPRT` — is the thing to confirm against a real

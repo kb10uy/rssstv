@@ -9,7 +9,7 @@
 use crate::{
     app::App,
     i18n::Locale,
-    storage::{history::HistoryFormat, paths::Folder},
+    storage::{config::PortSettings, history::HistoryFormat, paths::Folder},
     worker::rig::RigState,
 };
 
@@ -37,6 +37,7 @@ pub enum Action {
     ToggleVisRestart,
     ToggleRig,
     RetryRig,
+    WriteRigScript,
     ToggleAutoHistory,
     SelectHistoryFormat(HistoryFormat),
     ZoomIn,
@@ -270,7 +271,17 @@ fn rig_items(app: &App) -> Vec<Item> {
         return items;
     }
     items.push(Item::Separator);
-    items.push(Item::Pending(app.rig.address.clone()));
+    // One line per transport, because a station reaching a rig and an
+    // amplifier separately has two, and which one failed is worth seeing.
+    items.extend(app.rig.ports.iter().map(|(name, port)| {
+        Item::Pending(app.i18n.text_with(
+            "rig-port",
+            &[
+                ("name", crate::i18n::text(name)),
+                ("address", crate::i18n::text(port_address(port))),
+            ],
+        ))
+    }));
     // What the rig said is more use than the state it left behind, so the
     // failure takes the place of the state rather than sitting beside it.
     items.push(Item::Pending(
@@ -287,8 +298,19 @@ fn rig_items(app: &App) -> Vec<Item> {
         });
     }
     items.push(Item::Separator);
-    items.push(Item::Pending(app.i18n.text("rig-commands-note")));
+    items.push(Item::Command {
+        label: app.i18n.text("action-rig-write-script"),
+        action: Action::WriteRigScript,
+    });
+    items.push(Item::Pending(app.i18n.text("rig-script-note")));
     items
+}
+
+/// Where a port reaches, as the menu says it.
+const fn port_address(port: &PortSettings) -> &str {
+    match port {
+        PortSettings::Rigctld { address } => address.as_str(),
+    }
 }
 
 /// What the rig is tuned to, as the menu says it.
@@ -328,6 +350,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
         Action::ToggleRig => app.rig.enabled = !app.rig.enabled,
         Action::RetryRig => app.retry_rig(),
+        Action::WriteRigScript => app.write_rig_script(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
         Action::SelectHistoryFormat(format) => app.history_format = format,
         Action::ZoomIn => app.zoom_by(ZOOM_STEP),
@@ -496,8 +519,13 @@ mod tests {
         app.rig.enabled = true;
         let items = rig_items(&app);
         assert!(items.len() > 1);
+        // Every transport is named, so that a station reaching two of them can
+        // see which one the failure beside it belongs to.
         assert!(
-            items.contains(&Item::Pending(app.rig.address.clone())),
+            items.iter().any(|item| matches!(
+                item,
+                Item::Pending(label) if label.contains("127.0.0.1:4532")
+            )),
             "{items:?}"
         );
     }

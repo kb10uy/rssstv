@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Failure reported by rig control.
+/// Failure reported by a rig transport.
 ///
 /// Hamlib's own types are deliberately absent: this crate speaks to `rigctld`
 /// over a socket, and the transport is an implementation detail of it.
@@ -21,15 +21,33 @@ pub enum RigError {
     /// The command reached Hamlib and Hamlib rejected it.
     ///
     /// The code is Hamlib's own `RIG_E*` value, negated as `rigctld` reports
-    /// it. It is passed through rather than translated: the operator wrote the
-    /// command, so the number they can look up is more use than a guess at
-    /// what it meant.
+    /// it. It is passed through rather than translated: the script wrote the
+    /// command, so the number that can be looked up is more use than a guess
+    /// at what it meant.
     #[error("`{command}` was refused by the rig with status {code}")]
     Refused { command: String, code: i32 },
     /// The answer did not end the way the protocol says it must.
     #[error("rigctld answered `{command}` with nothing this crate could read")]
     Unreadable { command: String },
-    /// A command was configured with no words in it.
-    #[error("a rig command has to name something to run")]
-    EmptyCommand,
+    /// The command held a line break, or nothing at all.
+    ///
+    /// One call sends one command. A line break would frame two, and the
+    /// second would be answered separately, leaving an answer in the stream
+    /// that every later command would then read one behind.
+    #[error("a rig command has to be one non-empty line")]
+    NotOneLine,
+}
+
+impl RigError {
+    /// Whether the connection is still worth holding on to after this.
+    ///
+    /// A command the rig refused is about that command; it can be corrected
+    /// and tried again over the same connection. A transport that failed is
+    /// not something the next command would survive either.
+    pub const fn is_fatal(&self) -> bool {
+        matches!(
+            self,
+            Self::Address(_) | Self::Connect { .. } | Self::Transport(_) | Self::Closed
+        )
+    }
 }

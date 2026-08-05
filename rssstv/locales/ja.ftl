@@ -69,7 +69,9 @@ action-open-folder = フォルダーを開く
 action-refresh = 再読み込み
 action-rig-connect = rigctld に接続
 action-rig-retry = 接続し直す
+action-rig-write-script = デフォルトスクリプトを書き出す
 
+rig-port = { $name } · { $address }
 rig-state-disconnected = 未接続
 rig-state-connecting = 接続中…
 rig-state-receiving = 接続済み
@@ -78,7 +80,8 @@ rig-state-failed = 接続失敗
 rig-frequency = { $frequency } MHz · { $band }
 rig-frequency-out-of-band = { $frequency } MHz
 rig-frequency-unknown = 周波数未取得
-rig-commands-note = コマンドは config.toml で編集します。
+rig-script-note = 送出内容は rigcontrol.lua が決めます。
+rig-script-written = { $path } に書き出しました
 
 section-templates = テンプレート
 section-stocks = ストック画像

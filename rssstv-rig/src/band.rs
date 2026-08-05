@@ -1,5 +1,23 @@
 use core::cmp::Ordering;
 
+/// What the rig was found to be tuned to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Reading {
+    pub frequency_hz: u64,
+    /// The band the frequency falls in, if it falls in one.
+    pub band: Option<Band>,
+}
+
+impl Reading {
+    /// Reads a frequency and names the band it sits in.
+    pub fn at(frequency_hz: u64) -> Self {
+        Self {
+            frequency_hz,
+            band: Band::for_frequency(frequency_hz),
+        }
+    }
+}
+
 /// An amateur band, named the way an operator writes it.
 ///
 /// The edges are the widest any region allocates, because the band is only

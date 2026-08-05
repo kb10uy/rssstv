@@ -50,7 +50,8 @@ platform integration, and application behavior.
 | Transmit encoder | Image-to-raster conversion, headers, VIS, scan lines, and identifiers | `rssstv-sstv::tx` |
 | Modulator | Timed frequencies to PCM samples | `rssstv-modulator` |
 | Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture and playback implemented |
-| Rig adapters | Rig keying, frequency reading, and the operator's own commands | `rssstv-rig`; `rigctld` client implemented |
+| Rig transports | How a rig is reached: sockets, and later serial lines | `rssstv-rig`; `rigctld` client implemented |
+| Rig policy | What the rig is told, and when | `rigcontrol.lua`, hosted by `rssstv` |
 | Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
 | Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` receive interface; designed in [gui-design.md](gui-design.md) |
@@ -326,7 +327,7 @@ The workspace currently contains eleven packages:
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
 | `rssstv-audio` | Host audio adapters | Bounded capture and playback implemented |
-| `rssstv-rig` | Rig control adapters | `rigctld` client, command scripts, and band table implemented |
+| `rssstv-rig` | Rig transports | `rigctld` client and band table implemented |
 | `rssstv` | Application composition root | egui interface with live receive and transmit |
 
 Their current dependency direction is:
@@ -370,10 +371,10 @@ transmission.
 `rssstv-rig` is the platform rig boundary, and it is a socket rather than a
 library: Hamlib runs as the operator's own `rigctld` process, which keeps a C
 build out of every platform's toolchain and leaves the serial port available to
-whatever else the station runs. The crate exposes the moments a transmission
-passes through and the band the rig is on; what those moments send is written
-by the operator in the configuration file. The whole arrangement is described in
-[rig-control.md](rig-control.md).
+whatever else the station runs. The crate is how a rig is reached and not what
+it is told: what is sent at each moment is a Lua script the application hosts,
+because a station keys its rig in more ways than one protocol covers. The whole
+arrangement is described in [rig-control.md](rig-control.md).
 
 `rssstv-dsp` and `rssstv-sstv` build as allocation-backed `no_std` crates by
 default. `rssstv-fskid` is also `no_std`. Audio file and image format dependencies
@@ -492,8 +493,8 @@ implementations:
 - Audio detection of extended VIS and N-VIS.
 - Contest FSK records, narrow N-VIS transmission, and optional CW identification.
 - Template editing.
-- Rig control driven by an operator script rather than command lists, a serial
-  transport beside the `rigctld` one, and tuning from the interface. Designed in
+- A serial rig transport beside the `rigctld` one, band definitions in a file of
+  their own, and tuning from the interface. Designed in
   [rig-control.md](rig-control.md).
 - Real-world received-audio regression fixtures.
 

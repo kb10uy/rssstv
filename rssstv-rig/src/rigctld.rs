@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{command::Command, error::RigError};
+use crate::error::RigError;
 
 /// Where `rigctld` listens unless it was told otherwise.
 pub const DEFAULT_ADDRESS: &str = "127.0.0.1:4532";
@@ -101,13 +101,22 @@ impl Rigctld {
         self.vfo_argument
     }
 
-    /// Runs one of the operator's own commands, as written.
+    /// Runs one command written by the operator's script, as written.
     ///
     /// Nothing is added to it, including the VFO argument: which commands take
-    /// one is a property of the command, and the operator writing them knows
-    /// how their own `rigctld` was started better than a guess here would.
-    pub fn run(&mut self, command: &Command) -> Result<Response, RigError> {
-        self.send(command.line())
+    /// one is a property of the command, and a script written against a
+    /// particular `rigctld` knows how it was started better than a guess here
+    /// would.
+    ///
+    /// One call is one command. A line holding two is something only the far
+    /// end could recognize, but a line break here would frame two outright, so
+    /// that much is refused.
+    pub fn run(&mut self, command: &str) -> Result<Response, RigError> {
+        let line = command.trim();
+        if line.is_empty() || line.contains(['\r', '\n']) {
+            return Err(RigError::NotOneLine);
+        }
+        self.send(line)
     }
 
     /// Asks what the rig is tuned to.
@@ -183,6 +192,8 @@ mod tests {
         sync::{Arc, Mutex},
         thread::{self, JoinHandle},
     };
+
+    use rstest::rstest;
 
     use super::*;
 
@@ -266,16 +277,42 @@ mod tests {
         assert_eq!(fake.received(), ["+\\chk_vfo", "+\\get_freq currVFO"]);
     }
 
-    /// The operator's commands go out as written: this crate does not know
-    /// which of them take a VFO, and guessing would break the ones that do not.
+    /// A script's commands go out as written: this crate does not know which
+    /// of them take a VFO, and guessing would break the ones that do not.
     #[test]
-    fn an_operator_command_is_sent_untouched() {
+    fn a_script_command_is_sent_untouched() {
         let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 1\nRPRT 0\n", "set_level:\nRPRT 0\n"]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        let command = Command::parse("L MONITOR_GAIN 0.15").unwrap();
-        assert!(rig.run(&command).is_ok());
+        assert!(rig.run("L MONITOR_GAIN 0.15").is_ok());
         assert_eq!(fake.received()[1], "+L MONITOR_GAIN 0.15");
+    }
+
+    /// One call is one command. A line break would frame two, and the answer
+    /// to the second would be left in the stream for the next command to read.
+    #[rstest]
+    #[case::two_lines("T 1\nT 0")]
+    #[case::a_trailing_line_break_and_another_command("T 1\r\nT 0")]
+    #[case::nothing("")]
+    #[case::only_spacing("   ")]
+    fn a_command_that_is_not_one_line_is_refused(#[case] written: &str) {
+        let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 0\nRPRT 0\n"]);
+        let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
+
+        assert_eq!(rig.run(written), Err(RigError::NotOneLine));
+        // Nothing reached the far end, so the stream is still in step.
+        assert_eq!(fake.received(), ["+\\chk_vfo"]);
+    }
+
+    /// Spacing a command out to read well in a script is not a reason to
+    /// refuse it, and the far end never sees the difference.
+    #[test]
+    fn surrounding_spacing_is_trimmed_rather_than_refused() {
+        let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 0\nRPRT 0\n", "RPRT 0\n"]);
+        let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
+
+        assert!(rig.run("  T 1  ").is_ok());
+        assert_eq!(fake.received()[1], "+T 1");
     }
 
     #[test]
@@ -283,14 +320,17 @@ mod tests {
         let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 0\nRPRT 0\n", "set_ptt:\nRPRT -11\n"]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        let command = Command::parse("T 1").unwrap();
+        let refused = rig.run("T 1").unwrap_err();
+
         assert_eq!(
-            rig.run(&command),
-            Err(RigError::Refused {
+            refused,
+            RigError::Refused {
                 command: "T 1".to_owned(),
                 code: -11,
-            })
+            }
         );
+        // The command was refused, not the connection, so the next one may go.
+        assert!(!refused.is_fatal());
     }
 
     #[test]

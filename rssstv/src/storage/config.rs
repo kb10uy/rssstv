@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rssstv_rig::{Band, Command, DEFAULT_ADDRESS, Event, Script};
+use rssstv_rig::DEFAULT_ADDRESS;
 use rssstv_sstv::mode::Mode;
 use rssstv_template::valid_variable_name;
 use toml_edit::{DocumentMut, Item, Table, value};
@@ -85,25 +85,42 @@ pub struct Settings {
     pub rig: RigSettings,
 }
 
-/// How the station's rig is reached, and what it is told.
+/// How the station's rig is reached.
 ///
-/// The commands are the operator's own. What a rig wants around a
-/// transmission is a property of that rig and of the station around it — a
-/// data mode, a monitor level, an amplifier on a second port — so the
-/// application supplies the moments and the operator supplies the commands.
+/// Only the transports and the timing: what is sent over them is the
+/// operator's own script, because a station keys its rig in more ways than one
+/// protocol covers and none of them belongs hard-coded in an SSTV application.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RigSettings {
     /// Whether the application connects at all.
     pub enabled: bool,
-    /// Where `rigctld` is listening.
-    pub address: String,
+    /// The transports to open, under the names the script reaches them by.
+    pub ports: BTreeMap<String, PortSettings>,
     /// How often the frequency is read, in seconds; zero never reads it.
     pub poll_seconds: f32,
     /// How long after keying the first sample is sent, in seconds.
     pub lead_in_seconds: f32,
     /// How long after the last sample the rig is unkeyed, in seconds.
     pub tail_seconds: f32,
-    pub script: Script,
+}
+
+/// The name the default port is offered to the script under.
+pub const DEFAULT_PORT_NAME: &str = "rig";
+
+/// One transport, as the configuration file describes it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PortSettings {
+    /// A `rigctld` the operator is already running.
+    Rigctld { address: String },
+}
+
+impl PortSettings {
+    /// The word this kind of port is written as in the configuration file.
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Rigctld { .. } => "rigctld",
+        }
+    }
 }
 
 impl Default for RigSettings {
@@ -113,11 +130,15 @@ impl Default for RigSettings {
             // is in, and trying to reach one would only produce an error the
             // operator did not ask for.
             enabled: false,
-            address: DEFAULT_ADDRESS.to_owned(),
+            ports: BTreeMap::from([(
+                DEFAULT_PORT_NAME.to_owned(),
+                PortSettings::Rigctld {
+                    address: DEFAULT_ADDRESS.to_owned(),
+                },
+            )]),
             poll_seconds: DEFAULT_POLL_SECONDS,
             lead_in_seconds: DEFAULT_LEAD_IN_SECONDS,
             tail_seconds: DEFAULT_TAIL_SECONDS,
-            script: Script::default(),
         }
     }
 }
@@ -434,7 +455,7 @@ fn rig_settings(document: &DocumentMut) -> RigSettings {
     let defaults = RigSettings::default();
     RigSettings {
         enabled: boolean(document, Some("rig"), "enabled").unwrap_or(defaults.enabled),
-        address: owned(document, Some("rig"), "address").unwrap_or(defaults.address),
+        ports: rig_ports(document).unwrap_or(defaults.ports),
         poll_seconds: seconds(
             document,
             "poll-interval",
@@ -453,7 +474,6 @@ fn rig_settings(document: &DocumentMut) -> RigSettings {
             &KEYING_SECONDS_RANGE,
             defaults.tail_seconds,
         ),
-        script: rig_script(document),
     }
 }
 
@@ -469,54 +489,44 @@ fn seconds(
         .unwrap_or(default)
 }
 
-/// Reads the commands the operator attached to each event and band.
+/// Reads the transports to open, or nothing when the file names none.
 ///
-/// A key that is absent leaves the default in place, and one that is present
-/// replaces it outright, including with nothing: an operator whose rig is
-/// keyed by VOX writes `transmit = ""` and means it.
-fn rig_script(document: &DocumentMut) -> Script {
-    let mut script = Script::default();
-    if let Some(table) = subtable(document, "rig", "commands") {
-        for event in Event::ALL {
-            if let Some(commands) = table.get(event.config_name()).and_then(command_list) {
-                script.set(event, commands);
-            }
-        }
-    }
-    if let Some(table) = subtable(document, "rig", "bands") {
-        for (name, item) in table {
-            if let Some(band) = Band::from_name(name)
-                && let Some(commands) = command_list(item)
-            {
-                script.set_band(band, commands);
-            }
-        }
-    }
-    script
+/// A section that is present is taken as written: a port whose kind is one
+/// this build does not have is dropped, and a section that leaves nothing
+/// behind leaves the script with no port to reach rather than being quietly
+/// given the default one back.
+fn rig_ports(document: &DocumentMut) -> Option<BTreeMap<String, PortSettings>> {
+    let table = subtable(document, "rig", "ports")?;
+    Some(
+        table
+            .iter()
+            .filter_map(|(name, item)| Some((name.to_owned(), port_settings(item.as_table()?)?)))
+            .collect(),
+    )
 }
 
-/// Reads the commands attached to one event or band, one per line.
-///
-/// A value that is not text says nothing about the event and leaves the
-/// default in place, which is how every other unusable value in this file is
-/// treated.
-fn command_list(item: &Item) -> Option<Vec<Command>> {
-    item.as_str().map(Command::parse_script)
+fn port_settings(table: &Table) -> Option<PortSettings> {
+    match table.get("kind")?.as_str()?.trim() {
+        "rigctld" => Some(PortSettings::Rigctld {
+            address: table
+                .get("address")
+                .and_then(Item::as_str)
+                .map(str::trim)
+                .filter(|address| !address.is_empty())
+                .unwrap_or(DEFAULT_ADDRESS)
+                .to_owned(),
+        }),
+        _ => None,
+    }
 }
 
-/// Writes the rig section back, commands and all.
+/// Writes the rig section back, ports and all.
 ///
-/// The commands are written even when they are the defaults, because the
-/// configuration file is where they are edited: an operator who has to add
-/// the keys before changing them has no way to learn the keys exist.
+/// The ports are written even at their defaults, because the configuration
+/// file is where they are edited: an operator who has to add the keys before
+/// changing them has no way to learn the keys exist.
 fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
     set(document, Some("rig"), "enabled", Some(value(rig.enabled)));
-    set(
-        document,
-        Some("rig"),
-        "address",
-        Some(value(rig.address.as_str())),
-    );
     for (key, seconds) in [
         ("poll-interval", rig.poll_seconds),
         ("lead-in", rig.lead_in_seconds),
@@ -531,32 +541,26 @@ fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
             Some(value((f64::from(seconds) * 1_000.0).round() / 1_000.0)),
         );
     }
-    let commands = subtable_mut(document, "rig", "commands");
-    for event in Event::ALL {
-        commands[event.config_name()] = command_value(rig.script.commands(event));
+    // The rig used to be told what to send from this file, under a single
+    // address. A script says it now, over ports that are named, so the keys
+    // that meant the old arrangement are taken out rather than left looking
+    // like settings that still do something.
+    set(document, Some("rig"), "address", None);
+    if let Some(rig) = document.get_mut("rig").and_then(Item::as_table_mut) {
+        rig.remove("commands");
+        rig.remove("bands");
     }
-    store_rig_bands(document, &rig.script);
-}
-
-/// Writes the per-band commands, leaving the bands that survived in place.
-fn store_rig_bands(document: &mut DocumentMut, script: &Script) {
-    if script.bands().next().is_none() {
-        if let Some(rig) = document.get_mut("rig").and_then(Item::as_table_mut) {
-            rig.remove("bands");
+    let ports = subtable_mut(document, "rig", "ports");
+    ports.retain(|name, _| rig.ports.contains_key(name));
+    for (name, port) in &rig.ports {
+        let entry = child_table_mut(ports, name);
+        entry["kind"] = value(port.kind_name());
+        match port {
+            PortSettings::Rigctld { address } => {
+                entry["address"] = value(address.as_str());
+            }
         }
-        return;
     }
-    let named: Vec<&str> = script.bands().map(|(band, _)| band.name()).collect();
-    let table = subtable_mut(document, "rig", "bands");
-    table.retain(|name, _| named.contains(&name));
-    for (band, commands) in script.bands() {
-        table[band.name()] = command_value(commands);
-    }
-}
-
-/// Writes commands out as the script the operator reads them back as.
-fn command_value(commands: &[Command]) -> Item {
-    value(Command::script(commands))
 }
 
 /// Resolves a stored mode name, tolerating a hand-edited difference in case.
@@ -623,9 +627,12 @@ fn subtable<'a>(document: &'a DocumentMut, parent: &str, name: &str) -> Option<&
 
 /// Returns `parent.name` as a table, replacing anything else stored under it.
 fn subtable_mut<'a>(document: &'a mut DocumentMut, parent: &str, name: &str) -> &'a mut Table {
-    let entry = table_mut(document, parent)
-        .entry(name)
-        .or_insert(Item::Table(Table::new()));
+    child_table_mut(table_mut(document, parent), name)
+}
+
+/// Returns `name` within `parent` as a table, replacing anything else there.
+fn child_table_mut<'a>(parent: &'a mut Table, name: &str) -> &'a mut Table {
+    let entry = parent.entry(name).or_insert(Item::Table(Table::new()));
     if !entry.is_table() {
         *entry = Item::Table(Table::new());
     }
@@ -703,19 +710,23 @@ mod tests {
             ui_scale: 1.5,
             rig: RigSettings {
                 enabled: true,
-                address: "192.168.0.8:4532".to_owned(),
+                ports: BTreeMap::from([
+                    (
+                        "rig".to_owned(),
+                        PortSettings::Rigctld {
+                            address: "192.168.0.8:4532".to_owned(),
+                        },
+                    ),
+                    (
+                        "amplifier".to_owned(),
+                        PortSettings::Rigctld {
+                            address: "127.0.0.1:4533".to_owned(),
+                        },
+                    ),
+                ]),
                 poll_seconds: 2.5,
                 lead_in_seconds: 0.3,
                 tail_seconds: 0.1,
-                script: {
-                    let mut script = Script::default();
-                    script.set(Event::Transmit, Command::parse_script("M PKTUSB 0\nT 1"));
-                    script.set_band(
-                        Band::from_name("40m").unwrap(),
-                        Command::parse_script("\\set_ant 1 0"),
-                    );
-                    script
-                },
             },
         }
     }
@@ -836,123 +847,108 @@ mod tests {
         );
     }
 
-    /// The commands are what the operator edits, so they have to be in the
-    /// file before they are changed rather than only after.
+    /// The ports are what the operator edits, so they have to be in the file
+    /// before they are changed rather than only after.
     #[test]
-    fn the_rig_commands_are_written_out_even_at_their_defaults() {
+    fn the_default_port_is_written_out_under_the_name_the_script_reaches_it_by() {
         let root = TestDirectory::new();
         let mut config = Config::load(&root.config());
         config.store(&Settings::default());
 
         let stored = fs::read_to_string(root.config()).unwrap();
-        assert!(stored.contains("[rig.commands]"), "{stored}");
-        assert!(stored.contains(r#"transmit = "T 1""#), "{stored}");
-        assert!(stored.contains(r#"receive = "T 0""#), "{stored}");
-        assert!(stored.contains(r#"open = """#), "{stored}");
-        // Nothing was attached to a band, so no band table was invented.
-        assert!(!stored.contains("[rig.bands]"), "{stored}");
+        assert!(stored.contains("[rig.ports.rig]"), "{stored}");
+        assert!(stored.contains(r#"kind = "rigctld""#), "{stored}");
+        assert!(stored.contains(r#"address = "127.0.0.1:4532""#), "{stored}");
     }
 
-    /// A Hamlib command written in full begins with a backslash, so a script
-    /// holding one has to be written as a literal string: a basic string would
-    /// come back with every backslash escaped, which is not what the operator
-    /// typed and not what the next hand edit would follow.
+    /// A station reaching two rigs names them, and the script reaches each by
+    /// the name it was written under.
     #[test]
-    fn a_multi_line_script_is_written_as_a_literal_string() {
-        let root = TestDirectory::new();
-        let mut config = Config::load(&root.config());
-        let mut settings = Settings::default();
-        settings.rig.script.set(
-            Event::Transmit,
-            Command::parse_script("\\set_mode PKTUSB 3000\nT 1"),
-        );
-        config.store(&settings);
-
-        let stored = fs::read_to_string(root.config()).unwrap();
-        assert!(
-            stored.contains("transmit = '''\n\\set_mode PKTUSB 3000\nT 1'''"),
-            "{stored}"
-        );
-        assert_eq!(Config::load(&root.config()).settings(), settings);
-    }
-
-    #[test]
-    fn a_hand_written_script_replaces_the_default() {
+    fn every_named_port_is_read_back() {
         let root = TestDirectory::new();
         fs::write(
             root.config(),
             concat!(
-                "[rig.commands]\n",
-                "transmit = '''\n",
-                "L MONITOR_GAIN 0.15\n",
-                "T 1\n",
-                "'''\n",
-                "[rig.bands]\n",
-                "\"20m\" = '\\set_ant 2 0'\n",
+                "[rig.ports.rig]\n",
+                "kind = \"rigctld\"\n",
+                "address = \"192.168.0.8:4532\"\n",
+                "[rig.ports.amplifier]\n",
+                "kind = \"rigctld\"\n",
             ),
         )
         .unwrap();
 
-        let script = Config::load(&root.config()).settings().rig.script;
+        let ports = Config::load(&root.config()).settings().rig.ports;
 
         assert_eq!(
-            script.commands(Event::Transmit),
-            Command::parse_script("L MONITOR_GAIN 0.15\nT 1").as_slice()
+            ports.get("rig"),
+            Some(&PortSettings::Rigctld {
+                address: "192.168.0.8:4532".to_owned()
+            })
         );
-        // Untouched keys keep the default that makes keying work at all.
+        // A port that names no address is still a port; it is where rigctld
+        // listens unless it was told otherwise.
         assert_eq!(
-            script.commands(Event::Receive),
-            [Command::parse("T 0").unwrap()]
-        );
-        assert_eq!(
-            script.band_commands(Band::from_name("20m").unwrap()),
-            [Command::parse("\\set_ant 2 0").unwrap()]
+            ports.get("amplifier"),
+            Some(&PortSettings::Rigctld {
+                address: DEFAULT_ADDRESS.to_owned()
+            })
         );
     }
 
-    /// A station keyed by VOX wants no keying command at all, which the
-    /// default would otherwise send anyway.
+    /// A section that is present is taken as written. Handing back the default
+    /// port would put the script on a rig the operator did not ask for.
     #[rstest]
-    #[case::nothing("transmit = ''")]
-    #[case::only_spacing("transmit = '''\n\n'''")]
-    fn an_empty_script_means_nothing_is_sent(#[case] written: &str) {
+    #[case::an_unknown_kind("[rig.ports.rig]\nkind = \"serial\"\n")]
+    #[case::no_kind_at_all("[rig.ports.rig]\naddress = \"127.0.0.1:4532\"\n")]
+    fn a_port_this_build_cannot_open_is_dropped(#[case] written: &str) {
         let root = TestDirectory::new();
-        fs::write(root.config(), format!("[rig.commands]\n{written}\n")).unwrap();
+        fs::write(root.config(), written).unwrap();
 
-        let script = Config::load(&root.config()).settings().rig.script;
-
-        assert!(script.commands(Event::Transmit).is_empty());
+        assert!(Config::load(&root.config()).settings().rig.ports.is_empty());
     }
 
-    /// A value that is not text says nothing about the event, so the default
-    /// that makes keying work is left in place rather than being emptied.
-    #[rstest]
-    #[case::a_number("transmit = 1")]
-    #[case::a_list("transmit = [\"T 1\"]")]
-    fn a_script_that_is_not_text_leaves_the_default_alone(#[case] written: &str) {
-        let root = TestDirectory::new();
-        fs::write(root.config(), format!("[rig.commands]\n{written}\n")).unwrap();
-
-        let script = Config::load(&root.config()).settings().rig.script;
-
-        assert_eq!(
-            script.commands(Event::Transmit),
-            [Command::parse("T 1").unwrap()]
-        );
-    }
-
+    /// A section that is not a section says nothing about the ports, which is
+    /// how every other unusable value in this file is treated.
     #[test]
-    fn an_unknown_band_name_is_left_out_rather_than_carried_around() {
+    fn a_ports_key_that_is_not_a_section_leaves_the_default_port() {
         let root = TestDirectory::new();
-        fs::write(root.config(), "[rig.bands]\n\"11m\" = '\\set_ant 1 0'\n").unwrap();
+        fs::write(root.config(), "[rig]\nports = 3\n").unwrap();
+
+        assert_eq!(
+            Config::load(&root.config()).settings().rig.ports,
+            RigSettings::default().ports
+        );
+    }
+
+    /// The rig used to be told what to send from this file. Leaving those keys
+    /// behind would leave settings that look like they still do something.
+    #[test]
+    fn the_keys_of_the_earlier_arrangement_are_taken_out() {
+        let root = TestDirectory::new();
+        fs::write(
+            root.config(),
+            concat!(
+                "[rig]\n",
+                "address = \"192.168.0.8:4532\"\n",
+                "[rig.commands]\n",
+                "transmit = \"T 1\"\n",
+                "[rig.bands]\n",
+                "\"40m\" = '\\set_ant 1 0'\n",
+            ),
+        )
+        .unwrap();
 
         let mut config = Config::load(&root.config());
-        let settings = config.settings();
-        assert!(!settings.rig.script.has_band_commands());
+        config.store(&Settings::default());
 
-        config.store(&settings);
         let stored = fs::read_to_string(root.config()).unwrap();
-        assert!(!stored.contains("11m"), "{stored}");
+        assert!(!stored.contains("[rig.commands]"), "{stored}");
+        assert!(!stored.contains("[rig.bands]"), "{stored}");
+        // The single address the rig used to be reached at; the ports written
+        // in its place carry addresses of their own.
+        assert!(!stored.contains("192.168.0.8"), "{stored}");
+        assert!(stored.contains("[rig.ports.rig]"), "{stored}");
     }
 
     #[rstest]

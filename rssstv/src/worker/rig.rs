@@ -1,4 +1,6 @@
 use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
@@ -7,10 +9,15 @@ use std::{
     time::Duration,
 };
 
-pub use rssstv_rig::Reading;
-use rssstv_rig::{DEFAULT_TIMEOUT, Event, RigError, Session};
+pub mod script;
 
-use crate::storage::config::RigSettings;
+use rssstv_rig::DEFAULT_TIMEOUT;
+pub use rssstv_rig::Reading;
+
+use crate::{
+    storage::config::{PortSettings, RigSettings},
+    worker::rig::script::{Entry, ScriptHost},
+};
 
 /// How long the worker waits on a request when there is no polling to do.
 ///
@@ -24,11 +31,11 @@ pub enum RigState {
     /// The operator has not asked for rig control.
     #[default]
     Disconnected,
-    /// The connection is being made; nothing can be asked of it yet.
+    /// The transports are being opened; nothing can be asked of them yet.
     Connecting,
     /// Connected, with the rig not keyed.
     Receiving,
-    /// The transmit commands have run and the lead-in has passed.
+    /// The script's transmit function ran and the lead-in has passed.
     Transmitting,
     /// The connection is gone and the worker has stopped.
     Failed,
@@ -69,27 +76,27 @@ enum Request {
     Receive,
 }
 
-/// The thread that owns the connection to `rigctld`.
+/// The thread that owns the transports and the operator's script.
 ///
 /// The interface never waits on it. Keying a rig means a socket round trip and
 /// then a lead-in the rig needs to switch, and neither belongs in a frame.
 pub struct RigWorker {
     snapshot: Arc<Mutex<RigSnapshot>>,
     /// Held as an option so that dropping the worker can close the channel,
-    /// which is what tells the thread to run the close script and stop.
+    /// which is what tells the thread to call `close` and stop.
     requests: Option<Sender<Request>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl RigWorker {
-    pub fn spawn(settings: &RigSettings) -> Self {
+    pub fn spawn(settings: &RigSettings, config_dir: &Path) -> Self {
         let snapshot = Arc::new(Mutex::new(RigSnapshot {
             state: RigState::Connecting,
             ..RigSnapshot::default()
         }));
         let (requests, incoming) = mpsc::channel();
         let worker_snapshot = Arc::clone(&snapshot);
-        let plan = Plan::new(settings);
+        let plan = Plan::new(settings, config_dir);
         let thread = thread::spawn(move || rig_loop(plan, &incoming, &worker_snapshot));
         Self {
             snapshot,
@@ -153,30 +160,32 @@ impl core::fmt::Debug for RigWorker {
 
 /// What the worker was started with, owned so the thread can keep it.
 struct Plan {
-    address: String,
+    config_dir: PathBuf,
+    ports: BTreeMap<String, PortSettings>,
     /// How long between frequency reads, or nothing to never read it.
     poll: Option<Duration>,
     lead_in: Duration,
     tail: Duration,
-    script: rssstv_rig::Script,
 }
 
 impl Plan {
-    fn new(settings: &RigSettings) -> Self {
+    fn new(settings: &RigSettings, config_dir: &Path) -> Self {
         Self {
-            address: settings.address.clone(),
+            config_dir: config_dir.to_path_buf(),
+            ports: settings.ports.clone(),
             poll: (settings.poll_seconds > 0.0)
                 .then(|| Duration::from_secs_f32(settings.poll_seconds)),
             lead_in: Duration::from_secs_f32(settings.lead_in_seconds),
             tail: Duration::from_secs_f32(settings.tail_seconds),
-            script: settings.script.clone(),
         }
     }
 }
 
 fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSnapshot>>) {
-    let mut session = match Session::open(&plan.address, DEFAULT_TIMEOUT, plan.script) {
-        Ok(session) => session,
+    let host = match ScriptHost::source(&plan.config_dir)
+        .and_then(|source| ScriptHost::load(&source, &plan.ports, DEFAULT_TIMEOUT))
+    {
+        Ok(host) => host,
         Err(error) => {
             update(snapshot, |state| {
                 state.state = RigState::Failed;
@@ -185,8 +194,16 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
             return;
         }
     };
+    if let Err(error) = host.call(Entry::Open, None) {
+        update(snapshot, |state| {
+            state.state = RigState::Failed;
+            state.error = Some(error.to_string());
+        });
+        return;
+    }
     update(snapshot, |state| state.state = RigState::Receiving);
     let mut keyed = false;
+    let mut reading: Option<Reading> = None;
     loop {
         // Polling stops while the rig is keyed. Reading the frequency back
         // mid-transmission says nothing the operator cannot see, and it puts
@@ -198,7 +215,7 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
         };
         let outcome = match requests.recv_timeout(gap) {
             Ok(Request::Transmit) => {
-                let outcome = session.fire(Event::Transmit);
+                let outcome = host.call(Entry::Transmit, reading);
                 if outcome.is_ok() {
                     // The rig switches over on its own time, and anything sent
                     // inside that is lost. Waiting here rather than in the
@@ -213,16 +230,26 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
                 thread::sleep(plan.tail);
                 keyed = false;
                 update(snapshot, |state| state.state = RigState::Receiving);
-                session.fire(Event::Receive)
+                host.call(Entry::Receive, reading)
             }
-            Err(RecvTimeoutError::Timeout) if !keyed && plan.poll.is_some() => session
-                .poll()
-                .map(|reading| update(snapshot, |state| state.reading = Some(reading))),
+            Err(RecvTimeoutError::Timeout) if !keyed && plan.poll.is_some() => {
+                match host.poll_frequency(reading) {
+                    Ok(frequency) => {
+                        reading = frequency.map(Reading::at);
+                        update(snapshot, |state| state.reading = reading);
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             Err(RecvTimeoutError::Timeout) => Ok(()),
             Err(RecvTimeoutError::Disconnected) => break,
         };
         if let Err(error) = outcome {
-            let stopping = !is_recoverable(&error);
+            // What decides whether to go on is the transport rather than the
+            // error: a script may have caught the failure with `pcall` and
+            // raised something of its own, but a socket that closed is closed.
+            let stopping = host.transport_failed();
             update(snapshot, |state| {
                 state.error = Some(error.to_string());
                 if stopping {
@@ -235,23 +262,11 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
         }
     }
     // Reported but not acted on: the session is being given up either way, and
-    // a close script that failed leaves nothing behind to recover.
-    if let Err(error) = session.close() {
+    // a close that failed leaves nothing behind to recover.
+    if let Err(error) = host.call(Entry::Close, reading) {
         update(snapshot, |state| state.error = Some(error.to_string()));
     }
     update(snapshot, |state| state.state = RigState::Disconnected);
-}
-
-/// Whether the connection is still worth holding on to after `error`.
-///
-/// A command the rig refused is about that command; the operator can fix it
-/// and try again over the same connection. A transport that failed is not
-/// something the next command would survive either.
-fn is_recoverable(error: &RigError) -> bool {
-    matches!(
-        error,
-        RigError::Refused { .. } | RigError::Unreadable { .. } | RigError::EmptyCommand
-    )
 }
 
 fn update(snapshot: &Mutex<RigSnapshot>, update: impl FnOnce(&mut RigSnapshot)) {
@@ -263,19 +278,48 @@ fn update(snapshot: &Mutex<RigSnapshot>, update: impl FnOnce(&mut RigSnapshot)) 
 #[cfg(test)]
 mod tests {
     use std::{
+        fs,
         io::{BufRead, BufReader, BufWriter, Write},
         net::TcpListener,
+        sync::atomic::{AtomicUsize, Ordering},
         time::Instant,
     };
 
-    use rssstv_rig::{Band, Command, Script};
+    use rssstv_rig::Band;
 
     use super::*;
+
+    static NEXT_TEMP_DIRECTORY: AtomicUsize = AtomicUsize::new(0);
+
+    /// A configuration directory the script may or may not be written into.
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let index = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("rssstv-rig-{}-{index}", std::process::id()));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn with_script(source: &str) -> Self {
+            let directory = Self::new();
+            fs::write(directory.0.join(script::SCRIPT_FILE), source).unwrap();
+            directory
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
 
     /// A stand-in for `rigctld` that answers every command with success.
     ///
     /// Frequency reads are answered with a fixed frequency, so a test can
-    /// watch what the worker asks for without Hamlib being installed.
+    /// watch what the script asks for without Hamlib being installed.
     struct FakeRig {
         address: String,
         received: Arc<Mutex<Vec<String>>>,
@@ -318,17 +362,21 @@ mod tests {
     fn settings(address: &str) -> RigSettings {
         RigSettings {
             enabled: true,
-            address: address.to_owned(),
+            ports: BTreeMap::from([(
+                "rig".to_owned(),
+                PortSettings::Rigctld {
+                    address: address.to_owned(),
+                },
+            )]),
             poll_seconds: 0.0,
             lead_in_seconds: 0.0,
             tail_seconds: 0.0,
-            script: Script::default(),
         }
     }
 
     /// Waits for `predicate` to hold of the snapshot, or gives up.
     fn settle(worker: &RigWorker, predicate: impl Fn(&RigSnapshot) -> bool) -> RigSnapshot {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let snapshot = worker.latest();
             if predicate(&snapshot) {
@@ -342,10 +390,13 @@ mod tests {
         }
     }
 
+    /// The script the application ships has to key a rig on its own, because
+    /// it is what runs for every operator who has not written one.
     #[test]
-    fn keying_runs_the_transmit_script_and_then_the_receive_script() {
+    fn the_default_script_keys_and_unkeys() {
         let fake = FakeRig::spawn(14_230_000);
-        let worker = RigWorker::spawn(&settings(&fake.address));
+        let config = TestDirectory::new();
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         worker.transmit();
@@ -357,15 +408,35 @@ mod tests {
         assert_eq!(fake.received(), ["+\\chk_vfo", "+T 1", "+T 0"]);
     }
 
+    /// A module that omits a function is not in error: a station keyed by VOX
+    /// exports no `transmit`, and leaving it out is the whole of saying so.
+    #[test]
+    fn a_script_that_exports_nothing_keys_nothing_and_still_connects() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config = TestDirectory::with_script("return {}");
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
+
+        worker.transmit();
+        settle(&worker, |snapshot| snapshot.state == RigState::Transmitting);
+        drop(worker);
+
+        assert_eq!(fake.received(), ["+\\chk_vfo"]);
+    }
+
     /// The lead-in is what a rig needs to switch over, so nothing may call the
     /// rig ready to transmit until it has passed.
     #[test]
     fn the_lead_in_is_waited_out_before_the_rig_reports_it_is_transmitting() {
         let fake = FakeRig::spawn(14_230_000);
-        let worker = RigWorker::spawn(&RigSettings {
-            lead_in_seconds: 0.3,
-            ..settings(&fake.address)
-        });
+        let config = TestDirectory::new();
+        let worker = RigWorker::spawn(
+            &RigSettings {
+                lead_in_seconds: 0.3,
+                ..settings(&fake.address)
+            },
+            &config.0,
+        );
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         let asked = Instant::now();
@@ -382,10 +453,14 @@ mod tests {
     #[test]
     fn polling_reports_what_the_rig_is_tuned_to() {
         let fake = FakeRig::spawn(7_178_000);
-        let worker = RigWorker::spawn(&RigSettings {
-            poll_seconds: 0.02,
-            ..settings(&fake.address)
-        });
+        let config = TestDirectory::new();
+        let worker = RigWorker::spawn(
+            &RigSettings {
+                poll_seconds: 0.02,
+                ..settings(&fake.address)
+            },
+            &config.0,
+        );
 
         let snapshot = settle(&worker, |snapshot| snapshot.reading.is_some());
 
@@ -399,10 +474,14 @@ mod tests {
     #[test]
     fn a_keyed_rig_is_not_polled() {
         let fake = FakeRig::spawn(7_178_000);
-        let worker = RigWorker::spawn(&RigSettings {
-            poll_seconds: 0.02,
-            ..settings(&fake.address)
-        });
+        let config = TestDirectory::new();
+        let worker = RigWorker::spawn(
+            &RigSettings {
+                poll_seconds: 0.02,
+                ..settings(&fake.address)
+            },
+            &config.0,
+        );
         settle(&worker, |snapshot| snapshot.reading.is_some());
 
         worker.transmit();
@@ -413,29 +492,117 @@ mod tests {
         assert_eq!(fake.received().len(), keyed_at);
     }
 
+    /// The band the rig is on reaches the script, which is what lets one
+    /// script cover a station's bands rather than one per band.
+    #[test]
+    fn the_script_is_told_which_band_the_rig_is_on() {
+        let fake = FakeRig::spawn(7_178_000);
+        let config = TestDirectory::with_script(
+            r#"
+            return {
+              poll_frequency = function(ctx) return ctx.ports.rig:frequency() end,
+              transmit = function(ctx)
+                ctx.ports.rig:send("BAND " .. (ctx.band and ctx.band.name or "none"))
+              end,
+            }
+            "#,
+        );
+        let worker = RigWorker::spawn(
+            &RigSettings {
+                poll_seconds: 0.02,
+                ..settings(&fake.address)
+            },
+            &config.0,
+        );
+        settle(&worker, |snapshot| snapshot.reading.is_some());
+
+        worker.transmit();
+        settle(&worker, |snapshot| snapshot.state == RigState::Transmitting);
+
+        assert!(
+            fake.received().contains(&"+BAND 40m".to_owned()),
+            "{:?}",
+            fake.received()
+        );
+    }
+
+    /// A script that raises leaves the rig unkeyed, and the interface has to
+    /// be told so that the transmission it was keyed for does not go out.
+    #[test]
+    fn a_script_that_raises_reports_the_failure_and_stays_connected() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config =
+            TestDirectory::with_script("return { transmit = function() error('no antenna') end }");
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
+
+        worker.transmit();
+        let snapshot = settle(&worker, |snapshot| snapshot.error.is_some());
+
+        assert!(
+            snapshot.error.as_deref().unwrap().contains("no antenna"),
+            "{snapshot:?}"
+        );
+        // The script failed, not the connection, so rig control is still up.
+        assert_eq!(snapshot.state, RigState::Receiving);
+    }
+
+    /// A script that does not finish would hold the worker, and with it every
+    /// transmission after the one it was called for.
+    #[test]
+    fn a_script_that_never_finishes_is_abandoned() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config =
+            TestDirectory::with_script("return { transmit = function() while true do end end }");
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+        settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
+
+        worker.transmit();
+        let snapshot = settle(&worker, |snapshot| snapshot.error.is_some());
+
+        assert!(
+            snapshot.error.as_deref().unwrap().contains("too long"),
+            "{snapshot:?}"
+        );
+        assert_ne!(snapshot.state, RigState::Transmitting);
+    }
+
+    #[test]
+    fn a_script_that_does_not_return_a_module_is_reported() {
+        let fake = FakeRig::spawn(14_230_000);
+        let config = TestDirectory::with_script("return 3");
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
+
+        let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
+
+        assert!(
+            snapshot.error.as_deref().unwrap().contains("table"),
+            "{snapshot:?}"
+        );
+    }
+
     #[test]
     fn a_rig_that_is_not_listening_is_reported_rather_than_waited_on() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap().to_string();
         drop(listener);
+        let config = TestDirectory::new();
 
-        let worker = RigWorker::spawn(&settings(&address));
+        let worker = RigWorker::spawn(&settings(&address), &config.0);
 
         let snapshot = settle(&worker, |snapshot| snapshot.state == RigState::Failed);
         assert!(snapshot.error.is_some());
     }
 
-    /// The close script is the operator's, and giving up the connection is
-    /// what it hangs off.
+    /// Closing is the operator's, and giving up the connection is what it
+    /// hangs off.
     #[test]
-    fn dropping_the_worker_runs_the_close_script() {
+    fn dropping_the_worker_calls_close() {
         let fake = FakeRig::spawn(14_230_000);
-        let mut script = Script::default();
-        script.set(Event::Close, vec![Command::parse("T 0").unwrap()]);
-        let worker = RigWorker::spawn(&RigSettings {
-            script,
-            ..settings(&fake.address)
-        });
+        let config = TestDirectory::with_script(
+            "return { close = function(ctx) ctx.ports.rig:send('T 0') end }",
+        );
+        let worker = RigWorker::spawn(&settings(&fake.address), &config.0);
         settle(&worker, |snapshot| snapshot.state == RigState::Receiving);
 
         drop(worker);

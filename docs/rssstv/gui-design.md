@@ -438,12 +438,12 @@ filled in or is something the menu only has to say — the rig's address, what i
 connection is doing, an empty device list.
 
 The Rig Control menu is the switch for the connection and nothing else. Below
-it, once it is on, sit the address, the connection's state or the failure that
-ended it, and what the rig is tuned to; reconnecting is offered exactly when
-there is a failure to recover from. The commands the rig is sent are not there:
-a menu cannot offer a list of what a rig wants around a transmission, and a
-dialog for editing command lines would be a worse text editor than the one the
-operator already has.
+it, once it is on, sit the transports and where each reaches, the connection's
+state or the failure that ended it, and what the rig is tuned to; reconnecting
+is offered exactly when there is a failure to recover from. What the rig is
+sent is not there — it is a script, and a dialog for editing one would be a
+worse text editor than the one the operator already has. The menu writes the
+default script out instead, and opens the folder holding it.
 
 What the station says about itself — its callsign, where it is operating from,
 and its grid locator — is edited in a dialog opened from the Settings menu, not
@@ -602,12 +602,14 @@ station callsign, or unready rig, so the button is never dead without saying
 why.
 
 Rig control is implemented against `rigctld`. A worker thread owns the
-connection, keys the rig around a transmission, and reads the frequency between
-transmissions; the interface starts playback only once the rig has reported that
-it has switched over, and a rig that refused to key stops the transmission
-rather than sending into a receiver. The commands sent at each moment are the
-operator's own, read from the configuration file. [rig-control.md](rig-control.md)
-describes the protocol, the configuration format, and the timing.
+transports and a Lua state, keys the rig around a transmission, and reads the
+frequency between transmissions; the interface starts playback only once the
+rig has reported that it has switched over, and a script that failed to key
+stops the transmission rather than sending into a receiver. What is sent at
+each moment comes from `rigcontrol.lua`, which is built in until the operator
+writes their own from the Rig Control menu.
+[rig-control.md](rig-control.md) describes the transports, the script, and the
+timing.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.

@@ -69,7 +69,9 @@ action-open-folder = Open folder
 action-refresh = Refresh
 action-rig-connect = Connect to rigctld
 action-rig-retry = Reconnect
+action-rig-write-script = Write the default script
 
+rig-port = { $name } · { $address }
 rig-state-disconnected = Not connected
 rig-state-connecting = Connecting…
 rig-state-receiving = Connected
@@ -78,7 +80,8 @@ rig-state-failed = Failed
 rig-frequency = { $frequency } MHz · { $band }
 rig-frequency-out-of-band = { $frequency } MHz
 rig-frequency-unknown = Frequency not read
-rig-commands-note = Commands are edited in config.toml.
+rig-script-note = What is sent is decided by rigcontrol.lua.
+rig-script-written = Written to { $path }
 
 section-templates = Templates
 section-stocks = Stock images

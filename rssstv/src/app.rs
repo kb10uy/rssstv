@@ -28,7 +28,7 @@ use crate::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
         receive::{Frame, Progress},
-        rig::{Reading, RigSnapshot, RigState, RigWorker},
+        rig::{Reading, RigSnapshot, RigState, RigWorker, script},
         transmit::{TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
 };
@@ -688,7 +688,8 @@ impl App {
     fn poll_rig(&mut self) {
         match (self.rig.enabled, self.rig_worker.is_some()) {
             (true, false) => {
-                self.rig_worker = Some(RigWorker::spawn(&self.rig));
+                let worker = RigWorker::spawn(&self.rig, self.paths.config_dir());
+                self.rig_worker = Some(worker);
                 self.rig_snapshot = RigSnapshot::default();
             }
             (false, true) => {
@@ -714,6 +715,31 @@ impl App {
         self.unkey_rig();
         self.rig_worker = None;
         self.rig_snapshot = RigSnapshot::default();
+    }
+
+    /// Writes the default script out for the operator to edit.
+    ///
+    /// Refuses to write over one that is already there: the file only exists
+    /// because someone edited it, and replacing it with the default is the one
+    /// thing this must never do. The result is reported on the status line
+    /// rather than in front of the interface, because nothing was lost either
+    /// way.
+    pub fn write_rig_script(&mut self) {
+        let path = self.paths.config_dir().join(script::SCRIPT_FILE);
+        if path.exists() {
+            self.reveal(Folder::Config);
+            return;
+        }
+        match fs::write(&path, script::DEFAULT_SCRIPT) {
+            Ok(()) => {
+                self.library_error = Some(self.i18n.text_with(
+                    "rig-script-written",
+                    &[("path", path.display().to_string().into())],
+                ));
+                self.reveal(Folder::Config);
+            }
+            Err(error) => self.library_error = Some(error.to_string()),
+        }
     }
 
     /// Gives back the keying a transmission asked for, if it asked for any.

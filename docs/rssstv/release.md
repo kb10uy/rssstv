@@ -68,6 +68,28 @@ graph differs by target: a page built on Linux would list neither `muda` nor
 `windows-sys`. The Linux archive also carries `assets/rssstv.desktop` and
 `assets/icon.png`, which a Wayland compositor needs to find the window icon.
 
+## The Windows C runtime
+
+`.cargo/config.toml` links the MSVC CRT statically for
+`x86_64-pc-windows-msvc`. A dynamically linked build imports
+`VCRUNTIME140.dll`, which is part of the Visual C++ redistributable and not of
+Windows, while the `api-ms-win-crt-*` imports beside it resolve to
+`ucrtbase.dll` and are an operating system component. Only the first one is a
+problem, and it is a problem this distribution cannot solve any other way: the
+archive has no step that could install a redistributable, and a missing DLL
+fails in the loader before the program can report anything.
+
+Statically linking takes the UCRT along with it, so a CRT fix now arrives by
+rebuilding rather than through Windows Update. That is the accepted cost. The
+alternative of shipping `VCRUNTIME140.dll` beside the executables has the same
+servicing property, since an application-local copy is not updated either, and
+adds a way to break: an executable copied out of the extracted directory stops
+starting.
+
+Statically linked executables import operating system libraries alone, which is
+worth checking after a dependency that brings C code is added. The archived
+`encode-wav.exe` imports four.
+
 `release` collects the archives, writes `SHA256SUMS` over them, and publishes
 a GitHub release. Re-running a tag that was already released replaces its
 archives rather than failing, so a rebuild is a re-run.

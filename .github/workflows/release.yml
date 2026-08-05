@@ -87,6 +87,23 @@ jobs:
           cargo build --release --locked --target ${{ matrix.target }}
           -p rssstv -p encode-wav -p decode-wav
 
+      # A dependency on the Visual C++ redistributable is the one thing an
+      # archive cannot repair on the operator's machine, so the invariant is
+      # checked rather than trusted: `RUSTFLAGS` in the environment replaces
+      # the flag in `.cargo/config.toml` without a word about it.
+      - name: Check that the Windows executables need no C runtime DLL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($executable in "rssstv", "encode-wav", "decode-wav") {
+            $path = "target/${{ matrix.target }}/release/$executable.exe"
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+            if ($text -match "VCRUNTIME140|api-ms-win-crt-") {
+              throw "$executable.exe links the C runtime dynamically"
+            }
+          }
+
       # Generated on the platform being packaged rather than once for all
       # three: the dependency graph differs by target, so a page built on one
       # would omit what only another one links.

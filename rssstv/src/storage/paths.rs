@@ -8,6 +8,12 @@ use directories::{BaseDirs, UserDirs};
 
 use crate::platform::APP_DIRECTORY;
 
+/// The settings file, named here because a test writes one directly.
+pub const CONFIG_FILE: &str = "config.toml";
+
+/// The rolling log the application writes under its state directory.
+const LOG_FILE: &str = "rssstv.log";
+
 const DEFAULT_CONFIG: &str = "";
 
 /// One of the directories the application keeps for the operator.
@@ -93,13 +99,13 @@ impl AppPaths {
         state_dir: PathBuf,
     ) -> Self {
         Self {
-            config_file: config_dir.join("config.toml"),
+            config_file: config_dir.join(CONFIG_FILE),
             templates_dir: data_dir.join("templates"),
             assets_dir: data_dir.join("assets"),
             stocks_dir: pictures_dir.join("Stocks"),
             sent_dir: pictures_dir.join("Sent"),
             received_dir: pictures_dir.join("Received"),
-            log_file: state_dir.join("logs").join("rssstv.log"),
+            log_file: state_dir.join("logs").join(LOG_FILE),
         }
     }
 

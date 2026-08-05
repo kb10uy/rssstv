@@ -661,7 +661,7 @@ mod tests {
     use crate::test_util::TempDir;
 
     fn config_path(dir: &TempDir) -> PathBuf {
-        dir.path().join("config.toml")
+        dir.path().join(crate::storage::paths::CONFIG_FILE)
     }
 
     fn populated() -> Settings {

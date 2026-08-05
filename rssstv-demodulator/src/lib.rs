@@ -349,6 +349,31 @@ mod tests {
         assert_eq!(output.fsk_ids()[0].as_str(), "JL1HIS");
     }
 
+    /// The transmit encoder and the receive front end agree about the contest
+    /// record as well as about the identifier it follows.
+    #[rstest]
+    #[case("001")]
+    #[case("13H")]
+    fn detects_a_trailing_contest_number(#[case] text: &str) {
+        let rate = 8_000;
+        let mut samples = vis_signal(Mode::Scottie2, rate, 0.0);
+        let mut phase = 0.0;
+        let id = rssstv_fskid::FskId::new("JL1HIS").unwrap();
+        let number = rssstv_fskid::FskNumber::new(text).unwrap();
+        for event in id.encoder_with_number(number) {
+            let seconds = f64::from(event.duration_micros()) / 1_000_000.0;
+            let frequency = f64::from(event.tone().frequency_hz());
+            tone(&mut samples, rate, frequency, seconds, &mut phase);
+        }
+
+        let output = demodulate(&samples, rate).unwrap();
+
+        assert_eq!(output.fsk_ids().len(), 1);
+        assert_eq!(output.fsk_ids()[0].as_str(), "JL1HIS");
+        assert_eq!(output.fsk_numbers().len(), 1);
+        assert_eq!(output.fsk_numbers()[0].as_str(), text);
+    }
+
     #[rstest]
     #[case(1)]
     #[case(73)]

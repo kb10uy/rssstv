@@ -1,9 +1,12 @@
 use core::{fmt, str};
 
-use crate::{FskEncoder, FskIdError};
+use crate::{FskEncoder, FskIdError, FskNumberError};
 
 pub(crate) const MAX_ID_LEN: usize = 16;
+/// How many number symbols the receiver reads before it gives up on the record.
 pub(crate) const MAX_NUMBER_LEN: usize = 9;
+/// The longest contest number a receiver still accepts, one short of that.
+pub(crate) const MAX_NUMBER_TEXT_LEN: usize = MAX_NUMBER_LEN - 1;
 
 /// A classified FSK detector sample.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,8 +56,13 @@ impl FskId {
     }
 
     /// Creates a bounded encoder for this identifier's complete physical FSKID sequence.
-    pub const fn encoder(self) -> FskEncoder {
+    pub fn encoder(self) -> FskEncoder {
         FskEncoder::new(self)
+    }
+
+    /// Creates the same encoder with a contest number after the identifier.
+    pub fn encoder_with_number(self, number: FskNumber) -> FskEncoder {
+        FskEncoder::with_number(self, number)
     }
 
     /// Accepts identifier text the decoder has already validated against the
@@ -78,6 +86,31 @@ pub struct FskNumber {
 }
 
 impl FskNumber {
+    /// Validates and stores protocol-compatible contest number text unchanged.
+    ///
+    /// The record's alphabet begins where the identifier's digits do, so a
+    /// number is uppercase and carries no spaces however it is spelled.
+    pub fn new(text: &str) -> Result<Self, FskNumberError> {
+        let source = text.as_bytes();
+        if source.is_empty() {
+            return Err(FskNumberError::Empty);
+        }
+        if source.len() > MAX_NUMBER_TEXT_LEN {
+            return Err(FskNumberError::TooLong);
+        }
+        for (index, &byte) in source.iter().enumerate() {
+            if !(0x30..=0x5f).contains(&byte) {
+                return Err(FskNumberError::InvalidByte { index, byte });
+            }
+        }
+        let mut bytes = [0; MAX_NUMBER_LEN];
+        bytes[..source.len()].copy_from_slice(source);
+        Ok(Self {
+            bytes,
+            len: source.len() as u8,
+        })
+    }
+
     /// Returns the decoded contest number as text.
     pub fn as_str(&self) -> &str {
         str::from_utf8(&self.bytes[..usize::from(self.len)])
@@ -88,6 +121,26 @@ impl FskNumber {
     /// protocol alphabet and length limit.
     pub(crate) const fn from_symbols(bytes: [u8; MAX_NUMBER_LEN], len: u8) -> Self {
         Self { bytes, len }
+    }
+
+    /// Returns the value a counted record would carry, when this is a number
+    /// MMSSTV would send in that form rather than as text.
+    ///
+    /// Three digits or more, and small enough for the twelve bits the counted
+    /// form has. A fourth digit is only counted when the number really needs
+    /// it, so `0012` travels as text where `1000` travels as a count.
+    pub(crate) fn count(&self) -> Option<u16> {
+        let text = self.as_str().as_bytes();
+        if text.len() < 3 || !text.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let count = text
+            .iter()
+            .fold(0_u32, |count, digit| count * 10 + u32::from(digit - b'0'));
+        if count >= 4096 || (text.len() > 3 && count < 1000) {
+            return None;
+        }
+        Some(count as u16)
     }
 
     /// Formats a counted number, padded to the three digits MMSSTV prints.

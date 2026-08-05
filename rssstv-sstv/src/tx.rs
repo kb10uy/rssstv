@@ -8,7 +8,7 @@ use crate::{
     signal::{Frequency, TimedTone, TxComponent},
     time::{SstvDuration, TxInstant},
 };
-use rssstv_fskid::{FskEncoder, FskId};
+use rssstv_fskid::{FskEncoder, FskId, FskNumber};
 
 const PS_PER_MS: u64 = 1_000_000_000;
 const VIS_END_PS: u64 = 910 * PS_PER_MS;
@@ -224,6 +224,26 @@ impl TransmissionEncoder {
         Ok(Self {
             image: TxEncoder::new(mode, image)?,
             fsk: Some(station_id.encoder()),
+            stage: TransmissionStage::VoiceActivation,
+            voice_activation: 0,
+            deadline_ps: 0,
+        })
+    }
+
+    /// Constructs the same transmission with a contest number after the
+    /// identifier.
+    ///
+    /// The number rides on the identifier rather than being announced on its
+    /// own, so a transmission that sends no identifier sends no number either.
+    pub fn with_contest_number(
+        mode: Mode,
+        image: RgbImage,
+        station_id: FskId,
+        number: FskNumber,
+    ) -> Result<Self, SstvError> {
+        Ok(Self {
+            image: TxEncoder::new(mode, image)?,
+            fsk: Some(station_id.encoder_with_number(number)),
             stage: TransmissionStage::VoiceActivation,
             voice_activation: 0,
             deadline_ps: 0,
@@ -733,6 +753,30 @@ mod tests {
         );
         assert_eq!(duration.as_picos(), silence.until().as_picos());
         assert_eq!(transmission.next(), None);
+    }
+
+    /// A contest number is four more symbols on the end of the identifier, and
+    /// nothing else about the transmission moves.
+    #[test]
+    fn a_contest_number_lengthens_only_the_identifier() {
+        let mode = Mode::Robot36;
+        let station_id = FskId::new("N0CALL").unwrap();
+        let plain =
+            TransmissionEncoder::new(mode, image(mode, Rgb8::default()), station_id).unwrap();
+        let numbered = TransmissionEncoder::with_contest_number(
+            mode,
+            image(mode, Rgb8::default()),
+            station_id,
+            FskNumber::new("001").unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(numbered.raster_start(), plain.raster_start());
+        assert_eq!(
+            numbered.duration().as_picos() - plain.duration().as_picos(),
+            4 * 6 * 22 * PS_PER_MS,
+            "the counted record is four symbols of six bits"
+        );
     }
 
     /// An operator who turns the identifier off gets neither the FSK symbols

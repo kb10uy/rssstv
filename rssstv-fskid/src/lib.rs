@@ -11,5 +11,5 @@ mod id;
 
 pub use decoder::{FskDecoder, FskRecord};
 pub use encoder::{FskEncoder, FskTxEvent, FskTxTone};
-pub use error::FskIdError;
+pub use error::{FskIdError, FskNumberError};
 pub use id::{FskId, FskNumber, FskTone};

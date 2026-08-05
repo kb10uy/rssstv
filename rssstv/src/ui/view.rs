@@ -61,9 +61,12 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     // Fixed rather than resizable: everything in it is laid out from the width
     // it is given, so there is nothing in there a wider panel would show more
     // of, and the picture beside it is what the rest of the window is for.
+    // Exact rather than a default width: a panel keeps the width it was last
+    // laid out at, and a window dragged narrow enough to squeeze it stores the
+    // squeezed width and stays there once the window is given its size back.
     Panel::right(Id::new("side-panel"))
         .resizable(false)
-        .default_size(SIDE_PANEL_WIDTH)
+        .exact_size(SIDE_PANEL_WIDTH)
         .show(ui, |ui| side_panel(ui, app));
     Panel::bottom(Id::new("library"))
         .resizable(true)

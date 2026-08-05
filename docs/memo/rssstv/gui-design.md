@@ -531,7 +531,12 @@ The side panel is a fixed width rather than a draggable one. Everything in it
 is laid out from the width it is given — the level bar, both dropdowns, the
 frequency readout, and every text field — so a wider panel shows no more than
 the default one does, while the picture beside it is what the rest of the
-window is for.
+window is for. The width is stated as the panel's exact size rather than as its
+default: a panel takes the width it was last laid out at, and a window dragged
+narrow enough to squeeze it stores the squeezed width and keeps it once the
+window is given its size back. Giving way to a window narrower than the panel
+is the one case it does change width in, and it takes its width back as soon as
+there is room for it.
 
 The transmit trigger shares its row with the tune tone, which takes a quarter
 of it. The tone is captioned with its frequency rather than with a word, the

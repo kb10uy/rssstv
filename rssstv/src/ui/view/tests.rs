@@ -568,3 +568,38 @@ fn the_transmit_trigger_is_refused_while_a_tone_is_being_sent() {
 
     assert!(!app.is_tuning());
 }
+
+/// A panel keeps the width it was last laid out at, so a window dragged
+/// narrow enough to squeeze this one used to leave it squeezed once the
+/// window was given its size back.
+#[test]
+fn the_side_panel_returns_to_its_width_after_a_narrow_window() {
+    let mut app = App::headless();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 700.0))
+        .build_ui(|ui| {
+            let model = menu::model(&app);
+            view(ui, &mut app, &model);
+        });
+
+    harness.run();
+    assert_eq!(side_panel_width(&harness), Some(SIDE_PANEL_WIDTH));
+
+    // Narrower than the panel asks for, which is the one case it gives way in:
+    // it cannot be wider than the window it is in.
+    harness.set_size(egui::vec2(200.0, 700.0));
+    harness.run();
+    assert!(
+        side_panel_width(&harness).is_some_and(|width| width < SIDE_PANEL_WIDTH),
+        "the panel should give way to a window narrower than it is"
+    );
+
+    harness.set_size(egui::vec2(900.0, 700.0));
+    harness.run();
+    assert_eq!(side_panel_width(&harness), Some(SIDE_PANEL_WIDTH));
+}
+
+fn side_panel_width(harness: &Harness<'_>) -> Option<f32> {
+    egui::containers::panel::PanelState::load(&harness.ctx, Id::new("side-panel"))
+        .map(|state| state.outer_rect.width())
+}

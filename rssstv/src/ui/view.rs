@@ -6,11 +6,11 @@ use rssstv_template::valid_variable_name;
 
 use crate::{
     app::{App, Dsp, Entry, Tab},
-    i18n::{number, text as arg},
+    i18n::{arg, number},
     storage::paths::Folder,
     ui::{canvas, menu},
     worker::{
-        receive::Progress,
+        receive::RxProgress,
         rig::RigState,
         transmit::{TxGain, TxPhase, TxProgress},
     },
@@ -310,13 +310,13 @@ fn state(app: &App) -> String {
             let progress = app.audio.snapshot().progress;
             // A stopped reception leaves a partial image on the canvas, so it
             // has to read differently from having nothing at all.
-            if progress == Progress::Stopped {
+            if progress == RxProgress::Stopped {
                 return app.i18n.text("state-stopped");
             }
-            if !progress.is_active() && progress != Progress::Complete {
+            if !progress.is_active() && progress != RxProgress::Complete {
                 return app.i18n.text("state-waiting");
             }
-            if progress == Progress::Complete {
+            if progress == RxProgress::Complete {
                 app.i18n.text("state-complete")
             } else {
                 let percent = (progress.fraction() * 100.0).round();

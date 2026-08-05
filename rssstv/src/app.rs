@@ -17,7 +17,7 @@ use rssstv_template::valid_variable_name;
 use rssstv_demodulator::SyncStart;
 
 use crate::{
-    i18n::{I18n, Locale},
+    i18n::{I18n, Locale, owned},
     platform::{self, Activity, Platform},
     storage::{
         bands::{BandDefinition, BandPlan},
@@ -28,7 +28,7 @@ use crate::{
     worker::{
         audio::AudioState,
         compose::{ComposeRequest, Composer},
-        receive::{Frame, Progress},
+        receive::{Frame, RxProgress},
         rig::{Reading, RigSnapshot, RigState, RigWorker, script},
         transmit::{Identification, TxGain, TxPhase, TxProgress, TxSnapshot, TxWorker},
     },
@@ -893,7 +893,7 @@ impl App {
             Ok(path) => {
                 self.library_error = Some(self.i18n.text_with(
                     "rig-script-written",
-                    &[("path", path.display().to_string().into())],
+                    &[("path", owned(path.display().to_string()))],
                 ));
                 self.reveal(Folder::Config);
             }
@@ -1060,7 +1060,7 @@ impl App {
             Activity::Transmitting
         } else if matches!(
             self.audio.snapshot().progress,
-            Progress::Acquiring | Progress::Decoding { .. }
+            RxProgress::Acquiring | RxProgress::Decoding { .. }
         ) {
             Activity::Receiving
         } else {
@@ -1271,7 +1271,7 @@ impl App {
         if let Err(error) = FskId::new(self.station_callsign.trim()) {
             return Some(self.i18n.text_with(
                 "error-invalid-station-call",
-                &[("error", error.to_string().into())],
+                &[("error", owned(error.to_string()))],
             ));
         }
         if self.prepared_frame.is_none() {
@@ -1300,7 +1300,7 @@ impl App {
             .unwrap_or_else(|| self.i18n.text(self.rig_snapshot.state.label_key()));
         Some(
             self.i18n
-                .text_with("error-rig-unavailable", &[("error", detail.into())]),
+                .text_with("error-rig-unavailable", &[("error", owned(detail))]),
         )
     }
 
@@ -1520,7 +1520,7 @@ mod tests {
     use super::*;
     use crate::{
         test_util::TempDir,
-        worker::receive::{Frame, HistoryCandidate, Snapshot},
+        worker::receive::{Frame, HistoryCandidate, RxSnapshot},
     };
 
     /// Builds an interface over real directories but no host audio.
@@ -1573,25 +1573,25 @@ mod tests {
         );
     }
 
-    fn decoding(rows: usize, total: usize) -> Snapshot {
-        Snapshot {
-            progress: Progress::Decoding { rows, total },
-            display_fraction: Progress::Decoding { rows, total }.fraction(),
-            ..Snapshot::default()
+    fn decoding(rows: usize, total: usize) -> RxSnapshot {
+        RxSnapshot {
+            progress: RxProgress::Decoding { rows, total },
+            display_fraction: RxProgress::Decoding { rows, total }.fraction(),
+            ..RxSnapshot::default()
         }
     }
 
-    fn identified(calls: &[&str]) -> Snapshot {
-        Snapshot {
+    fn identified(calls: &[&str]) -> RxSnapshot {
+        RxSnapshot {
             callsigns: calls.iter().map(|call| (*call).to_owned()).collect(),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         }
     }
 
-    fn numbered(numbers: &[&str]) -> Snapshot {
-        Snapshot {
+    fn numbered(numbers: &[&str]) -> RxSnapshot {
+        RxSnapshot {
             numbers: numbers.iter().map(|number| (*number).to_owned()).collect(),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         }
     }
 
@@ -1607,7 +1607,7 @@ mod tests {
             ..Settings::default()
         };
         let mut app = disconnected(paths, &settings);
-        app.audio.set_snapshot(Snapshot {
+        app.audio.set_snapshot(RxSnapshot {
             history: Some(HistoryCandidate {
                 mode: Mode::Robot36,
                 frame: Frame {
@@ -1618,7 +1618,7 @@ mod tests {
                 received_at: "2026-08-04T12:34:56+09:00".to_owned(),
                 fsk_ids: vec!["JA1ABC".to_owned()],
             }),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
 
         app.poll_audio();
@@ -1639,7 +1639,7 @@ mod tests {
             ..Settings::default()
         };
         let mut app = disconnected(library(&root), &settings);
-        app.audio.set_snapshot(Snapshot {
+        app.audio.set_snapshot(RxSnapshot {
             history: Some(HistoryCandidate {
                 mode: Mode::Robot36,
                 frame: Frame {
@@ -1650,7 +1650,7 @@ mod tests {
                 received_at: "2026-08-04T12:34:56+09:00".to_owned(),
                 fsk_ids: Vec::new(),
             }),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
 
         app.poll_audio();
@@ -1722,7 +1722,7 @@ mod tests {
 
         app.audio.set_snapshot(identified(&["JA1ABC", "JH1XYZ"]));
         app.poll_audio();
-        app.audio.set_snapshot(Snapshot::default());
+        app.audio.set_snapshot(RxSnapshot::default());
         app.poll_audio();
         app.audio.set_snapshot(identified(&["JA1ABC"]));
         app.poll_audio();
@@ -1920,7 +1920,7 @@ mod tests {
         app.poll_audio();
         assert_eq!(app.activity(), Activity::Receiving);
 
-        app.audio.set_snapshot(Snapshot::default());
+        app.audio.set_snapshot(RxSnapshot::default());
         app.poll_audio();
         assert_eq!(app.activity(), Activity::Idle);
         assert_eq!(
@@ -1991,9 +1991,9 @@ mod tests {
     #[test]
     fn waiting_receiver_keeps_the_retained_frame_fraction() {
         let mut app = App::headless();
-        app.audio.set_snapshot(Snapshot {
+        app.audio.set_snapshot(RxSnapshot {
             display_fraction: 0.65,
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
         assert_eq!(app.decoded_fraction(), 0.65);
     }
@@ -2243,7 +2243,7 @@ mod tests {
         app.audio.set_snapshot(numbered(&["001", "002"]));
         app.poll_audio();
         assert_eq!(app.qso.rsv_received, "595002");
-        app.audio.set_snapshot(Snapshot::default());
+        app.audio.set_snapshot(RxSnapshot::default());
         app.poll_audio();
         app.audio.set_snapshot(numbered(&["001"]));
         app.poll_audio();
@@ -2477,7 +2477,7 @@ mod tests {
         };
         let mut app = disconnected(paths, &settings);
         app.refresh_library();
-        app.audio.set_snapshot(Snapshot {
+        app.audio.set_snapshot(RxSnapshot {
             history: Some(HistoryCandidate {
                 mode: Mode::Robot36,
                 frame: Frame {
@@ -2488,7 +2488,7 @@ mod tests {
                 received_at: "2026-08-04T12:34:56+09:00".to_owned(),
                 fsk_ids: Vec::new(),
             }),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
 
         app.poll_audio();

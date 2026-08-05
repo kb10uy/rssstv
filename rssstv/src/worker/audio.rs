@@ -3,7 +3,7 @@ use rssstv_audio::{
 };
 use rssstv_demodulator::SyncStart;
 
-use crate::worker::receive::{HistoryCandidate, Snapshot, Worker};
+use crate::worker::receive::{HistoryCandidate, RxSnapshot, RxWorker};
 
 /// One second of queue at the preferred capture rate.
 const QUEUE_CAPACITY_SAMPLES: usize = 48_000;
@@ -20,8 +20,8 @@ pub struct AudioState {
     pub output_device: Option<OutputDevice>,
     pub error: Option<String>,
     capture: Option<Capture>,
-    worker: Option<Worker>,
-    snapshot: Snapshot,
+    worker: Option<RxWorker>,
+    snapshot: RxSnapshot,
     slant: bool,
     vis_restart: bool,
     sync_start: SyncStart,
@@ -80,7 +80,7 @@ impl AudioState {
             error: (!error.is_empty()).then(|| error.join("; ")),
             capture: None,
             worker: None,
-            snapshot: Snapshot::default(),
+            snapshot: RxSnapshot::default(),
             slant,
             vis_restart,
             sync_start: SyncStart::default(),
@@ -106,7 +106,7 @@ impl AudioState {
             error: None,
             capture: None,
             worker: None,
-            snapshot: Snapshot::default(),
+            snapshot: RxSnapshot::default(),
             slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
@@ -115,7 +115,7 @@ impl AudioState {
 
     /// Replaces the observed snapshot without a running worker.
     #[cfg(test)]
-    pub fn set_snapshot(&mut self, snapshot: Snapshot) {
+    pub fn set_snapshot(&mut self, snapshot: RxSnapshot) {
         self.snapshot = snapshot;
     }
 
@@ -147,10 +147,10 @@ impl AudioState {
         // capture queue never outlives its producer.
         self.worker = None;
         self.capture = None;
-        self.snapshot = Snapshot::default();
+        self.snapshot = RxSnapshot::default();
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
-                self.worker = Some(Worker::spawn(
+                self.worker = Some(RxWorker::spawn(
                     reader,
                     self.slant,
                     self.vis_restart,
@@ -175,7 +175,7 @@ impl AudioState {
         frame
     }
 
-    pub const fn snapshot(&self) -> &Snapshot {
+    pub const fn snapshot(&self) -> &RxSnapshot {
         &self.snapshot
     }
 
@@ -249,7 +249,7 @@ impl AudioState {
         let fault = self.capture.as_ref()?.take_fault()?;
         self.worker = None;
         self.capture = None;
-        self.snapshot = Snapshot::default();
+        self.snapshot = RxSnapshot::default();
         Some(fault)
     }
 

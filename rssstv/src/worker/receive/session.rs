@@ -16,7 +16,7 @@ use rssstv_sstv::{
     rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging, StopReason},
 };
 
-use crate::worker::receive::{Frame, HistoryCandidate, Mailbox, Progress, Snapshot};
+use crate::worker::receive::{Frame, HistoryCandidate, Mailbox, RxProgress, RxSnapshot};
 
 /// Samples drained from the capture queue per pass.
 const READ_SAMPLES: usize = 4_096;
@@ -162,19 +162,19 @@ impl Session {
         Ok(())
     }
 
-    fn progress(&self) -> Progress {
+    fn progress(&self) -> RxProgress {
         let Some(decoder) = self.decoder.as_ref() else {
-            return Progress::Idle;
+            return RxProgress::Idle;
         };
         let total = decoder.mode().spec().active_rows() as usize;
         match decoder.state() {
-            RxState::Acquiring => Progress::Acquiring,
-            RxState::Decoding { completed_rows } => Progress::Decoding {
+            RxState::Acquiring => RxProgress::Acquiring,
+            RxState::Decoding { completed_rows } => RxProgress::Decoding {
                 rows: completed_rows,
                 total,
             },
-            RxState::Complete => Progress::Complete,
-            RxState::Stopped { .. } => Progress::Stopped,
+            RxState::Complete => RxProgress::Complete,
+            RxState::Stopped { .. } => RxProgress::Stopped,
         }
     }
 
@@ -410,9 +410,9 @@ pub(super) fn run(
     ) {
         Ok(session) => session,
         Err(error) => {
-            mailbox.publish(Snapshot {
+            mailbox.publish(RxSnapshot {
                 error: Some(error),
-                ..Snapshot::default()
+                ..RxSnapshot::default()
             });
             return;
         }
@@ -423,7 +423,7 @@ pub(super) fn run(
     let mut numbers: Vec<String> = Vec::new();
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
     let mut error = None;
-    let mut last_progress = Progress::Idle;
+    let mut last_progress = RxProgress::Idle;
     let mut display_fraction = 0.0;
     let mut history_deadline = None;
     let mut progress_changed_at = Instant::now();
@@ -480,7 +480,7 @@ pub(super) fn run(
         let superseded = session.superseded.take();
         if superseded.is_some() {
             history_deadline = None;
-            last_progress = Progress::Idle;
+            last_progress = RxProgress::Idle;
             progress_changed_at = Instant::now();
         }
 
@@ -489,7 +489,7 @@ pub(super) fn run(
         if let Some(fraction) = session.display_fraction() {
             display_fraction = fraction;
         }
-        if progress == Progress::Stopped {
+        if progress == RxProgress::Stopped {
             match session.interrupt() {
                 Ok(result) => interrupted = result,
                 Err(reason) => error = Some(reason),
@@ -538,7 +538,7 @@ pub(super) fn run(
         if frame.is_some() {
             last_frame = Instant::now();
         }
-        let snapshot = Snapshot {
+        let snapshot = RxSnapshot {
             mode: session.decoder.as_ref().map(RxDecoder::mode),
             progress,
             display_fraction,

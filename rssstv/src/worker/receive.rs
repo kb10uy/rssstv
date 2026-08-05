@@ -63,9 +63,9 @@ impl Frame {
     }
 }
 
-/// Progress of the current reception.
+/// RxProgress of the current reception.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Progress {
+pub enum RxProgress {
     /// No SSTV signal has been identified.
     #[default]
     Idle,
@@ -79,7 +79,7 @@ pub enum Progress {
     Stopped,
 }
 
-impl Progress {
+impl RxProgress {
     /// Returns the decoded fraction of the raster in `0.0..=1.0`.
     pub fn fraction(self) -> f32 {
         match self {
@@ -103,9 +103,9 @@ impl Progress {
 /// Each snapshot fully describes the current state, so the interface may
 /// discard all but the newest.
 #[derive(Clone, Debug, Default)]
-pub struct Snapshot {
+pub struct RxSnapshot {
     pub mode: Option<Mode>,
-    pub progress: Progress,
+    pub progress: RxProgress,
     pub display_fraction: f32,
     pub level: f32,
     pub frame: Option<Frame>,
@@ -124,12 +124,12 @@ pub struct Snapshot {
 /// interface that stops polling cannot make the worker accumulate frames.
 #[derive(Debug, Default)]
 pub(super) struct Mailbox {
-    slot: Mutex<Option<Snapshot>>,
+    slot: Mutex<Option<RxSnapshot>>,
 }
 
 impl Mailbox {
     /// Replaces the pending snapshot, keeping payloads not yet collected.
-    pub(super) fn publish(&self, mut snapshot: Snapshot) {
+    pub(super) fn publish(&self, mut snapshot: RxSnapshot) {
         let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(previous) = slot.take() {
             if snapshot.frame.is_none() {
@@ -145,7 +145,7 @@ impl Mailbox {
         *slot = Some(snapshot);
     }
 
-    fn take(&self) -> Option<Snapshot> {
+    fn take(&self) -> Option<RxSnapshot> {
         self.slot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -157,7 +157,7 @@ impl Mailbox {
 ///
 /// Dropping the handle stops the worker and waits for it to finish, so the
 /// capture queue is never left with a live consumer.
-pub struct Worker {
+pub struct RxWorker {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
@@ -166,7 +166,7 @@ pub struct Worker {
     sync_start: Arc<Mutex<SyncStart>>,
 }
 
-impl Worker {
+impl RxWorker {
     /// Starts decoding everything `reader` produces.
     pub fn spawn(
         reader: CaptureReader,
@@ -217,12 +217,12 @@ impl Worker {
 
     /// Returns the newest state, or `None` when nothing changed since the last
     /// call.
-    pub fn latest(&self) -> Option<Snapshot> {
+    pub fn latest(&self) -> Option<RxSnapshot> {
         self.mailbox.take()
     }
 }
 
-impl Drop for Worker {
+impl Drop for RxWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(join) = self.join.take() {
@@ -231,9 +231,9 @@ impl Drop for Worker {
     }
 }
 
-impl core::fmt::Debug for Worker {
+impl core::fmt::Debug for RxWorker {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.debug_struct("Worker").finish_non_exhaustive()
+        formatter.debug_struct("RxWorker").finish_non_exhaustive()
     }
 }
 
@@ -244,23 +244,23 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(Progress::Idle, 0.0)]
-    #[case(Progress::Acquiring, 0.0)]
-    #[case(Progress::Decoding { rows: 62, total: 124 }, 0.5)]
-    #[case(Progress::Decoding { rows: 0, total: 0 }, 0.0)]
-    #[case(Progress::Complete, 1.0)]
-    #[case(Progress::Stopped, 1.0)]
-    fn progress_maps_to_a_decoded_fraction(#[case] progress: Progress, #[case] expected: f32) {
+    #[case(RxProgress::Idle, 0.0)]
+    #[case(RxProgress::Acquiring, 0.0)]
+    #[case(RxProgress::Decoding { rows: 62, total: 124 }, 0.5)]
+    #[case(RxProgress::Decoding { rows: 0, total: 0 }, 0.0)]
+    #[case(RxProgress::Complete, 1.0)]
+    #[case(RxProgress::Stopped, 1.0)]
+    fn progress_maps_to_a_decoded_fraction(#[case] progress: RxProgress, #[case] expected: f32) {
         assert_eq!(progress.fraction(), expected);
     }
 
     #[test]
     fn only_live_receptions_are_active() {
-        assert!(Progress::Acquiring.is_active());
-        assert!(Progress::Decoding { rows: 1, total: 2 }.is_active());
-        assert!(!Progress::Idle.is_active());
-        assert!(!Progress::Complete.is_active());
-        assert!(!Progress::Stopped.is_active());
+        assert!(RxProgress::Acquiring.is_active());
+        assert!(RxProgress::Decoding { rows: 1, total: 2 }.is_active());
+        assert!(!RxProgress::Idle.is_active());
+        assert!(!RxProgress::Complete.is_active());
+        assert!(!RxProgress::Stopped.is_active());
     }
 
     #[test]
@@ -283,18 +283,21 @@ mod tests {
             height: 1,
             rgba: vec![1, 2, 3, 255],
         };
-        mailbox.publish(Snapshot {
+        mailbox.publish(RxSnapshot {
             frame: Some(frame.clone()),
             error: Some("capture gap".to_owned()),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
-        mailbox.publish(Snapshot {
-            progress: Progress::Decoding { rows: 3, total: 10 },
-            ..Snapshot::default()
+        mailbox.publish(RxSnapshot {
+            progress: RxProgress::Decoding { rows: 3, total: 10 },
+            ..RxSnapshot::default()
         });
 
         let snapshot = mailbox.take().unwrap();
-        assert_eq!(snapshot.progress, Progress::Decoding { rows: 3, total: 10 });
+        assert_eq!(
+            snapshot.progress,
+            RxProgress::Decoding { rows: 3, total: 10 }
+        );
         assert_eq!(snapshot.frame, Some(frame));
         assert_eq!(snapshot.error.as_deref(), Some("capture gap"));
     }
@@ -312,18 +315,18 @@ mod tests {
             received_at: "2026-08-04T12:34:56+09:00".to_owned(),
             fsk_ids: vec!["JA1ABC".to_owned()],
         };
-        mailbox.publish(Snapshot {
+        mailbox.publish(RxSnapshot {
             history: Some(history.clone()),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
-        mailbox.publish(Snapshot::default());
+        mailbox.publish(RxSnapshot::default());
         assert_eq!(mailbox.take().unwrap().history, Some(history));
     }
 
     #[test]
     fn a_collected_mailbox_reports_nothing_until_it_is_written_again() {
         let mailbox = Mailbox::default();
-        mailbox.publish(Snapshot::default());
+        mailbox.publish(RxSnapshot::default());
         assert!(mailbox.take().is_some());
         assert!(mailbox.take().is_none());
     }
@@ -331,13 +334,13 @@ mod tests {
     #[test]
     fn newer_payloads_replace_uncollected_ones() {
         let mailbox = Mailbox::default();
-        mailbox.publish(Snapshot {
+        mailbox.publish(RxSnapshot {
             error: Some("first".to_owned()),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
-        mailbox.publish(Snapshot {
+        mailbox.publish(RxSnapshot {
             error: Some("second".to_owned()),
-            ..Snapshot::default()
+            ..RxSnapshot::default()
         });
         assert_eq!(mailbox.take().unwrap().error.as_deref(), Some("second"));
     }
@@ -426,7 +429,7 @@ mod pipeline_tests {
 
     /// Drives the real worker through the capture queue and returns its last
     /// image, so the test covers the same code path a live device does.
-    fn receive(pcm: &[f32], trailing_silence: usize) -> (Snapshot, Option<Frame>) {
+    fn receive(pcm: &[f32], trailing_silence: usize) -> (RxSnapshot, Option<Frame>) {
         receive_with(pcm, trailing_silence, SyncStart::Disabled)
     }
 
@@ -434,10 +437,10 @@ mod pipeline_tests {
         pcm: &[f32],
         trailing_silence: usize,
         sync_start: SyncStart,
-    ) -> (Snapshot, Option<Frame>) {
+    ) -> (RxSnapshot, Option<Frame>) {
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = Worker::spawn(reader, true, true, sync_start);
-        let mut snapshot = Snapshot::default();
+        let worker = RxWorker::spawn(reader, true, true, sync_start);
+        let mut snapshot = RxSnapshot::default();
         let mut frame = None;
         let silence = vec![0.0_f32; trailing_silence];
 
@@ -463,7 +466,7 @@ mod pipeline_tests {
         (snapshot, frame)
     }
 
-    fn collect(worker: &Worker, snapshot: &mut Snapshot, frame: &mut Option<Frame>) {
+    fn collect(worker: &RxWorker, snapshot: &mut RxSnapshot, frame: &mut Option<Frame>) {
         if let Some(mut latest) = worker.latest() {
             if let Some(new) = latest.frame.take() {
                 *frame = Some(new);
@@ -496,7 +499,7 @@ mod pipeline_tests {
 
         let (snapshot, frame) = receive(truncated, RATE as usize * 3);
 
-        assert_eq!(snapshot.progress, Progress::Idle, "{snapshot:?}");
+        assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");
         assert!(frame.is_some());
         assert!(
             (0.65..1.0).contains(&snapshot.display_fraction),
@@ -519,7 +522,7 @@ mod pipeline_tests {
 
         let (snapshot, frame) = receive(&pcm, RATE as usize * 3);
 
-        assert_eq!(snapshot.progress, Progress::Complete, "{snapshot:?}");
+        assert_eq!(snapshot.progress, RxProgress::Complete, "{snapshot:?}");
         let frame = frame.expect("a decoded frame");
         assert!(
             mean_abs_error(&frame, &expected) < 40.0,
@@ -530,7 +533,7 @@ mod pipeline_tests {
         assert_eq!(history.mode, mode);
     }
 
-    fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (Snapshot, f64) {
+    fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (RxSnapshot, f64) {
         let pcm = transmission(mode, expected.clone(), offset_ppm);
         let (snapshot, frame) = receive(&pcm, RATE as usize * 3);
         let frame = frame.expect("a decoded frame");
@@ -552,14 +555,14 @@ mod pipeline_tests {
         let mode = Mode::Robot36;
         let expected = source_image(mode);
         let (matched, baseline) = decode_at(mode, &expected, 0.0);
-        assert_eq!(matched.progress, Progress::Complete, "{matched:?}");
+        assert_eq!(matched.progress, RxProgress::Complete, "{matched:?}");
         assert!(
             baseline < 40.0,
             "matched reception is already poor: {baseline}"
         );
 
         let (mistimed, error) = decode_at(mode, &expected, 300.0);
-        assert_eq!(mistimed.progress, Progress::Complete, "{mistimed:?}");
+        assert_eq!(mistimed.progress, RxProgress::Complete, "{mistimed:?}");
         assert_eq!(mistimed.mode, Some(mode));
         assert_eq!(mistimed.error, None);
         assert!(

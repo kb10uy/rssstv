@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      # The submodule is reference material and nothing builds against it.
+      - uses: actions/checkout@v5
+
+      # alsa-sys links against ALSA, which cpal keeps as the fallback host.
+      # Everything else the window and the graphics context need is opened at
+      # run time rather than linked, so no X11, Wayland, or GL package is
+      # required to build.
+      - name: Install the Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run tests
+        run: cargo test --workspace
+      - name: Build the workspace
+        run: cargo build --workspace
+
+      # A workspace build does not cover this: another member enabling the
+      # `std` feature hides a core primitive used through `std` alone, so the
+      # crate can stop being `no_std` without any workspace command noticing.
+      - name: Build rssstv-sstv without std
+        run: cargo build -p rssstv-sstv --no-default-features
+
+  licenses:
+    name: Licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-about
+
+      - name: Check the licenses of the dependency graph
+        run: cargo deny check licenses
+      - name: Check the dependency graph for advisories
+        run: cargo deny check advisories
+
+      # The release archives carry this page, so a template or configuration
+      # that cannot produce it should fail here rather than during a release.
+      - name: Check that the license page can be generated
+        run: cargo about generate about.hbs --output-file licenses.html

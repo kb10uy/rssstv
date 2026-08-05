@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The existing tag to build, such as v0.1.0
+        required: true
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The tag names the release and the executables carry the version compiled
+  # into them, so the two disagreeing is a mistake worth catching before three
+  # runners spend a release build on it.
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve the tag and check it against the workspace version
+        id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "rssstv") | .version')"
+          if [ "$TAG" != "v$version" ]; then
+            echo "the tag $TAG does not match the workspace version $version" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Install the Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libasound2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+
+      - name: Build the release executables
+        run: >
+          cargo build --release --locked --target ${{ matrix.target }}
+          -p rssstv -p encode-wav -p decode-wav
+
+      # Generated on the platform being packaged rather than once for all
+      # three: the dependency graph differs by target, so a page built on one
+      # would omit what only another one links.
+      - name: Generate the dependency license page
+        run: cargo about generate about.hbs --output-file licenses.html
+
+      - name: Stage the archive contents
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="rssstv-$TAG-$TARGET"
+          root="staging/$name"
+          mkdir -p "$root"
+          for executable in rssstv encode-wav decode-wav; do
+            source="target/$TARGET/release/$executable"
+            if [ -f "$source.exe" ]; then
+              cp "$source.exe" "$root/"
+            else
+              cp "$source" "$root/"
+            fi
+          done
+          cp LICENSE README.md licenses.html "$root/"
+          cp -r docs templates "$root/"
+          echo "ARCHIVE_NAME=$name" >> "$GITHUB_ENV"
+
+      # A Wayland compositor has no way to learn the window icon from the
+      # application, so the Linux archive has to carry the desktop entry the
+      # compositor reads it from.
+      - name: Add the desktop entry to the Linux archive
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "staging/$ARCHIVE_NAME/assets"
+          cp rssstv/assets/rssstv.desktop rssstv/assets/icon.png \
+            "staging/$ARCHIVE_NAME/assets/"
+
+      - name: Create the tar archive
+        if: runner.os != 'Windows'
+        run: tar -czf "$ARCHIVE_NAME.tar.gz" -C staging "$ARCHIVE_NAME"
+
+      - name: Create the zip archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "staging/$env:ARCHIVE_NAME" -DestinationPath "$env:ARCHIVE_NAME.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE_NAME }}.*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: rssstv-*
+          merge-multiple: true
+
+      - name: Write the checksums and the release notes
+        working-directory: artifacts
+        run: |
+          sha256sum rssstv-* > SHA256SUMS
+          cat > notes.md <<'NOTES'
+          Each archive holds the `rssstv` application, the `encode-wav` and
+          `decode-wav` tools, this project's license, the licenses of its
+          dependencies as `licenses.html`, the documentation, and the MMSSTV
+          templates ported to the KDL format.
+
+          | Platform | Archive |
+          | --- | --- |
+          | Windows x86_64 | `rssstv-TAG-x86_64-pc-windows-msvc.zip` |
+          | Linux x86_64 | `rssstv-TAG-x86_64-unknown-linux-gnu.tar.gz` |
+          | macOS Apple Silicon | `rssstv-TAG-aarch64-apple-darwin.tar.gz` |
+
+          The executables are not code signed. macOS marks a downloaded archive
+          as quarantined, so clear the attribute before the first run:
+
+          ```text
+          xattr -dr com.apple.quarantine rssstv
+          ```
+
+          The Linux archive carries `assets/rssstv.desktop` and
+          `assets/icon.png`; installing both is what makes the window icon
+          appear, as `README.md` describes.
+
+          Downloads can be checked against `SHA256SUMS`.
+          NOTES
+          sed -i "s/TAG/$TAG/g" notes.md
+
+      # A re-run of a tag that was already released replaces its archives
+      # rather than failing, which is what a rebuild is for.
+      - name: Publish the release
+        working-directory: artifacts
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file notes.md
+            gh release upload "$TAG" rssstv-* SHA256SUMS --clobber
+          else
+            gh release create "$TAG" --verify-tag \
+              --title "RSSSTV $TAG" --notes-file notes.md \
+              rssstv-* SHA256SUMS
+          fi

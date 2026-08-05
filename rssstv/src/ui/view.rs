@@ -17,6 +17,7 @@ use crate::{
 };
 
 const SIDE_PANEL_WIDTH: f32 = 224.0;
+const TAB_CONTROLS_HEIGHT: f32 = 160.0;
 /// Default height of the library row; the operator can drag it.
 const LIBRARY_HEIGHT: f32 = 182.0;
 /// Narrowest a library list is laid out at before the panel scrolls.
@@ -358,14 +359,14 @@ fn action_bar(ui: &mut Ui, geometry: &str, state: &str) {
 ///
 /// It sits where the receive tab keeps its DSP toggles, so the control that
 /// acts on the picture is in the panel beside it rather than under it.
-fn transmit_button(ui: &mut Ui, app: &mut App) {
+fn transmit_button(ui: &mut Ui, app: &mut App, height: f32) {
     let active = app.tx_snapshot.phase.is_active();
     let label = app.i18n.text(if active {
         "action-stop-transmit"
     } else {
         "action-transmit"
     });
-    let size = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+    let size = egui::vec2(ui.available_width(), height);
     // Stopping stays available for as long as something is being sent.
     // Starting does not: with anything missing the button is disabled and says
     // what, rather than taking the press and reporting the same thing as an
@@ -396,6 +397,7 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
         tab_selector(ui, app);
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.set_height(TAB_CONTROLS_HEIGHT);
             tab_controls(ui, app);
         });
         ui.add_space(16.0);
@@ -539,12 +541,16 @@ fn tab_controls(ui: &mut Ui, app: &mut App) {
     heading(ui, &app.i18n.text("section-mode"));
     mode_panel(ui, app);
     ui.add_space(12.0);
+    let spacing = ui.spacing().item_spacing.y + ui.spacing().interact_size.y;
+    let signal_controls_height =
+        (ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(LABEL))) + spacing)
+            .ceil();
     match app.tab {
         Tab::Receive => {
             heading(ui, &app.i18n.text("section-dsp"));
             dsp_panel(ui, app);
         }
-        Tab::Transmit => transmit_button(ui, app),
+        Tab::Transmit => transmit_button(ui, app, signal_controls_height),
     }
 }
 
@@ -608,10 +614,10 @@ fn decibels(travel: f32) -> String {
 }
 
 fn mode_panel(ui: &mut Ui, app: &mut App) {
-    if app.tab != Tab::Transmit {
-        let label = app.i18n.text("label-auto-vis");
+    let label = app.i18n.text("label-auto-vis");
+    ui.add_enabled_ui(app.tab == Tab::Receive, |ui| {
         ui.checkbox(&mut app.auto_mode, RichText::new(label).size(SMALL));
-    }
+    });
     let (selected, options) = match app.tab {
         Tab::Transmit => (app.tx_mode, app.tx_modes.clone()),
         Tab::Receive => (app.rx_mode, app.rx_modes.clone()),
@@ -871,8 +877,7 @@ fn entry_table(ui: &mut Ui, labels: &ListLabels, entries: &[Entry], selected: &m
 /// What is true of the session rather than of the picture.
 ///
 /// What the tab is doing reads on the state line under the image, so it is not
-/// repeated here: this bar is the devices, what they have decoded, and anything
-/// that went wrong.
+/// repeated here: faults run from the left while audio facts run from the right.
 fn status_bar(ui: &mut Ui, app: &App) {
     let snapshot = app.audio.snapshot();
     let audio = match app.audio.sample_rate_hz() {
@@ -888,19 +893,15 @@ fn status_bar(ui: &mut Ui, app: &App) {
         None if app.audio.output_device.is_some() => app.i18n.text("status-output-ready"),
         None => app.i18n.text("status-no-output"),
     };
+    let error_color = Color32::from_rgb(220, 120, 120);
 
     ui.horizontal(|ui| {
-        ui.label(RichText::new(audio).size(LABEL));
-        ui.label(RichText::new(output).size(LABEL));
-        if !snapshot.callsigns.is_empty() {
-            ui.label(RichText::new(snapshot.callsigns.join(" ")).size(LABEL));
-        }
         if snapshot.dropped_samples > 0 {
             let dropped = app.i18n.text_with(
                 "status-dropped",
                 &[("samples", number(snapshot.dropped_samples as u32))],
             );
-            ui.label(RichText::new(dropped).size(LABEL));
+            ui.label(RichText::new(dropped).size(LABEL).color(error_color));
         }
         for error in [
             app.audio.error.as_deref(),
@@ -913,12 +914,15 @@ fn status_bar(ui: &mut Ui, app: &App) {
         .into_iter()
         .flatten()
         {
-            ui.label(
-                RichText::new(error)
-                    .size(LABEL)
-                    .color(Color32::from_rgb(220, 120, 120)),
-            );
+            ui.label(RichText::new(error).size(LABEL).color(error_color));
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if !snapshot.callsigns.is_empty() {
+                ui.label(RichText::new(snapshot.callsigns.join(" ")).size(LABEL));
+            }
+            ui.label(RichText::new(output).size(LABEL));
+            ui.label(RichText::new(audio).size(LABEL));
+        });
     });
 }
 
@@ -1030,6 +1034,84 @@ mod tests {
         let harness = render(&mut app);
         harness.get_by_label(&retry);
         harness.get_by_label("connection refused");
+    }
+
+    #[test]
+    fn the_transmit_tab_keeps_mode_detection_visible_but_inactive() {
+        let mut app = App::headless();
+        app.tab = Tab::Transmit;
+        let automatic = app.i18n.text("label-auto-vis");
+        let before = app.auto_mode;
+
+        {
+            let mut harness = render(&mut app);
+            harness.get_by_label(&automatic).click();
+            harness.run();
+        }
+
+        assert_eq!(app.auto_mode, before);
+    }
+
+    #[test]
+    fn the_tab_control_panel_keeps_its_height_between_tabs() {
+        let mut tops = Vec::new();
+        for tab in Tab::ALL {
+            let mut app = App::headless();
+            app.tab = tab;
+            let radio = app.i18n.text("section-radio");
+            let harness = render(&mut app);
+            tops.push(harness.get_by_label(&radio).rect().top());
+        }
+
+        assert!((tops[0] - tops[1]).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_transmit_button_fills_the_receive_dsp_region() {
+        let receive_height = {
+            let mut app = App::headless();
+            app.tab = Tab::Receive;
+            let dsp_heading = app.i18n.text("section-dsp");
+            let dsp_labels = Dsp::ALL.map(|dsp| app.i18n.text(dsp.label_key()));
+            let harness = render(&mut app);
+            let top = harness.get_by_label(&dsp_heading).rect().top();
+            let bottom = dsp_labels
+                .iter()
+                .map(|label| harness.get_by_label(label).rect().bottom())
+                .fold(f32::NEG_INFINITY, f32::max);
+            bottom - top
+        };
+        let transmit_height = {
+            let mut app = App::headless();
+            app.tab = Tab::Transmit;
+            let transmit = app.i18n.text("action-transmit");
+            let harness = render(&mut app);
+            harness.get_by_label(&transmit).rect().height()
+        };
+
+        assert!(
+            (receive_height - transmit_height).abs() < f32::EPSILON,
+            "DSP region is {receive_height}, TX button is {transmit_height}"
+        );
+    }
+
+    #[test]
+    fn status_errors_are_left_and_audio_facts_are_right() {
+        let mut app = App::headless();
+        app.library_error = Some("library unavailable".to_owned());
+        let no_audio = app.i18n.text("status-no-audio");
+        let no_output = app.i18n.text("status-no-output");
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(600.0, 40.0))
+            .build_ui(|ui| status_bar(ui, &app));
+        harness.run();
+
+        let error = harness.get_by_label("library unavailable").rect();
+        let audio = harness.get_by_label(&no_audio).rect();
+        let output = harness.get_by_label(&no_output).rect();
+        assert!(error.left() < audio.left());
+        assert!(audio.left() > 300.0);
+        assert!(output.right() > 580.0);
     }
 
     #[test]

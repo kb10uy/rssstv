@@ -429,7 +429,7 @@ marked shared are built once and reused across tabs.
 | Template variable dialog | Modal | Rows of `text_input` naming and valuing `${custom.*}` |
 | Template list | Shared | `scrollable` of selectable rows |
 | Stock image list | Shared | `scrollable` of selectable rows with thumbnails |
-| Status bar | Shared | Text row: devices, decoded callsigns, and faults |
+| Status bar | Shared | Faults from the left; sample rates and decoded callsigns from the right |
 
 Only controls that do something are built. A feature that has not arrived yet
 is absent rather than shown disabled: a dead button occupies the place its
@@ -479,11 +479,14 @@ That first box follows the tab and keeps one shape across
 both: a labelled level bar, the mode, and the controls that act on the signal. Receiving,
 that is the input meter, which fills green while a raster is being acquired or
 decoded, and the DSP toggles. Transmitting, it is the output level and the
-transmit trigger. The output level is drawn as the same bar rather than as a
-slider, and is dragged to set it; it fills red while a transmission is running,
+transmit trigger, whose button fills the height occupied by the DSP heading and
+toggles on the receive tab. The output level is drawn as the same bar rather
+than as a slider, and is dragged to set it; it fills red while a transmission is running,
 for the reason the receive meter fills green. It carries no handle: the fill already
 shows where the level is, and hovering reads it back as a percentage and in
-decibels.
+decibels. The box has a fixed height. Automatic mode detection remains visible
+on the transmit tab but is disabled there, since transmit modes are chosen rather
+than detected; keeping its row avoids moving the controls below it between tabs.
 
 The fader's travel is squared to reach the amplitude a transmission is scaled
 by. Loudness follows amplitude by a power law rather than in step with it, so a

@@ -12,7 +12,7 @@ use super::*;
 /// then left alone, while the panel beside the image is for the station on the
 /// air right now.
 pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
-    if !app.station_open {
+    if !app.station.open {
         return;
     }
 
@@ -28,9 +28,9 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
         ui.heading(title);
         ui.add_space(8.0);
         let width = ui.available_width() - FIELD_LABEL_WIDTH - ui.spacing().item_spacing.x;
-        finished = station_field(ui, &labels[0], &mut app.station_callsign, width);
-        finished |= station_field(ui, &labels[1], &mut app.station_qth, width);
-        finished |= station_field(ui, &labels[2], &mut app.station_grid, width);
+        finished = station_field(ui, &labels[0], &mut app.station.callsign, width);
+        finished |= station_field(ui, &labels[1], &mut app.station.qth, width);
+        finished |= station_field(ui, &labels[2], &mut app.station.grid, width);
         ui.add_space(4.0);
         ui.label(RichText::new(note).size(LABEL).weak());
         ui.add_space(16.0);
@@ -48,7 +48,7 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
         app.normalize_station_callsign();
     }
     if closing {
-        app.station_open = false;
+        app.station.open = false;
     }
 }
 

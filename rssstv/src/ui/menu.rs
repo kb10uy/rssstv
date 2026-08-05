@@ -285,7 +285,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::SelectDevice(name) => app.select_device_named(&name),
         Action::SelectOutputDevice(name) => app.select_output_device_named(&name),
         Action::SelectLocale(locale) => app.select_locale(locale),
-        Action::ShowStation => app.station_open = true,
+        Action::ShowStation => app.station.open = true,
         Action::ShowCustomVariables => app.open_custom_variables(),
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleContestMode => app.contest_mode = !app.contest_mode,
@@ -503,7 +503,7 @@ mod tests {
         apply(&mut app, Action::OpenManual);
 
         assert_eq!(
-            app.library_error.as_deref(),
+            app.library.error.as_deref(),
             Some(app.i18n.text("error-manual-missing").as_str())
         );
     }

@@ -19,24 +19,36 @@ pub(super) fn library(ui: &mut Ui, app: &mut App) {
             let size = egui::vec2(list_width(ui), height);
 
             let labels = ListLabels::new(app, "section-templates");
-            let previous_template = app.template;
-            match entry_list(ui, &labels, size, &app.templates, &mut app.template) {
+            let previous_template = app.library.template;
+            match entry_list(
+                ui,
+                &labels,
+                size,
+                &app.library.templates,
+                &mut app.library.template,
+            ) {
                 Some(ListAction::Reveal) => app.reveal(Folder::Templates),
                 Some(ListAction::Refresh) => app.refresh_templates(),
                 None => {}
             }
-            if app.template != previous_template {
+            if app.library.template != previous_template {
                 app.composition_changed();
             }
 
             let labels = ListLabels::new(app, "section-stocks");
-            let previous_stock = app.stock;
-            match entry_list(ui, &labels, size, &app.stocks, &mut app.stock) {
+            let previous_stock = app.library.stock;
+            match entry_list(
+                ui,
+                &labels,
+                size,
+                &app.library.stocks,
+                &mut app.library.stock,
+            ) {
                 Some(ListAction::Reveal) => app.reveal(Folder::Stocks),
                 Some(ListAction::Refresh) => app.refresh_stocks(),
                 None => {}
             }
-            if app.stock != previous_stock {
+            if app.library.stock != previous_stock {
                 app.composition_changed();
             }
         });

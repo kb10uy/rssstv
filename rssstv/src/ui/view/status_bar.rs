@@ -42,7 +42,7 @@ pub(super) fn status_bar(ui: &mut Ui, app: &App) {
         for error in reported.chain(
             [
                 app.tx_error.as_deref(),
-                app.library_error.as_deref(),
+                app.library.error.as_deref(),
                 app.config_error(),
             ]
             .into_iter()

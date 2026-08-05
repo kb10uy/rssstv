@@ -253,7 +253,7 @@ fn the_transmit_button_fills_the_receive_dsp_region() {
 #[test]
 fn status_errors_are_left_and_audio_facts_are_right() {
     let mut app = App::headless();
-    app.library_error = Some("library unavailable".to_owned());
+    app.library.error = Some("library unavailable".to_owned());
     let no_audio = app.i18n.text("status-no-audio");
     let no_output = app.i18n.text("status-no-output");
     let mut harness = Harness::builder()
@@ -338,13 +338,13 @@ fn no_report_is_drawn_without_a_fault() {
 #[test]
 fn a_populated_library_renders() {
     let mut app = App::headless();
-    app.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
-    app.template = Some(0);
-    app.stocks = vec![
+    app.library.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
+    app.library.template = Some(0);
+    app.library.stocks = vec![
         crate::app::Entry::sample("antenna.png", "640×496"),
         crate::app::Entry::sample("shack.png", "320×256"),
     ];
-    app.stock = Some(1);
+    app.library.stock = Some(1);
 
     // Rows carry the geometry alongside the name, so the accessible label
     // is the two of them together rather than the file name alone.
@@ -359,11 +359,11 @@ fn a_populated_library_renders() {
 #[test]
 fn clicking_a_row_label_selects_that_row() {
     let mut app = App::headless();
-    app.stocks = vec![
+    app.library.stocks = vec![
         crate::app::Entry::sample("antenna.png", "640x496"),
         crate::app::Entry::sample("shack.png", "320x256"),
     ];
-    app.stock = Some(0);
+    app.library.stock = Some(0);
 
     {
         let mut harness = Harness::new_ui(|ui| {
@@ -375,7 +375,7 @@ fn clicking_a_row_label_selects_that_row() {
         harness.run();
     }
 
-    assert_eq!(app.stock, Some(1));
+    assert_eq!(app.library.stock, Some(1));
 }
 
 /// The lists decide the image a transmission is sending, so clicking one
@@ -384,11 +384,11 @@ fn clicking_a_row_label_selects_that_row() {
 fn a_transmission_locks_the_library_lists() {
     let mut app = App::headless();
     app.tx_snapshot.phase = TxPhase::Producing;
-    app.stocks = vec![
+    app.library.stocks = vec![
         crate::app::Entry::sample("antenna.png", "640x496"),
         crate::app::Entry::sample("shack.png", "320x256"),
     ];
-    app.stock = Some(0);
+    app.library.stock = Some(0);
 
     {
         let mut harness = Harness::new_ui(|ui| {
@@ -400,7 +400,7 @@ fn a_transmission_locks_the_library_lists() {
         harness.run();
     }
 
-    assert_eq!(app.stock, Some(0));
+    assert_eq!(app.library.stock, Some(0));
 }
 
 /// Decibels are the unit the level is heard in, so the readout is what
@@ -418,8 +418,8 @@ fn the_transmit_level_reads_out_in_decibels() {
 #[test]
 fn the_library_fits_the_height_it_is_given() {
     let mut app = App::headless();
-    app.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
-    app.stocks = vec![crate::app::Entry::sample("antenna.png", "320x256")];
+    app.library.templates = vec![crate::app::Entry::sample("field-day.kdl", "")];
+    app.library.stocks = vec![crate::app::Entry::sample("antenna.png", "320x256")];
     let mut used = 0.0;
 
     {
@@ -442,7 +442,7 @@ fn the_library_fits_the_height_it_is_given() {
 #[test]
 fn the_station_dialog_closes_from_its_own_button() {
     let mut app = App::headless();
-    app.station_open = true;
+    app.station.open = true;
     let title = app.i18n.text("station-title");
     let close = app.i18n.text("station-close");
 
@@ -457,7 +457,7 @@ fn the_station_dialog_closes_from_its_own_button() {
         harness.run();
     }
 
-    assert!(!app.station_open);
+    assert!(!app.station.open);
 }
 
 #[test]

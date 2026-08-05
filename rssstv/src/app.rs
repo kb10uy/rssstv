@@ -108,17 +108,13 @@ impl DspFlags {
     }
 }
 
-/// The report values offered for the report being sent.
-///
-/// A contest report is always readable, so the readability digit never moves;
-/// what an operator actually varies is the strength and the video quality.
-pub const RSV_OPTIONS: [&str; 6] = ["595", "594", "575", "574", "555", "554"];
 /// The report offered before the operator has changed it.
-pub const DEFAULT_RSV: &str = RSV_OPTIONS[0];
+pub const DEFAULT_RSV: &str = "595";
 /// The serial number a fresh log starts from.
-pub const FIRST_QSO_NUMBER: u16 = 1;
-/// The highest serial the three-digit field can show.
-pub const LAST_QSO_NUMBER: u16 = 999;
+///
+/// Three digits, which is how a serial is given whatever its value, and how
+/// the counted FSKID record carries it.
+pub const FIRST_QSO_NUMBER: &str = "001";
 /// The report the identifier's contest number is read as.
 ///
 /// Only the number travels over the air; the readability and strength in front
@@ -131,9 +127,12 @@ pub struct Qso {
     /// The report the other station gave, which `${report.received}` reads.
     pub rsv_received: String,
     pub rsv: String,
-    /// The serial number being sent, counted rather than typed so the operator
-    /// works it with the two buttons under it.
-    pub number: u16,
+    /// The serial number being sent.
+    ///
+    /// Text rather than a count, because the buttons under it are a
+    /// convenience rather than the only way it is worked: an exchange that is
+    /// not a plain serial is typed here too.
+    pub number: String,
 }
 
 impl Default for Qso {
@@ -142,15 +141,8 @@ impl Default for Qso {
             call: String::new(),
             rsv_received: String::new(),
             rsv: DEFAULT_RSV.to_owned(),
-            number: FIRST_QSO_NUMBER,
+            number: FIRST_QSO_NUMBER.to_owned(),
         }
-    }
-}
-
-impl Qso {
-    /// Returns the serial number as the three digits it is sent as.
-    pub fn number_text(&self) -> String {
-        format!("{:03}", self.number)
     }
 }
 
@@ -400,7 +392,7 @@ impl App {
             auto_history: settings.auto_history,
             history_format: settings.history_format,
             qso: Qso {
-                number: settings.qso_number,
+                number: settings.qso_number.clone(),
                 ..Qso::default()
             },
             station_callsign: settings.station_callsign.trim().to_ascii_uppercase(),
@@ -478,7 +470,7 @@ impl App {
             station_callsign: self.station_callsign.clone(),
             station_qth: self.station_qth.clone(),
             station_grid: self.station_grid.clone(),
-            qso_number: self.qso.number,
+            qso_number: self.qso.number.clone(),
             custom_variables: self.custom_variables.clone(),
             template: selected_name(&self.templates, self.template),
             stock: selected_name(&self.stocks, self.stock),
@@ -640,20 +632,20 @@ impl App {
 
     /// Counts the serial number on for the next contact.
     ///
-    /// The field is three digits wide, so the count comes back to the first
-    /// number rather than to a fourth digit nothing could show.
+    /// Padded back to three digits, and allowed to grow past them: a contest
+    /// worked past its thousandth contact is still counting. A number that is
+    /// not one is left alone, because there is nothing to count it to.
     pub fn increment_number(&mut self) {
-        self.qso.number = if self.qso.number >= LAST_QSO_NUMBER {
-            FIRST_QSO_NUMBER
-        } else {
-            self.qso.number + 1
+        let Ok(number) = self.qso.number.trim().parse::<u32>() else {
+            return;
         };
+        self.qso.number = format!("{:03}", number.saturating_add(1));
         self.qso_changed();
     }
 
     /// Takes the serial number back to the one a contest starts on.
     pub fn reset_number(&mut self) {
-        self.qso.number = FIRST_QSO_NUMBER;
+        self.qso.number = FIRST_QSO_NUMBER.to_owned();
         self.qso_changed();
     }
 
@@ -1155,7 +1147,7 @@ impl App {
             station_grid: self.station_grid.clone(),
             contact_callsign: self.qso.call.clone(),
             report: self.qso.rsv.clone(),
-            number: self.qso.number_text(),
+            number: self.qso.number.clone(),
             report_received: self.qso.rsv_received.clone(),
             custom: self.custom_variables.clone(),
             radio: self.composition_reading.clone(),
@@ -2129,27 +2121,39 @@ mod tests {
         assert_eq!(app.qso.call, "JA1XYZ");
     }
 
-    /// The serial is three digits wide, so counting past the last one comes
-    /// back to the first rather than to a number the field could not show.
-    #[test]
-    fn the_serial_number_counts_on_and_wraps() {
+    /// The serial keeps its three digits as it counts, and is allowed to grow
+    /// out of them rather than starting over.
+    #[rstest]
+    #[case("001", "002")]
+    #[case("009", "010")]
+    #[case("099", "100")]
+    #[case("999", "1000")]
+    fn the_serial_number_counts_on(#[case] before: &str, #[case] after: &str) {
         let mut app = App::headless();
-        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+        app.qso.number = before.to_owned();
 
         app.increment_number();
-        assert_eq!(app.qso.number, 2);
-        assert_eq!(app.qso.number_text(), "002");
 
-        app.qso.number = LAST_QSO_NUMBER;
+        assert_eq!(app.qso.number, after);
+    }
+
+    /// An exchange that is not a serial has nothing to count, so the button
+    /// leaves it as it was typed.
+    #[test]
+    fn a_serial_that_is_not_a_number_is_left_alone() {
+        let mut app = App::headless();
+        app.qso.number = "13H".to_owned();
+
         app.increment_number();
-        assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
+
+        assert_eq!(app.qso.number, "13H");
     }
 
     #[test]
     fn the_serial_number_is_reset_and_kept() {
         let mut app = App::headless();
-        app.qso.number = 42;
-        assert_eq!(app.settings().qso_number, 42);
+        app.qso.number = "042".to_owned();
+        assert_eq!(app.settings().qso_number, "042");
 
         app.reset_number();
         assert_eq!(app.qso.number, FIRST_QSO_NUMBER);

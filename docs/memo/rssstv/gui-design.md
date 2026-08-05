@@ -604,10 +604,12 @@ The QSO panel reads downwards in the order a contact is worked: the DX
 callsign, the report that station gave, and the report being given back. The
 received report is one field because the number in it arrives over the air as
 one thing. The report being sent is two, because its parts are worked
-differently: the report itself is chosen from a short list beside a field that
-may still be typed into, and the serial number is a counted three-digit value
-with buttons under it to count it on and to take it back to the first number.
-The serial survives a restart, because a contest outlives a session.
+differently: the report itself is set once and then left alone, and the serial
+number moves with every contact, with buttons under it to count it on and to
+take it back to `001`. Both are plain text fields, because an exchange is not
+always a serial: counting pads back to three digits and is allowed to grow past
+them, and a value that is not a number is left as it was typed. The serial
+survives a restart, because a contest outlives a session.
 
 A contest number decoded from the same FSKID fills the received report, as
 `595` and the number the way MMSSTV composes it. It is followed the same way as

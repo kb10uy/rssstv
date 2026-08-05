@@ -5,7 +5,7 @@ use rssstv_audio::FaultKind;
 use rssstv_template::valid_variable_name;
 
 use crate::{
-    app::{App, Dsp, Entry, FIRST_QSO_NUMBER, LAST_QSO_NUMBER, RSV_OPTIONS, Tab},
+    app::{App, Dsp, Entry, Tab},
     i18n::{number, text as arg},
     storage::paths::Folder,
     ui::{canvas, menu},
@@ -704,43 +704,15 @@ fn qso_panel(ui: &mut Ui, app: &mut App) {
         }
     });
     ui.horizontal(|ui| {
-        // The report being sent is composed of two parts the operator works
-        // differently: the report itself is chosen once and then left alone,
-        // while the serial number moves with every contact.
+        // The report being sent is two fields rather than one: the report
+        // itself is set once and then left alone, while the serial number
+        // moves with every contact.
         field_label(ui, &sent_label);
-        let arrow = ui.spacing().icon_width
-            + ui.spacing().icon_spacing
-            + 2.0 * ui.spacing().button_padding.x;
-        // The number field will not go below the width a dragged value is laid
-        // out at, so it is measured first and the report takes what is left
-        // rather than the two dividing the row and overflowing it.
-        let rest = fields - arrow - 2.0 * gap;
-        let number_width = (rest / 2.0).max(ui.spacing().interact_size.x);
-        let mut changed = ui
-            .add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(rest - number_width))
-            .changed();
-        // A picker beside the field rather than in place of it: the values in
-        // the list cover what a contest is worked with, and anything else is
-        // still typed.
-        ComboBox::from_id_salt("qso-rsv")
-            .selected_text("")
-            .width(0.0)
-            .show_ui(ui, |ui| {
-                for option in RSV_OPTIONS {
-                    if ui.selectable_label(app.qso.rsv == option, option).clicked() {
-                        app.qso.rsv = option.to_owned();
-                        changed = true;
-                    }
-                }
-            });
-        // Counted rather than typed, and shown with its leading zeros, because
-        // a serial is sent as three digits however small it is.
-        let number = egui::DragValue::new(&mut app.qso.number)
-            .range(FIRST_QSO_NUMBER..=LAST_QSO_NUMBER)
-            .custom_formatter(|number, _| format!("{:03}", number as u16));
-        let height = ui.spacing().interact_size.y;
-        changed |= ui.add_sized([number_width, height], number).changed();
-        if changed {
+        let field_width = (fields - gap) / 2.0;
+        let rsv = ui.add(egui::TextEdit::singleline(&mut app.qso.rsv).desired_width(field_width));
+        let number =
+            ui.add(egui::TextEdit::singleline(&mut app.qso.number).desired_width(field_width));
+        if rsv.changed() || number.changed() {
             app.qso_changed();
         }
     });
@@ -981,14 +953,14 @@ fn status_bar(ui: &mut Ui, app: &App) {
 
 #[cfg(test)]
 mod tests {
-    use egui_kittest::{
-        Harness,
-        kittest::{By, Queryable as _},
-    };
+    use egui_kittest::{Harness, kittest::Queryable as _};
     use rstest::rstest;
 
     use super::*;
-    use crate::{app::App, i18n::Locale};
+    use crate::{
+        app::{App, FIRST_QSO_NUMBER},
+        i18n::Locale,
+    };
 
     /// Runs the interface for a few frames and returns the harness.
     ///
@@ -1137,7 +1109,7 @@ mod tests {
     #[test]
     fn the_serial_number_buttons_work_it() {
         let mut app = App::headless();
-        app.qso.number = 7;
+        app.qso.number = "007".to_owned();
         let increment = app.i18n.text("qso-nr-increment");
         let reset = app.i18n.text("qso-nr-reset");
 
@@ -1146,7 +1118,7 @@ mod tests {
             harness.get_by_label(&increment).click();
             harness.run();
         }
-        assert_eq!(app.qso.number, 8);
+        assert_eq!(app.qso.number, "008");
 
         {
             let mut harness = render(&mut app);
@@ -1154,28 +1126,6 @@ mod tests {
             harness.run();
         }
         assert_eq!(app.qso.number, FIRST_QSO_NUMBER);
-    }
-
-    /// The report list is a convenience beside the field, not a replacement for
-    /// it: choosing from it fills the same text the operator may type over.
-    #[test]
-    fn the_report_list_fills_the_report_field() {
-        let mut app = App::headless();
-
-        {
-            let mut harness = render(&mut app);
-            // The list is opened from an arrow beside the field rather than
-            // from a control naming a value of its own, so it is the one
-            // combination box in the interface showing nothing.
-            harness
-                .get(By::new().role(egui::accesskit::Role::ComboBox).value(""))
-                .click();
-            harness.run();
-            harness.get_by_label(RSV_OPTIONS[3]).click();
-            harness.run();
-        }
-
-        assert_eq!(app.qso.rsv, RSV_OPTIONS[3]);
     }
 
     #[test]

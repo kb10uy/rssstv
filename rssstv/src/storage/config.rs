@@ -16,7 +16,7 @@ use rssstv_template::valid_variable_name;
 use toml_edit::{DocumentMut, Item, Table, value};
 
 use crate::{
-    app::{DspFlags, FIRST_QSO_NUMBER, LAST_QSO_NUMBER},
+    app::{DspFlags, FIRST_QSO_NUMBER},
     i18n::Locale,
     storage::history::HistoryFormat,
 };
@@ -73,8 +73,10 @@ pub struct Settings {
     ///
     /// Kept across runs because a contest outlives a session: an operator who
     /// restarts the application in the middle of one is still on the number
-    /// they had reached.
-    pub qso_number: u16,
+    /// they had reached. Stored as text, because the field it comes from holds
+    /// whatever exchange the contest asks for and its leading zeros are part
+    /// of what is sent.
+    pub qso_number: String,
     /// Names the operator defined, read by templates as `${custom.<name>}`.
     ///
     /// Ordered so the file the application writes back stays in the order the
@@ -157,7 +159,7 @@ impl Default for Settings {
             station_callsign: String::new(),
             station_qth: String::new(),
             station_grid: String::new(),
-            qso_number: FIRST_QSO_NUMBER,
+            qso_number: FIRST_QSO_NUMBER.to_owned(),
             custom_variables: BTreeMap::new(),
             template: None,
             stock: None,
@@ -248,9 +250,7 @@ impl Config {
                 .unwrap_or_default(),
             station_qth: owned(&self.document, Some("station"), "qth").unwrap_or_default(),
             station_grid: owned(&self.document, Some("station"), "grid").unwrap_or_default(),
-            qso_number: integer(&self.document, Some("qso"), "number")
-                .map(|number| number.clamp(FIRST_QSO_NUMBER, LAST_QSO_NUMBER))
-                .unwrap_or(defaults.qso_number),
+            qso_number: owned(&self.document, Some("qso"), "number").unwrap_or(defaults.qso_number),
             custom_variables: custom_variables(&self.document),
             template: owned(&self.document, Some("library"), "template"),
             stock: owned(&self.document, Some("library"), "stock"),
@@ -338,7 +338,7 @@ impl Config {
             document,
             Some("qso"),
             "number",
-            Some(value(i64::from(settings.qso_number))),
+            Some(value(settings.qso_number.as_str())),
         );
         store_custom_variables(document, &settings.custom_variables);
         set(
@@ -602,11 +602,6 @@ fn boolean(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<boo
     get(document, table, key)?.as_bool()
 }
 
-/// Reads a whole number, ignoring anything that could not be one.
-fn integer(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<u16> {
-    u16::try_from(get(document, table, key)?.as_integer()?).ok()
-}
-
 /// Reads a number, accepting the integer a hand-edited file may hold.
 fn float(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<f32> {
     let item = get(document, table, key)?;
@@ -703,7 +698,7 @@ mod tests {
             station_callsign: "JA1ABC".to_owned(),
             station_qth: "Chiyoda, Tokyo".to_owned(),
             station_grid: "PM95uq".to_owned(),
-            qso_number: 42,
+            qso_number: "042".to_owned(),
             custom_variables: BTreeMap::from([
                 ("club".to_owned(), "JARL".to_owned()),
                 ("rig".to_owned(), "FT-991A".to_owned()),

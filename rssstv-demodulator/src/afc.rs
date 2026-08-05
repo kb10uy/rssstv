@@ -1,5 +1,35 @@
 use std::collections::VecDeque;
 
+use rssstv_sstv::signal::SYNC_HZ;
+
+/// Sync-envelope strength a pulse has to reach before it is measured.
+const SYNC_THRESHOLD: f64 = 0.58;
+
+/// How far from the expected sync frequency a measurement may sit.
+///
+/// A discriminator reading further out than this belongs to something other
+/// than the sync pulse being measured, so it is not averaged into the offset.
+const MEASUREMENT_WINDOW_HZ: f64 = 100.0;
+
+/// How long a run above the threshold has to last to count as a sync pulse.
+const RUN_SECONDS: core::ops::RangeInclusive<f64> = 0.003..=0.050;
+
+/// Measurements one run needs before its average is trusted.
+const RUN_MEASUREMENTS: usize = 2;
+
+/// The largest correction a single run may propose.
+const MAX_OFFSET_HZ: f64 = 150.0;
+
+/// How many runs the offset is smoothed over.
+///
+/// The sum is divided by this whether or not that many runs have arrived, so
+/// the correction ramps in over the first full history rather than jumping to
+/// the first measurement.
+const HISTORY: usize = 15;
+
+/// How long after an update the next one is held off.
+const INHIBIT_SECONDS: f64 = 0.1;
+
 pub(crate) struct Afc {
     enabled: bool,
     sample_rate_hz: f64,
@@ -19,7 +49,7 @@ impl Afc {
             active: false,
             run_samples: 0,
             measurements: Vec::new(),
-            offsets: VecDeque::with_capacity(15),
+            offsets: VecDeque::with_capacity(HISTORY),
             offset_hz: 0.0,
             inhibit_samples: 0,
         }
@@ -32,11 +62,13 @@ impl Afc {
         if self.inhibit_samples > 0 {
             self.inhibit_samples -= 1;
         }
-        if sync_strength >= 0.58 {
+        if sync_strength >= SYNC_THRESHOLD {
             self.active = true;
             self.run_samples += 1;
-            let expected = 1_200.0 + self.offset_hz;
-            if let Some(value) = measurement.filter(|value| (value - expected).abs() <= 100.0) {
+            let expected = f64::from(SYNC_HZ) + self.offset_hz;
+            if let Some(value) =
+                measurement.filter(|value| (value - expected).abs() <= MEASUREMENT_WINDOW_HZ)
+            {
                 self.measurements.push(value);
             }
             false
@@ -55,8 +87,8 @@ impl Afc {
         let duration = self.run_samples as f64 / self.sample_rate_hz;
         self.run_samples = 0;
         if self.inhibit_samples > 0
-            || !(0.003..=0.050).contains(&duration)
-            || self.measurements.len() < 2
+            || !RUN_SECONDS.contains(&duration)
+            || self.measurements.len() < RUN_MEASUREMENTS
         {
             self.measurements.clear();
             return false;
@@ -64,16 +96,16 @@ impl Afc {
         self.measurements.sort_by(f64::total_cmp);
         let measured = self.measurements.iter().sum::<f64>() / self.measurements.len() as f64;
         self.measurements.clear();
-        let offset = measured - 1_200.0;
-        if offset.abs() > 150.0 {
+        let offset = measured - f64::from(SYNC_HZ);
+        if offset.abs() > MAX_OFFSET_HZ {
             return false;
         }
-        if self.offsets.len() == 15 {
+        if self.offsets.len() == HISTORY {
             self.offsets.pop_front();
         }
         self.offsets.push_back(offset);
-        self.offset_hz = self.offsets.iter().sum::<f64>() / 15.0;
-        self.inhibit_samples = (self.sample_rate_hz * 0.1) as usize;
+        self.offset_hz = self.offsets.iter().sum::<f64>() / HISTORY as f64;
+        self.inhibit_samples = (self.sample_rate_hz * INHIBIT_SECONDS) as usize;
         true
     }
 

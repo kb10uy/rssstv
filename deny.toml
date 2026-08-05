@@ -18,3 +18,11 @@ allow = [
 exceptions = [
     { allow = ["MPL-2.0"], crate = "option-ext" }, # No Exhibit B
 ]
+
+[advisories]
+ignore = [
+    # ttf-parser
+    "RUSTSEC-2026-0192",
+    # rustybuzz
+    "RUSTSEC-2026-0206",
+]

@@ -11,14 +11,14 @@
 // outline the extrusion was drawn with and loses the extrusion itself.
 
 text "73" {
-    position x=(fw)0 y=(fh)100 anchor="bottom-left"
+    position x=(fw)3 y=(fh)100 anchor="bottom-left"
     font family="Arial" size=(fh)22.7 weight=700
     fill color="#ffffff00"
     stroke color="#ffffff" width=(em)0.034
 }
 
 text "${station.callsign}" {
-    position x=(fw)98.1 y=(fh)0 anchor="top-right"
+    position x=(fw)98.1 y=(fh)1 anchor="top-right"
     font family="Arial" size=(fh)7 weight=700
     fill color="#ffffff"
     stroke color="#000000" width=(em)0.111

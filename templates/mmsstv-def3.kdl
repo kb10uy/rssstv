@@ -24,14 +24,14 @@ rect {
 }
 
 text "${contact.callsign}" {
-    position x=(fw)1.6 y=(fh)3.9 anchor="top-left"
+    position x=(fw)2 y=(fh)8 anchor="top-left"
     font family="Arial" size=(fh)16.8 weight=700
     fill color="#ff0000"
     stroke color="#000000" width=(em)0.047
 }
 
 text "${report.sent}" {
-    position x=(fw)1.6 y=(fh)19.1 anchor="top-left"
+    position x=(fw)2 y=(fh)25 anchor="top-left"
     font family="Arial" size=(fh)16.8 weight=700
     fill color="#ff0000"
     stroke color="#000000" width=(em)0.047
@@ -45,13 +45,13 @@ text "${station.callsign}" {
 }
 
 text "RSSSTV ${application.version}" {
-    position x=(fw)98.8 y=(fh)0 anchor="top-right"
+    position x=(fw)98.8 y=(fh)0.7 anchor="top-right"
     font family="Arial" size=(fh)6.6 weight=700
     fill color="#800040"
 }
 
 text "${station.callsign}" {
-    position x=(fw)1.2 y=(fh)0 anchor="top-left"
+    position x=(fw)1.2 y=(fh)0.7 anchor="top-left"
     font family="Arial" size=(fh)6.6 weight=700
     fill color="#0000ff"
 }

@@ -255,14 +255,15 @@ PCM conversion remains a separate modulator responsibility.
 
 `rssstv-fskid` keeps six-bit FSKID framing separate from audio tone detection.
 `FskDecoder` consumes samples classified as mark, space, or ambiguous and
-returns validated `FskId` values. The receive front end owns the 1900/2100 Hz
-detectors and supplies those classifications.
+returns validated `FskRecord` values, which are either an `FskId` or the
+`FskNumber` of a contest record following it. The receive front end owns the
+1900/2100 Hz detectors and supplies those classifications.
 
 The implementation is divided by responsibility:
 
 - `rssstv-fskid` owns the sample-driven acquisition timing, six-bit assembly,
-  callsign framing, checksum validation, bounded identifier value, and the
-  allocation-free physical transmit event iterator.
+  callsign and contest-record framing, checksum validation, bounded identifier
+  and number values, and the allocation-free physical transmit event iterator.
 - `rssstv-demodulator` reuses its existing AFC-adjusted 1900 and 2100 Hz
   resonators and converts their normalized envelopes to mark, space, or
   ambiguous samples.
@@ -275,8 +276,10 @@ The core accepts classified detector samples rather than audio amplitudes. It is
 therefore independent of audio backends and detector scaling, while preserving
 the protocol's timing.
 
-Callsign records are implemented in both directions. Contest records and N-VIS
-events remain future work. See [sstv/fskid.md](../sstv/fskid.md) for the
+Callsign records are implemented in both directions, and contest records are
+decoded in both of their forms: text, and a twelve-bit count printed to at
+least three digits. Transmitting a contest record and N-VIS events remain
+future work. See [sstv/fskid.md](../sstv/fskid.md) for the
 protocol definition and [mmsstv/fskid.md](../mmsstv/fskid.md) for the original
 detector this one follows.
 
@@ -320,7 +323,7 @@ The workspace currently contains eleven packages:
 | --- | --- | --- |
 | `rssstv-dsp` | Portable numerical layer | Implemented |
 | `rssstv-sstv` | Protocol model, images, transmit encoder, and receive decoder | 14 modes implemented |
-| `rssstv-fskid` | FSKID protocol encoding and decoding | Callsign transmit and receive implemented |
+| `rssstv-fskid` | FSKID protocol encoding and decoding | Callsign transmit and receive, contest number receive implemented |
 | `rssstv-modulator` | Timed-tone PCM modulation | Streaming phase-continuous modulation implemented |
 | `rssstv-demodulator` | Receive front end | Incremental conventional-VIS demodulation implemented |
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |

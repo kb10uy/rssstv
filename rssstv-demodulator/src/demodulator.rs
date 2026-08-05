@@ -1,4 +1,4 @@
-use rssstv_fskid::FskId;
+use rssstv_fskid::{FskId, FskNumber, FskRecord};
 use rssstv_sstv::{mode::Mode, time::SstvDuration};
 
 use crate::{
@@ -16,6 +16,7 @@ pub struct DemodulatedChunk {
     frequency_hz: Vec<f32>,
     sync_strength: Vec<f32>,
     fsk_ids: Vec<FskId>,
+    fsk_numbers: Vec<FskNumber>,
 }
 
 impl DemodulatedChunk {
@@ -47,6 +48,11 @@ impl DemodulatedChunk {
     /// Returns validated station identifiers completed in this packet.
     pub fn fsk_ids(&self) -> &[FskId] {
         &self.fsk_ids
+    }
+
+    /// Returns validated contest numbers completed in this packet.
+    pub fn fsk_numbers(&self) -> &[FskNumber] {
+        &self.fsk_numbers
     }
 }
 
@@ -102,11 +108,14 @@ impl Demodulator {
         });
         let mut sync_strength = Vec::with_capacity(frequency_hz.capacity());
         let mut fsk_ids = Vec::new();
+        let mut fsk_numbers = Vec::new();
         for &sample in samples {
             let output = self.front_end.process(f64::from(sample))?;
             self.next_sample += 1;
-            if let Some(id) = output.fsk_id {
-                fsk_ids.push(id);
+            match output.fsk_record {
+                Some(FskRecord::Id(id)) => fsk_ids.push(id),
+                Some(FskRecord::Number(number)) => fsk_numbers.push(number),
+                None => {}
             }
             if let Some((mode, detection)) = output.mode
                 && (self.mode.is_none() || self.restarts_on(detection))
@@ -143,6 +152,7 @@ impl Demodulator {
             frequency_hz,
             sync_strength,
             fsk_ids,
+            fsk_numbers,
         })
     }
 
@@ -218,6 +228,7 @@ pub struct DemodulatedAudio {
     sync_detector_delay: SstvDuration,
     frequency_offset_hz: f64,
     fsk_ids: Vec<FskId>,
+    fsk_numbers: Vec<FskNumber>,
 }
 
 impl DemodulatedAudio {
@@ -255,6 +266,11 @@ impl DemodulatedAudio {
     pub fn fsk_ids(&self) -> &[FskId] {
         &self.fsk_ids
     }
+
+    /// Returns the validated contest numbers found in the complete audio.
+    pub fn fsk_numbers(&self) -> &[FskNumber] {
+        &self.fsk_numbers
+    }
 }
 
 /// Demodulates normalized mono PCM and detects its conventional VIS mode.
@@ -273,5 +289,6 @@ pub fn demodulate(
         sync_detector_delay: sync_detector_delay(mode),
         frequency_offset_hz: demodulator.frequency_offset_hz(),
         fsk_ids: output.fsk_ids,
+        fsk_numbers: output.fsk_numbers,
     })
 }

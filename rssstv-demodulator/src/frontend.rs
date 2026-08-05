@@ -2,7 +2,7 @@ use rssstv_dsp::{
     filter::{Fir, FirDesign, FirKind, IirFilter, IirLowPassDesign, IirResponse, Resonator},
     frequency::ZeroCrossingFrequency,
 };
-use rssstv_fskid::{FskDecoder, FskId, FskTone};
+use rssstv_fskid::{FskDecoder, FskRecord, FskTone};
 use rssstv_sstv::mode::Mode;
 
 use crate::{
@@ -35,7 +35,7 @@ pub(crate) struct FrontEndOutput {
     pub(crate) frequency_hz: f64,
     pub(crate) sync_strength: f64,
     pub(crate) mode: Option<(Mode, Detection)>,
-    pub(crate) fsk_id: Option<FskId>,
+    pub(crate) fsk_record: Option<FskRecord>,
 }
 
 pub(crate) struct FrontEnd {
@@ -126,7 +126,7 @@ impl FrontEnd {
         } else {
             FskTone::Space
         };
-        let fsk_id = self.fsk.process(fsk_tone);
+        let fsk_record = self.fsk.process(fsk_tone);
 
         let measured = self.zero_crossing.process_sample(filtered);
         let changed = self.afc.process(sync_strength, measured);
@@ -141,7 +141,7 @@ impl FrontEnd {
             frequency_hz: (frequency - self.afc.offset_hz()).clamp(0.0, 3_000.0),
             sync_strength,
             mode,
-            fsk_id,
+            fsk_record,
         })
     }
 

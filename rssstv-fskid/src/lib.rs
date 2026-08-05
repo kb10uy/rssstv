@@ -9,7 +9,7 @@ mod encoder;
 mod error;
 mod id;
 
-pub use decoder::FskDecoder;
+pub use decoder::{FskDecoder, FskRecord};
 pub use encoder::{FskEncoder, FskTxEvent, FskTxTone};
 pub use error::FskIdError;
-pub use id::{FskId, FskTone};
+pub use id::{FskId, FskNumber, FskTone};

@@ -3,6 +3,7 @@ use core::{fmt, str};
 use crate::{FskEncoder, FskIdError};
 
 pub(crate) const MAX_ID_LEN: usize = 16;
+pub(crate) const MAX_NUMBER_LEN: usize = 9;
 
 /// A classified FSK detector sample.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +61,59 @@ impl FskId {
     /// protocol alphabet and length limit.
     pub(crate) const fn from_symbols(bytes: [u8; MAX_ID_LEN], len: u8) -> Self {
         Self { bytes, len }
+    }
+}
+
+/// A validated MMSSTV contest number, from the record that may follow an
+/// identifier.
+///
+/// The protocol carries the value either as text or as a twelve-bit count, and
+/// both reach the receiver as the same thing: the number the other station is
+/// giving out. So both forms decode into this one type, with the counted form
+/// printed the way MMSSTV prints it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FskNumber {
+    bytes: [u8; MAX_NUMBER_LEN],
+    len: u8,
+}
+
+impl FskNumber {
+    /// Returns the decoded contest number as text.
+    pub fn as_str(&self) -> &str {
+        str::from_utf8(&self.bytes[..usize::from(self.len)])
+            .expect("FSKID symbols always decode to ASCII")
+    }
+
+    /// Accepts number text the decoder has already validated against the
+    /// protocol alphabet and length limit.
+    pub(crate) const fn from_symbols(bytes: [u8; MAX_NUMBER_LEN], len: u8) -> Self {
+        Self { bytes, len }
+    }
+
+    /// Formats a counted number, padded to the three digits MMSSTV prints.
+    pub(crate) fn from_count(count: u16) -> Self {
+        let mut reversed = [0; MAX_NUMBER_LEN];
+        let mut len = 0;
+        let mut remaining = count;
+        while remaining > 0 || len < 3 {
+            reversed[len] = b'0' + (remaining % 10) as u8;
+            remaining /= 10;
+            len += 1;
+        }
+        let mut bytes = [0; MAX_NUMBER_LEN];
+        for (byte, digit) in bytes.iter_mut().zip(reversed[..len].iter().rev()) {
+            *byte = *digit;
+        }
+        Self {
+            bytes,
+            len: len as u8,
+        }
+    }
+}
+
+impl fmt::Display for FskNumber {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 

@@ -31,7 +31,8 @@ use windows_sys::Win32::{
         Shell::SetCurrentProcessExplicitAppUserModelID,
         WindowsAndMessaging::{
             DestroyIcon, GetIconInfo, HICON, ICONINFO, IMAGE_ICON, IsIconic, IsWindow,
-            LR_DEFAULTCOLOR, LoadImageW, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
+            LR_DEFAULTCOLOR, LoadImageW, SW_HIDE, SW_RESTORE, SW_SHOW, SetForegroundWindow,
+            ShowWindow,
         },
     },
 };
@@ -39,6 +40,8 @@ use windows_sys::Win32::{
 pub const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
 
 pub const FILE_MANAGER: Option<&str> = Some("explorer.exe");
+
+pub const APP_DIRECTORY: &str = "RSSSTV";
 
 /// Identifies the application to the shell.
 ///
@@ -225,6 +228,15 @@ pub fn prepare_window(cc: &eframe::CreationContext<'_>) {
     if let Some(hwnd) = main_window(cc) {
         allow_dark_mode_for_window(hwnd);
     }
+}
+
+/// Takes a window off the screen without destroying it.
+///
+/// The menu bar asks for this on the way out, because a window that is still
+/// being torn down stays on screen for as long as the audio devices take to
+/// close, which reads as an application that has stopped responding.
+pub fn hide_window(hwnd: isize) {
+    unsafe { ShowWindow(hwnd as HWND, SW_HIDE) };
 }
 
 /// Returns the handle of the window eframe created, if the platform gave one.

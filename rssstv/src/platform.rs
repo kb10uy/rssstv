@@ -36,6 +36,12 @@ mod imp;
 /// hairline.
 pub use imp::UI_FONTS;
 
+/// The directory name the application keeps its own files under.
+///
+/// Named by the platform because the conventions differ: the directories are
+/// hidden on Linux and shown to the operator elsewhere.
+pub use imp::APP_DIRECTORY;
+
 /// Prepares the process before any window exists.
 ///
 /// Called once at startup, before the event loop is built, for work that has
@@ -57,6 +63,13 @@ pub use imp::prepare_window;
 /// section and decodes [`embedded_icon`] instead, as does Windows when the
 /// resource is missing because the build had no resource compiler.
 pub use imp::window_icon;
+
+/// Takes a window off the screen without destroying it.
+///
+/// Only Windows has anything to take off the screen this way: it is the one
+/// platform where the menu bar owns a window handle of its own.
+#[cfg(target_os = "windows")]
+pub use imp::hide_window;
 
 /// The application icon, compiled into the binary.
 ///

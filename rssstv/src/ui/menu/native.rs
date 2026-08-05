@@ -97,13 +97,8 @@ impl Native {
 
     #[cfg(target_os = "windows")]
     pub fn prepare_for_close(&self) {
-        use windows_sys::Win32::{
-            Foundation::HWND,
-            UI::WindowsAndMessaging::{SW_HIDE, ShowWindow},
-        };
-
         if let Some(hwnd) = self.hwnd {
-            unsafe { ShowWindow(hwnd as HWND, SW_HIDE) };
+            crate::platform::hide_window(hwnd);
         }
     }
 

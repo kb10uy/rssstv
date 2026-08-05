@@ -12,6 +12,8 @@ use rssstv_fskid::{FskId, FskNumber};
 use rssstv_modulator::Modulator;
 use rssstv_sstv::{TransmissionEncoder, image::RgbImage, mode::Mode};
 
+use crate::worker::update;
+
 const PCM_BLOCK_SIZE: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -313,12 +315,6 @@ fn transmit_loop(
                 primed = true;
             }
         });
-    }
-}
-
-fn update(snapshot: &Mutex<TxSnapshot>, update: impl FnOnce(&mut TxSnapshot)) {
-    if let Ok(mut state) = snapshot.lock() {
-        update(&mut state);
     }
 }
 

@@ -9,3 +9,13 @@ pub mod compose;
 pub mod receive;
 pub mod rig;
 pub mod transmit;
+
+use std::sync::Mutex;
+
+/// Applies a change to a published snapshot, leaving it alone if the worker
+/// that owns it panicked while holding the lock.
+pub(crate) fn update<T>(snapshot: &Mutex<T>, update: impl FnOnce(&mut T)) {
+    if let Ok(mut state) = snapshot.lock() {
+        update(&mut state);
+    }
+}

@@ -18,7 +18,10 @@ use crate::{
         bands::BandPlan,
         config::{PortSettings, RigSettings},
     },
-    worker::rig::script::{Entry, ScriptError, ScriptHost},
+    worker::{
+        rig::script::{Entry, ScriptError, ScriptHost},
+        update,
+    },
 };
 
 /// What the rig was found to be tuned to.
@@ -333,12 +336,6 @@ fn read_tuning(
     });
     update(snapshot, |state| state.reading = reading);
     Ok(())
-}
-
-fn update(snapshot: &Mutex<RigSnapshot>, update: impl FnOnce(&mut RigSnapshot)) {
-    if let Ok(mut state) = snapshot.lock() {
-        update(&mut state);
-    }
 }
 
 #[cfg(test)]

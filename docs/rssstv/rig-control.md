@@ -258,11 +258,9 @@ tail = 0.05
 poll-interval = 1.0
 
 [rig.ports.rig]
-kind = "rigctld"
 address = "127.0.0.1:4532"
 
 [rig.ports.amplifier]
-kind = "rigctld"
 address = "127.0.0.1:4533"
 ```
 
@@ -283,11 +281,14 @@ name. `rig` is the one the default script uses, and a station with a single
 `rigctld` needs only that one; the second above is what a station reaching an
 amplifier on its own `rigctld` would add.
 
+A port is an address and no more: there is nothing to choose between, so there
+is nothing to say beyond where to reach.
+
 A missing `[rig.ports]` section is one port named `rig` on the default address,
 so that switching rig control on works without configuring anything. A section
-that is present is taken as written: a port whose `kind` is not `rigctld` is
-dropped rather than replaced, because handing back the default would put the
-script on a rig the operator did not ask for.
+that is present is taken as written: an entry that is not a section is not a
+port and is dropped rather than replaced, because handing back the default
+would put the script on a rig the operator did not ask for.
 
 ## The rigctld Transport
 
@@ -380,29 +381,35 @@ template that says nothing about the frequency is left alone.
 
 ## Interface
 
-The Rig Control menu holds the switch, each transport and where it reaches, the
-connection's state or the failure that ended it, what the rig is tuned to, and
-reconnecting after a failure. It also writes the default script and the default
-band plan out for editing, and opens the folder holding them.
-
-Tuning is worth reaching without a menu, so it goes in the window as a radio
-panel shared by both tabs:
+Rig control is worked from a radio panel in the window, shared by both tabs:
 
 | Control | Does |
 | --- | --- |
+| Connect, Disconnect | Switches rig control on and off |
+| Reconnect | Opens the connection again after a failure |
+| State | The connection's state, or the failure that ended it |
 | Band selector | Calls `change_band` with the chosen band from `bands.toml` |
 | Frequency | Shows what `poll_frequency` last returned |
 | Step down, step up | Calls `set_frequency` with the current frequency moved by the band's `step` |
 
-The panel is shown while rig control is switched on rather than only once it is
-connected, so that it does not appear and vanish as a connection is made or
-lost. Its controls are disabled unless the rig is connected and not keyed — the
-same rule that stops the worker polling during a transmission, for the same
-reason: moving a rig that is on the air moves the transmission with it.
+The panel is always present, because it is where rig control is switched on: a
+station that has not connected still needs somewhere to say so. Everything
+below the switch appears with the connection.
 
-A step that would leave the band is disabled rather than clamped, as is one on
-a band with no `step` and one off the bands entirely. A button that moves
-nothing is better than one that says it moved something.
+What the rig said outlives the state it left behind, so a failure takes the
+place of the state rather than sitting beside it, and Reconnect is offered
+exactly when there is one.
+
+The tuning controls are disabled unless the rig is connected and not keyed —
+the same rule that stops the worker polling during a transmission, for the same
+reason: moving a rig that is on the air moves the transmission with it. A step
+that would leave the band is disabled rather than clamped, as is one on a band
+with no `step` and one off the bands entirely. A button that moves nothing is
+better than one that says it moved something.
+
+Nothing about rig control is in the menu bar except putting `rigcontrol.lua`
+and `bands.toml` where they can be edited, which sits under Settings. Writing
+a file out is a once-ever thing rather than an operating control.
 
 ## What Came Before
 

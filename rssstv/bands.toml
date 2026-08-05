@@ -1,0 +1,132 @@
+# The band plan RSSSTV starts with.
+#
+# This is what runs when no bands.toml has been written beside config.toml.
+# Copy it there to change it: band plans are regional, and the frequencies
+# below are conventions rather than allocations. What may be transmitted where
+# is your licence, not this file.
+#
+# The application reads `name`, `low`, and `high` to say which band a frequency
+# is on, and `step` to move by. Everything else is passed to rigcontrol.lua
+# untouched, so a key of your own — an antenna, an amplifier setting — reaches
+# the script beside these. Hyphens become underscores on the way: a
+# `receive-mode` here is `band.receive_mode` there.
+
+[[bands]]
+name = "160m"
+low = 1_800_000
+high = 2_000_000
+target = 1_910_000
+transmit-mode = "LSB"
+receive-mode = "LSB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "80m"
+low = 3_500_000
+high = 4_000_000
+target = 3_845_000
+transmit-mode = "LSB"
+receive-mode = "LSB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "40m"
+low = 7_000_000
+high = 7_300_000
+target = 7_171_000
+transmit-mode = "LSB"
+receive-mode = "LSB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "30m"
+low = 10_100_000
+high = 10_150_000
+target = 10_130_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "20m"
+low = 14_000_000
+high = 14_350_000
+target = 14_230_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "17m"
+low = 18_068_000
+high = 18_168_000
+target = 18_160_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "15m"
+low = 21_000_000
+high = 21_450_000
+target = 21_340_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "12m"
+low = 24_890_000
+high = 24_990_000
+target = 24_975_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "10m"
+low = 28_000_000
+high = 29_700_000
+target = 28_680_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "6m"
+low = 50_000_000
+high = 54_000_000
+target = 50_680_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "2m"
+low = 144_000_000
+high = 148_000_000
+target = 144_500_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000
+
+[[bands]]
+name = "70cm"
+low = 420_000_000
+high = 450_000_000
+target = 430_500_000
+transmit-mode = "USB"
+receive-mode = "USB"
+bandwidth = 3_000
+step = 1_000

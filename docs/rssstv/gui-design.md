@@ -421,7 +421,7 @@ marked shared are built once and reused across tabs.
 | State line | Shared | Mode, size, and what the tab is doing, under the image |
 | Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
-| Radio panel | Shared | Band `pick_list`, the frequency, and two step buttons; only while rig control is on |
+| Radio panel | Shared | Connect and its state, then a band `pick_list`, the frequency, and two step buttons |
 | DSP panel | Receive | Three toggle buttons |
 | Transmit trigger | Transmit | One full-width button, where the DSP toggles sit |
 | QSO panel | Shared | `text_input` for the contact call, RSV, serial number, and received RSV |
@@ -438,13 +438,13 @@ the exception, where a disabled entry either names a whole area still to be
 filled in or is something the menu only has to say — the rig's address, what its
 connection is doing, an empty device list.
 
-The Rig Control menu is the switch for the connection and nothing else. Below
-it, once it is on, sit the transports and where each reaches, the connection's
-state or the failure that ended it, and what the rig is tuned to; reconnecting
-is offered exactly when there is a failure to recover from. What the rig is
-sent is not there — it is a script, and a dialog for editing one would be a
-worse text editor than the one the operator already has. The menu writes the
-default script out instead, and opens the folder holding it.
+Rig control is worked from the radio panel rather than from the menu bar: the
+connection is switched on and off there, beside the frequency it is being
+switched on for. What the menu keeps is writing `rigcontrol.lua` and
+`bands.toml` out to be edited, under Settings, because that is a once-ever
+thing rather than an operating control. Editing them is not offered at all — a
+dialog for a script would be a worse text editor than the one the operator
+already has.
 
 What the station says about itself — its callsign, where it is operating from,
 and its grid locator — is edited in a dialog opened from the Settings menu, not
@@ -608,10 +608,11 @@ frequency between transmissions; the interface starts playback only once the
 rig has reported that it has switched over, and a script that failed to key
 stops the transmission rather than sending into a receiver. What is sent at
 each moment comes from `rigcontrol.lua`, which is built in until the operator
-writes their own from the Rig Control menu. The radio panel moves the rig
-between bands and up and down them, from `bands.toml`, which is built in the
-same way. [rig-control.md](rig-control.md) describes the transports, the
-script, the band plan, and the timing.
+writes their own from the Settings menu. The radio panel switches the
+connection on and off, and moves the rig between bands and up and down them
+from `bands.toml`, which is built in the same way.
+[rig-control.md](rig-control.md) describes the transport, the script, the band
+plan, and the timing.
 
 The mode dropdowns are already driven by `ModeSpec` support, so they list
 exactly the modes the core can encode or decode.

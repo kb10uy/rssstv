@@ -67,25 +67,22 @@ action-transmit = TX
 action-stop-transmit = Stop TX
 action-open-folder = Open folder
 action-refresh = Refresh
-action-rig-connect = Connect to rigctld
+action-rig-connect = Connect
+action-rig-disconnect = Disconnect
 action-rig-retry = Reconnect
 action-rig-write-script = Write the default script
 action-rig-write-bands = Write the default band plan
 
-rig-port = { $name } · { $address }
 rig-state-disconnected = Not connected
 rig-state-connecting = Connecting…
 rig-state-receiving = Connected
 rig-state-transmitting = Keyed
 rig-state-failed = Failed
-rig-frequency = { $frequency } MHz · { $band }
-rig-frequency-out-of-band = { $frequency } MHz
 rig-frequency-unknown = Frequency not read
 
 section-radio = Radio
 radio-band-unknown = Off band
 radio-frequency = { $frequency } MHz
-rig-script-note = What is sent is decided by rigcontrol.lua.
 rig-script-written = Written to { $path }
 
 section-templates = Templates

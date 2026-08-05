@@ -9,8 +9,7 @@
 use crate::{
     app::App,
     i18n::Locale,
-    storage::{config::PortSettings, history::HistoryFormat, paths::Folder},
-    worker::rig::RigState,
+    storage::{history::HistoryFormat, paths::Folder},
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -35,8 +34,6 @@ pub enum Action {
     ShowCustomVariables,
     ToggleSendFskid,
     ToggleVisRestart,
-    ToggleRig,
-    RetryRig,
     WriteRigScript,
     WriteBandPlan,
     ToggleAutoHistory,
@@ -150,16 +147,29 @@ pub fn model(app: &App) -> Vec<Menu> {
                     label: text("menu-history"),
                     items: history_items(app),
                 },
+                // Rig control is worked from the radio panel; what is left for
+                // a menu is putting the two files it runs on where they can be
+                // edited, which is a once-ever thing rather than an operating
+                // control.
+                Item::Submenu {
+                    label: text("menu-rig"),
+                    items: vec![
+                        Item::Command {
+                            label: text("action-rig-write-script"),
+                            action: Action::WriteRigScript,
+                        },
+                        Item::Command {
+                            label: text("action-rig-write-bands"),
+                            action: Action::WriteBandPlan,
+                        },
+                    ],
+                },
                 Item::Separator,
                 Item::Submenu {
                     label: text("menu-language"),
                     items: locale_items(app),
                 },
             ],
-        },
-        Menu {
-            label: text("menu-rig"),
-            items: rig_items(app),
         },
         Menu {
             label: text("menu-help"),
@@ -255,92 +265,6 @@ fn output_device_items(app: &App) -> Vec<Item> {
         .collect()
 }
 
-/// Rig control: whether to connect, and what the connection is doing.
-///
-/// Only the switch is offered. The address, the timings, and the commands are
-/// the operator's, and they live in the configuration file: a menu could not
-/// offer a list of what a rig wants around a transmission, and a dialog for
-/// editing command lines would be a worse text editor than the one the
-/// operator already has.
-fn rig_items(app: &App) -> Vec<Item> {
-    let mut items = vec![Item::Check {
-        label: app.i18n.text("action-rig-connect"),
-        checked: app.rig.enabled,
-        action: Action::ToggleRig,
-    }];
-    if !app.rig.enabled {
-        return items;
-    }
-    items.push(Item::Separator);
-    // One line per transport, because a station reaching a rig and an
-    // amplifier separately has two, and which one failed is worth seeing.
-    items.extend(app.rig.ports.iter().map(|(name, port)| {
-        Item::Pending(app.i18n.text_with(
-            "rig-port",
-            &[
-                ("name", crate::i18n::text(name)),
-                ("address", crate::i18n::text(port_address(port))),
-            ],
-        ))
-    }));
-    // What the rig said is more use than the state it left behind, so the
-    // failure takes the place of the state rather than sitting beside it.
-    items.push(Item::Pending(
-        app.rig_snapshot
-            .error
-            .clone()
-            .unwrap_or_else(|| app.i18n.text(app.rig_snapshot.state.label_key())),
-    ));
-    items.push(Item::Pending(rig_frequency(app)));
-    if app.rig_snapshot.state == RigState::Failed {
-        items.push(Item::Command {
-            label: app.i18n.text("action-rig-retry"),
-            action: Action::RetryRig,
-        });
-    }
-    items.push(Item::Separator);
-    items.push(Item::Command {
-        label: app.i18n.text("action-rig-write-script"),
-        action: Action::WriteRigScript,
-    });
-    items.push(Item::Command {
-        label: app.i18n.text("action-rig-write-bands"),
-        action: Action::WriteBandPlan,
-    });
-    items.push(Item::Pending(app.i18n.text("rig-script-note")));
-    items
-}
-
-/// Where a port reaches, as the menu says it.
-const fn port_address(port: &PortSettings) -> &str {
-    match port {
-        PortSettings::Rigctld { address } => address.as_str(),
-    }
-}
-
-/// What the rig is tuned to, as the menu says it.
-fn rig_frequency(app: &App) -> String {
-    let Some(reading) = app.rig_snapshot.reading.as_ref() else {
-        return app.i18n.text("rig-frequency-unknown");
-    };
-    // Formatted here rather than by the message, because the message would
-    // group the digits by locale and a frequency is read as one number.
-    let megahertz = format!("{:.3}", reading.frequency_hz as f64 / 1_000_000.0);
-    match reading.band.as_deref() {
-        Some(band) => app.i18n.text_with(
-            "rig-frequency",
-            &[
-                ("frequency", crate::i18n::text(&megahertz)),
-                ("band", crate::i18n::text(band)),
-            ],
-        ),
-        None => app.i18n.text_with(
-            "rig-frequency-out-of-band",
-            &[("frequency", crate::i18n::text(&megahertz))],
-        ),
-    }
-}
-
 /// Applies `action` to the application.
 ///
 /// Returns whether the application was asked to close.
@@ -353,8 +277,6 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ShowCustomVariables => app.open_custom_variables(),
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
-        Action::ToggleRig => app.rig.enabled = !app.rig.enabled,
-        Action::RetryRig => app.retry_rig(),
         Action::WriteRigScript => app.write_rig_script(),
         Action::WriteBandPlan => app.write_band_plan(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,
@@ -512,63 +434,6 @@ mod tests {
         assert!(matches!(flat[1], Item::Submenu { .. }));
         assert!(matches!(flat[2], Item::Pending(label) if label == "inner"));
         assert!(matches!(flat[3], Item::Pending(label) if label == "after"));
-    }
-
-    /// Nothing about a connection is worth showing until one is asked for, so
-    /// the menu is only the switch until it is turned on.
-    #[test]
-    fn the_rig_menu_shows_a_connection_only_once_one_is_asked_for() {
-        let mut app = App::headless();
-
-        assert_eq!(rig_items(&app).len(), 1);
-
-        app.rig.enabled = true;
-        let items = rig_items(&app);
-        assert!(items.len() > 1);
-        // Every transport is named, so that a station reaching two of them can
-        // see which one the failure beside it belongs to.
-        assert!(
-            items.iter().any(|item| matches!(
-                item,
-                Item::Pending(label) if label.contains("127.0.0.1:4532")
-            )),
-            "{items:?}"
-        );
-    }
-
-    /// A connection that failed is one the operator can do something about,
-    /// and reconnecting is offered exactly then.
-    #[test]
-    fn reconnecting_is_offered_only_after_a_failure() {
-        let mut app = App::headless();
-        app.rig.enabled = true;
-        let retry = Item::Command {
-            label: app.i18n.text("action-rig-retry"),
-            action: Action::RetryRig,
-        };
-
-        app.rig_snapshot.state = RigState::Receiving;
-        assert!(!rig_items(&app).contains(&retry));
-
-        app.rig_snapshot.state = RigState::Failed;
-        assert!(rig_items(&app).contains(&retry));
-    }
-
-    /// The frequency is one number, so it must not be grouped the way a locale
-    /// would group a count.
-    #[test]
-    fn the_frequency_is_shown_with_its_band() {
-        let mut app = App::headless();
-        app.rig.enabled = true;
-        assert_eq!(rig_frequency(&app), app.i18n.text("rig-frequency-unknown"));
-
-        app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
-            frequency_hz: 14_230_000,
-            band: Some("20m".to_owned()),
-        });
-        let shown = rig_frequency(&app);
-        assert!(shown.contains("14.230"), "{shown}");
-        assert!(shown.contains("20m"), "{shown}");
     }
 
     /// Every directory the application keeps is reachable from one menu, or a

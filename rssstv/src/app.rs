@@ -716,6 +716,15 @@ impl App {
         }
     }
 
+    /// Switches rig control on or off.
+    ///
+    /// The whole of the decision: the next frame is what starts or stops the
+    /// worker, and switching off mid-transmission is what gives the keying
+    /// back before the connection goes.
+    pub const fn set_rig_enabled(&mut self, enabled: bool) {
+        self.rig.enabled = enabled;
+    }
+
     /// Makes the connection again after it failed.
     ///
     /// Giving up the worker is the whole of it: while rig control is switched

@@ -433,7 +433,7 @@ mod tests {
             enabled: true,
             ports: BTreeMap::from([(
                 "rig".to_owned(),
-                PortSettings::Rigctld {
+                PortSettings {
                     address: address.to_owned(),
                 },
             )]),

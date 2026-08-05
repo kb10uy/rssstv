@@ -11,6 +11,7 @@ use crate::{
     ui::{canvas, menu},
     worker::{
         receive::Progress,
+        rig::RigState,
         transmit::{TxGain, TxPhase, TxProgress},
     },
 };
@@ -397,24 +398,76 @@ fn side_panel(ui: &mut Ui, app: &mut App) {
             ui.set_width(ui.available_width());
             tab_controls(ui, app);
         });
-        if app.rig.enabled {
-            ui.add_space(16.0);
-            let radio_title = app.i18n.text("section-radio");
-            section(ui, &radio_title, |ui| radio_panel(ui, app));
-        }
+        ui.add_space(16.0);
+        let radio_title = app.i18n.text("section-radio");
+        section(ui, &radio_title, |ui| radio_panel(ui, app));
         ui.add_space(16.0);
         let qso_title = app.i18n.text("section-qso");
         section(ui, &qso_title, |ui| qso_panel(ui, app));
     });
 }
 
-/// Where the rig is, and the two ways the interface moves it.
+/// The connection, where the rig is, and the two ways the interface moves it.
 ///
-/// Shown while rig control is switched on rather than only once it is
-/// connected, so that the panel does not appear and vanish as a connection is
-/// made or lost. Its controls follow what the rig can actually be asked for:
-/// nothing may move a rig that is on the air.
+/// Always present, because this is where rig control is switched on: a station
+/// that has not connected still needs somewhere to say so, and a panel that
+/// came and went with the connection would be somewhere it could not.
 fn radio_panel(ui: &mut Ui, app: &mut App) {
+    connection_row(ui, app);
+    if !app.rig.enabled {
+        return;
+    }
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
+    tuning_row(ui, app);
+}
+
+/// The switch, and what the connection has to say for itself.
+fn connection_row(ui: &mut Ui, app: &mut App) {
+    let failed = app.rig_snapshot.state == RigState::Failed;
+    let label = app.i18n.text(if app.rig.enabled {
+        "action-rig-disconnect"
+    } else {
+        "action-rig-connect"
+    });
+    let retry = app.i18n.text("action-rig-retry");
+    let mut toggled = false;
+    let mut retried = false;
+    ui.horizontal(|ui| {
+        let height = ui.spacing().interact_size.y;
+        let gap = ui.spacing().item_spacing.x;
+        // Reconnecting is offered exactly when there is a failure to recover
+        // from, so it takes half the row only then.
+        let width = if failed {
+            (ui.available_width() - gap) / 2.0
+        } else {
+            ui.available_width()
+        };
+        let switch = egui::Button::new(RichText::new(label).size(SMALL)).selected(app.rig.enabled);
+        toggled = ui.add_sized([width, height], switch).clicked();
+        if failed {
+            let again = egui::Button::new(RichText::new(retry).size(SMALL));
+            retried = ui.add_sized([width, height], again).clicked();
+        }
+    });
+    // What the rig said outlives the state it left behind, so the failure is
+    // what the operator is shown when there is one.
+    let told = app
+        .rig_snapshot
+        .error
+        .clone()
+        .unwrap_or_else(|| app.i18n.text(app.rig_snapshot.state.label_key()));
+    ui.label(RichText::new(told).size(LABEL).weak());
+    if toggled {
+        app.set_rig_enabled(!app.rig.enabled);
+    }
+    if retried {
+        app.retry_rig();
+    }
+}
+
+fn tuning_row(ui: &mut Ui, app: &mut App) {
     let tunable = app.can_tune();
     let selected = app
         .rig_snapshot
@@ -948,31 +1001,46 @@ mod tests {
         harness.get_by_label(&title);
     }
 
-    /// A panel that cannot act on anything is one more thing between the
-    /// operator and the image, so it arrives with rig control and not before.
+    /// The panel is where rig control is switched on, so it has to be there
+    /// before there is a connection: what it holds is what follows the state.
     #[test]
-    fn the_radio_panel_appears_with_rig_control() {
+    fn the_radio_panel_is_where_the_connection_is_worked() {
         let mut app = App::headless();
         let title = app.i18n.text("section-radio");
+        let connect = app.i18n.text("action-rig-connect");
+        let disconnect = app.i18n.text("action-rig-disconnect");
+        let retry = app.i18n.text("action-rig-retry");
         let readout = app
             .i18n
             .text_with("radio-frequency", &[("frequency", arg("7.100"))]);
 
         {
             let harness = render(&mut app);
-            assert!(harness.query_by_label(&title).is_none());
+            harness.get_by_label(&title);
+            harness.get_by_label(&connect);
+            // Nothing to tune until there is a rig to tune.
+            assert!(harness.query_by_label(&readout).is_none());
+            assert!(harness.query_by_label(&retry).is_none());
         }
 
         app.rig.enabled = true;
-        app.rig_snapshot.state = crate::worker::rig::RigState::Receiving;
+        app.rig_snapshot.state = RigState::Receiving;
         app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
             frequency_hz: 7_100_000,
             band: Some("40m".to_owned()),
         });
-        let harness = render(&mut app);
+        {
+            let harness = render(&mut app);
+            harness.get_by_label(&disconnect);
+            harness.get_by_label(&readout);
+            assert!(harness.query_by_label(&retry).is_none());
+        }
 
-        harness.get_by_label(&title);
-        harness.get_by_label(&readout);
+        // Reconnecting is offered exactly when there is a failure to recover
+        // from.
+        app.rig_snapshot.state = RigState::Failed;
+        let harness = render(&mut app);
+        harness.get_by_label(&retry);
     }
 
     #[test]

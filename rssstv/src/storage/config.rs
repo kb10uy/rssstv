@@ -108,24 +108,14 @@ pub struct RigSettings {
 /// The name the default port is offered to the script under.
 pub const DEFAULT_PORT_NAME: &str = "rig";
 
-/// One transport, as the configuration file describes it.
+/// One `rigctld` the application connects to.
 ///
-/// An enum of one, because `kind` is written in the file and a value this
-/// build does not know has to be refusable. There is no second kind planned:
-/// Hamlib already covers the CI-V and DTR/RTS keying that would want one.
+/// There is nothing to choose between here: Hamlib already covers the CI-V and
+/// DTR/RTS keying that a second kind of transport would be for, so a port is
+/// an address and no more.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PortSettings {
-    /// A `rigctld` the operator is already running.
-    Rigctld { address: String },
-}
-
-impl PortSettings {
-    /// The word this kind of port is written as in the configuration file.
-    pub const fn kind_name(&self) -> &'static str {
-        match self {
-            Self::Rigctld { .. } => "rigctld",
-        }
-    }
+pub struct PortSettings {
+    pub address: String,
 }
 
 impl Default for RigSettings {
@@ -137,7 +127,7 @@ impl Default for RigSettings {
             enabled: false,
             ports: BTreeMap::from([(
                 DEFAULT_PORT_NAME.to_owned(),
-                PortSettings::Rigctld {
+                PortSettings {
                     address: DEFAULT_ADDRESS.to_owned(),
                 },
             )]),
@@ -494,34 +484,31 @@ fn seconds(
         .unwrap_or(default)
 }
 
-/// Reads the transports to open, or nothing when the file names none.
+/// Reads the ports to connect to, or nothing when the file names none.
 ///
-/// A section that is present is taken as written: a port whose kind is one
-/// this build does not have is dropped, and a section that leaves nothing
-/// behind leaves the script with no port to reach rather than being quietly
-/// given the default one back.
+/// A section that is present is taken as written: an entry that is not a
+/// section is dropped, and a section that leaves nothing behind leaves the
+/// script with no port to reach rather than being quietly given the default
+/// one back.
 fn rig_ports(document: &DocumentMut) -> Option<BTreeMap<String, PortSettings>> {
     let table = subtable(document, "rig", "ports")?;
     Some(
         table
             .iter()
-            .filter_map(|(name, item)| Some((name.to_owned(), port_settings(item.as_table()?)?)))
+            .filter_map(|(name, item)| Some((name.to_owned(), port_settings(item.as_table()?))))
             .collect(),
     )
 }
 
-fn port_settings(table: &Table) -> Option<PortSettings> {
-    match table.get("kind")?.as_str()?.trim() {
-        "rigctld" => Some(PortSettings::Rigctld {
-            address: table
-                .get("address")
-                .and_then(Item::as_str)
-                .map(str::trim)
-                .filter(|address| !address.is_empty())
-                .unwrap_or(DEFAULT_ADDRESS)
-                .to_owned(),
-        }),
-        _ => None,
+fn port_settings(table: &Table) -> PortSettings {
+    PortSettings {
+        address: table
+            .get("address")
+            .and_then(Item::as_str)
+            .map(str::trim)
+            .filter(|address| !address.is_empty())
+            .unwrap_or(DEFAULT_ADDRESS)
+            .to_owned(),
     }
 }
 
@@ -558,13 +545,11 @@ fn store_rig(document: &mut DocumentMut, rig: &RigSettings) {
     let ports = subtable_mut(document, "rig", "ports");
     ports.retain(|name, _| rig.ports.contains_key(name));
     for (name, port) in &rig.ports {
+        // A port used to name the kind of transport it was. There is only one,
+        // so the key is taken back out along with the rest of what it meant.
         let entry = child_table_mut(ports, name);
-        entry["kind"] = value(port.kind_name());
-        match port {
-            PortSettings::Rigctld { address } => {
-                entry["address"] = value(address.as_str());
-            }
-        }
+        entry.remove("kind");
+        entry["address"] = value(port.address.as_str());
     }
 }
 
@@ -718,13 +703,13 @@ mod tests {
                 ports: BTreeMap::from([
                     (
                         "rig".to_owned(),
-                        PortSettings::Rigctld {
+                        PortSettings {
                             address: "192.168.0.8:4532".to_owned(),
                         },
                     ),
                     (
                         "amplifier".to_owned(),
-                        PortSettings::Rigctld {
+                        PortSettings {
                             address: "127.0.0.1:4533".to_owned(),
                         },
                     ),
@@ -862,7 +847,6 @@ mod tests {
 
         let stored = fs::read_to_string(root.config()).unwrap();
         assert!(stored.contains("[rig.ports.rig]"), "{stored}");
-        assert!(stored.contains(r#"kind = "rigctld""#), "{stored}");
         assert!(stored.contains(r#"address = "127.0.0.1:4532""#), "{stored}");
     }
 
@@ -887,7 +871,7 @@ mod tests {
 
         assert_eq!(
             ports.get("rig"),
-            Some(&PortSettings::Rigctld {
+            Some(&PortSettings {
                 address: "192.168.0.8:4532".to_owned()
             })
         );
@@ -895,22 +879,47 @@ mod tests {
         // listens unless it was told otherwise.
         assert_eq!(
             ports.get("amplifier"),
-            Some(&PortSettings::Rigctld {
+            Some(&PortSettings {
                 address: DEFAULT_ADDRESS.to_owned()
             })
         );
     }
 
-    /// A section that is present is taken as written. Handing back the default
-    /// port would put the script on a rig the operator did not ask for.
-    #[rstest]
-    #[case::an_unknown_kind("[rig.ports.rig]\nkind = \"serial\"\n")]
-    #[case::no_kind_at_all("[rig.ports.rig]\naddress = \"127.0.0.1:4532\"\n")]
-    fn a_port_this_build_cannot_open_is_dropped(#[case] written: &str) {
+    /// A section that is present is taken as written, and an entry that is not
+    /// a section is not a port. Handing back the default would put the script
+    /// on a rig the operator did not ask for.
+    #[test]
+    fn an_entry_that_is_not_a_section_is_not_a_port() {
         let root = TestDirectory::new();
-        fs::write(root.config(), written).unwrap();
+        fs::write(root.config(), "[rig.ports]\nrig = 3\n").unwrap();
 
         assert!(Config::load(&root.config()).settings().rig.ports.is_empty());
+    }
+
+    /// A port named the kind of transport it was, back when there could have
+    /// been more than one. There cannot, so the key goes.
+    #[test]
+    fn the_transport_kind_is_taken_out_of_a_port() {
+        let root = TestDirectory::new();
+        fs::write(
+            root.config(),
+            "[rig.ports.rig]\nkind = \"rigctld\"\naddress = \"192.168.0.8:4532\"\n",
+        )
+        .unwrap();
+
+        let mut config = Config::load(&root.config());
+        let settings = config.settings();
+        assert_eq!(
+            settings.rig.ports.get("rig"),
+            Some(&PortSettings {
+                address: "192.168.0.8:4532".to_owned()
+            })
+        );
+
+        config.store(&settings);
+        let stored = fs::read_to_string(root.config()).unwrap();
+        assert!(!stored.contains("kind"), "{stored}");
+        assert!(stored.contains("192.168.0.8:4532"), "{stored}");
     }
 
     /// A section that is not a section says nothing about the ports, which is

@@ -67,25 +67,22 @@ action-transmit = TX
 action-stop-transmit = TX停止
 action-open-folder = フォルダーを開く
 action-refresh = 再読み込み
-action-rig-connect = rigctld に接続
+action-rig-connect = 接続
+action-rig-disconnect = 切断
 action-rig-retry = 接続し直す
 action-rig-write-script = デフォルトスクリプトを書き出す
 action-rig-write-bands = デフォルトバンドプランを書き出す
 
-rig-port = { $name } · { $address }
 rig-state-disconnected = 未接続
 rig-state-connecting = 接続中…
 rig-state-receiving = 接続済み
 rig-state-transmitting = 送信中
 rig-state-failed = 接続失敗
-rig-frequency = { $frequency } MHz · { $band }
-rig-frequency-out-of-band = { $frequency } MHz
 rig-frequency-unknown = 周波数未取得
 
 section-radio = リグ
 radio-band-unknown = バンド外
 radio-frequency = { $frequency } MHz
-rig-script-note = 送出内容は rigcontrol.lua が決めます。
 rig-script-written = { $path } に書き出しました
 
 section-templates = テンプレート

@@ -128,20 +128,17 @@ impl ScriptHost {
 
         let table = lua.create_table().map_err(load_error)?;
         for (name, settings) in ports {
-            match settings {
-                PortSettings::Rigctld { address } => {
-                    let rig =
-                        Rigctld::connect(address, timeout).map_err(|error| ScriptError::Port {
-                            name: name.clone(),
-                            error,
-                        })?;
-                    let port = RigctldPort {
-                        rig,
-                        broken: Rc::clone(&broken),
-                    };
-                    table.set(name.as_str(), port).map_err(load_error)?;
+            let rig = Rigctld::connect(&settings.address, timeout).map_err(|error| {
+                ScriptError::Port {
+                    name: name.clone(),
+                    error,
                 }
-            }
+            })?;
+            let port = RigctldPort {
+                rig,
+                broken: Rc::clone(&broken),
+            };
+            table.set(name.as_str(), port).map_err(load_error)?;
         }
 
         let module: Table = lua

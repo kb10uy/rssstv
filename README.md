@@ -27,13 +27,14 @@ for the design and remaining work.
 
 Rig control goes through Hamlib's `rigctld` rather than a linked library, so
 there is nothing to build and the serial port stays available to the logger.
-Start `rigctld` for your rig, switch Rig Control on, and transmissions key it
-and read its frequency into `${radio.frequency}` and `${radio.band}`.
+Start `rigctld` for your rig, connect from the Radio panel, and transmissions
+key it and read its frequency into `${radio.frequency}` and `${radio.band}`.
+The same panel changes band and steps up and down it.
 
 What is actually sent is decided by a Lua script, because a station keys its
 rig in more ways than one protocol covers. The band plan the radio panel offers
 comes from a file beside it. Both are built in and need no files; write either
-out from the Rig Control menu, as `rigcontrol.lua` and `bands.toml` beside
+out from Settings › Rig Control, as `rigcontrol.lua` and `bands.toml` beside
 `config.toml`, to take it over. See
 [docs/rssstv/rig-control.md](docs/rssstv/rig-control.md).
 

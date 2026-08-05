@@ -463,6 +463,12 @@ fn tuning_row(ui: &mut Ui, app: &mut App) {
         .as_ref()
         .and_then(|reading| reading.band.clone());
     let unknown = app.i18n.text("radio-band-unknown");
+    let mode = app
+        .rig_snapshot
+        .reading
+        .as_ref()
+        .map(|reading| reading.mode.clone())
+        .unwrap_or_else(|| app.i18n.text("rig-mode-unknown"));
     let readout = frequency_readout(app);
     let (down, up) = (app.stepped_frequency(-1), app.stepped_frequency(1));
     let mut chosen = None;
@@ -481,8 +487,10 @@ fn tuning_row(ui: &mut Ui, app: &mut App) {
             });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            let height = ui.spacing().interact_size.y;
-            let step = height * 1.6;
+            let line_height =
+                ui.fonts_mut(|fonts| fonts.row_height(&egui::FontId::proportional(SMALL)));
+            let height = (line_height * 2.0 + ui.spacing().item_spacing.y).ceil();
+            let step = ui.spacing().interact_size.y * 1.6;
             let gaps = ui.spacing().item_spacing.x * 2.0;
             let width = (ui.available_width() - gaps - step * 2.0).max(0.0);
             // Disabled at the band edges rather than clamped: a button that
@@ -491,8 +499,14 @@ fn tuning_row(ui: &mut Ui, app: &mut App) {
             if ui.add_enabled(down.is_some(), back).clicked() {
                 stepped = -1;
             }
-            let label = egui::Label::new(RichText::new(readout).size(SMALL));
-            ui.add_sized([width, height], label);
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, height),
+                Layout::top_down(Align::Center),
+                |ui| {
+                    ui.label(RichText::new(mode).size(SMALL));
+                    ui.label(RichText::new(readout).size(SMALL));
+                },
+            );
             let forward = egui::Button::new("+").min_size([step, height].into());
             if ui.add_enabled(up.is_some(), forward).clicked() {
                 stepped = 1;
@@ -1002,6 +1016,7 @@ mod tests {
         let disconnect = app.i18n.text("action-rig-disconnect");
         let retry = app.i18n.text("action-rig-retry");
         let unknown = app.i18n.text("rig-frequency-unknown");
+        let mode = "LSB";
         let readout = app
             .i18n
             .text_with("radio-frequency", &[("frequency", arg("7.100"))]);
@@ -1018,12 +1033,19 @@ mod tests {
         app.rig_snapshot.state = RigState::Receiving;
         app.rig_snapshot.reading = Some(crate::worker::rig::Reading {
             frequency_hz: 7_100_000,
+            mode: "LSB".to_owned(),
             band: Some("40m".to_owned()),
         });
         {
             let harness = render(&mut app);
             harness.get_by_label(&disconnect);
-            harness.get_by_label(&readout);
+            let mode_rect = harness.get_by_label(mode).rect();
+            let frequency_rect = harness.get_by_label(&readout).rect();
+            let step_rect = harness.get_by_label("−").rect();
+            assert_eq!(
+                step_rect.height(),
+                frequency_rect.bottom() - mode_rect.top()
+            );
             harness.get_by_label(&retry);
         }
 

@@ -29,6 +29,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Reading {
     pub frequency_hz: u64,
+    pub mode: String,
     /// The band it falls in, named as the plan names it.
     pub band: Option<String>,
 }
@@ -271,17 +272,17 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
             Ok(Request::SetFrequency(_) | Request::ChangeBand(_)) if keyed => Ok(()),
             Ok(Request::SetFrequency(target_hz)) => host
                 .set_frequency(frequency, target_hz)
-                .and_then(|()| read_frequency(&host, &plan, snapshot, &mut frequency)),
+                .and_then(|()| read_tuning(&host, &plan, snapshot, &mut frequency)),
             Ok(Request::ChangeBand(name)) => match plan.bands.by_name(&name) {
                 Some(band) => host
                     .change_band(frequency, band)
-                    .and_then(|()| read_frequency(&host, &plan, snapshot, &mut frequency)),
+                    .and_then(|()| read_tuning(&host, &plan, snapshot, &mut frequency)),
                 // The plan was reloaded out from under the interface, which is
                 // not a failure: the band it offered is simply gone.
                 None => Ok(()),
             },
             Err(RecvTimeoutError::Timeout) if !keyed && plan.poll.is_some() => {
-                read_frequency(&host, &plan, snapshot, &mut frequency)
+                read_tuning(&host, &plan, snapshot, &mut frequency)
             }
             Err(RecvTimeoutError::Timeout) => Ok(()),
             Err(RecvTimeoutError::Disconnected) => break,
@@ -310,20 +311,21 @@ fn rig_loop(plan: Plan, requests: &Receiver<Request>, snapshot: &Arc<Mutex<RigSn
     update(snapshot, |state| state.state = RigState::Disconnected);
 }
 
-/// Reads the frequency and publishes the band it names.
+/// Reads the frequency and mode, then publishes the band the frequency names.
 ///
 /// Called after tuning as well as on the poll, so the interface shows where
 /// the rig went rather than where it was until the next poll comes round.
-fn read_frequency(
+fn read_tuning(
     host: &ScriptHost,
     plan: &Plan,
     snapshot: &Mutex<RigSnapshot>,
     frequency: &mut Option<u64>,
 ) -> Result<(), ScriptError> {
     let read = host.poll_frequency(*frequency)?;
-    *frequency = read;
-    let reading = read.map(|frequency_hz| Reading {
+    *frequency = read.as_ref().map(|(frequency_hz, _)| *frequency_hz);
+    let reading = read.map(|(frequency_hz, mode)| Reading {
         frequency_hz,
+        mode,
         band: plan
             .bands
             .for_frequency(frequency_hz)
@@ -403,6 +405,8 @@ mod tests {
                 for request in reader.lines().map_while(Result::ok) {
                     let answer = if request.contains("get_freq") {
                         format!("get_freq:\nFreq: {frequency_hz}\nRPRT 0\n")
+                    } else if request.contains("get_mode") {
+                        "get_mode:\nMode: USB\nPassband: 2400\nRPRT 0\n".to_owned()
                     } else if request.contains("chk_vfo") {
                         "chk_vfo:\nChkVFO: 0\nRPRT 0\n".to_owned()
                     } else {
@@ -537,7 +541,34 @@ mod tests {
 
         let reading = snapshot.reading.unwrap();
         assert_eq!(reading.frequency_hz, 7_178_000);
+        assert_eq!(reading.mode, "USB");
         assert_eq!(reading.band.as_deref(), Some("40m"));
+    }
+
+    #[test]
+    fn a_frequency_without_a_mode_is_not_a_reading() {
+        let fake = FakeRig::spawn(7_178_000);
+        let config = TestDirectory::with_script(
+            "return { poll_frequency = function(ctx) return ctx.ports.rig:frequency() end }",
+        );
+        let worker = RigWorker::spawn(
+            &RigSettings {
+                poll_seconds: 0.02,
+                ..settings(&fake.address)
+            },
+            &config.0,
+            plan(),
+        );
+
+        let snapshot = settle(&worker, |snapshot| snapshot.error.is_some());
+
+        assert!(snapshot.reading.is_none());
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("both frequency and mode"))
+        );
     }
 
     /// A keyed rig has to be left alone: a poll landing mid-transmission is
@@ -572,7 +603,9 @@ mod tests {
         let config = TestDirectory::with_script(
             r#"
             return {
-              poll_frequency = function(ctx) return ctx.ports.rig:frequency() end,
+              poll_frequency = function(ctx)
+                return ctx.ports.rig:frequency(), ctx.ports.rig:mode()
+              end,
               transmit = function(ctx)
                 ctx.ports.rig:send("BAND " .. (ctx.band and ctx.band.name or "none"))
               end,

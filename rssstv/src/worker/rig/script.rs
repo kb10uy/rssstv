@@ -199,9 +199,12 @@ impl ScriptHost {
 
     /// Calls `poll_frequency`, returning what the rig is tuned to.
     ///
-    /// A script that reports nothing is one that could not read the frequency,
+    /// A script that reports nothing is one that could not read the tuning,
     /// which is a state rather than a failure: keying does not depend on it.
-    pub fn poll_frequency(&self, frequency_hz: Option<u64>) -> Result<Option<u64>, ScriptError> {
+    pub fn poll_frequency(
+        &self,
+        frequency_hz: Option<u64>,
+    ) -> Result<Option<(u64, String)>, ScriptError> {
         let entry = Entry::PollFrequency;
         let Some(function) = self.function(entry) else {
             return Ok(None);
@@ -209,8 +212,19 @@ impl ScriptHost {
         let context = self
             .context(frequency_hz)
             .map_err(|error| call_error(entry, &error))?;
-        self.guarded(|| function.call::<Option<u64>>(context))
-            .map_err(|error| call_error(entry, &error))
+        let (frequency_hz, mode) = self
+            .guarded(|| function.call::<(Option<u64>, Option<String>)>(context))
+            .map_err(|error| call_error(entry, &error))?;
+        match (frequency_hz, mode) {
+            (None, None) => Ok(None),
+            (Some(frequency_hz), Some(mode)) if !mode.trim().is_empty() => {
+                Ok(Some((frequency_hz, mode)))
+            }
+            _ => Err(ScriptError::Call {
+                entry: entry.name(),
+                detail: "must return both frequency and mode, or neither".to_owned(),
+            }),
+        }
     }
 
     fn invoke(
@@ -356,6 +370,10 @@ impl UserData for RigctldPort {
         });
         methods.add_method_mut("frequency", |_, this, ()| match this.rig.frequency_hz() {
             Ok(frequency_hz) => Ok(frequency_hz),
+            Err(error) => Err(this.fail(error)),
+        });
+        methods.add_method_mut("mode", |_, this, ()| match this.rig.mode() {
+            Ok(mode) => Ok(mode),
             Err(error) => Err(this.fail(error)),
         });
     }

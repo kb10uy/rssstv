@@ -1706,6 +1706,7 @@ mod tests {
         app.rig_snapshot.state = RigState::Receiving;
         app.rig_snapshot.reading = Some(Reading {
             frequency_hz,
+            mode: "USB".to_owned(),
             band: app
                 .bands
                 .for_frequency(frequency_hz)

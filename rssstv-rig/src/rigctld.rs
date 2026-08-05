@@ -42,6 +42,17 @@ impl Response {
                 .and_then(|value| value.trim().parse().ok())
         })
     }
+
+    fn text(&self, name: &str) -> Option<&str> {
+        self.lines.iter().find_map(|line| {
+            let (label, value) = line.split_once(':')?;
+            label
+                .trim()
+                .eq_ignore_ascii_case(name)
+                .then(|| value.trim())
+                .filter(|value| !value.is_empty())
+        })
+    }
 }
 
 /// A live connection to `rigctld`.
@@ -125,6 +136,17 @@ impl Rigctld {
         response.number().ok_or(RigError::Unreadable {
             command: "\\get_freq".to_owned(),
         })
+    }
+
+    /// Asks which mode the rig is using.
+    pub fn mode(&mut self) -> Result<String, RigError> {
+        let response = self.query("\\get_mode")?;
+        response
+            .text("mode")
+            .map(str::to_owned)
+            .ok_or(RigError::Unreadable {
+                command: "\\get_mode".to_owned(),
+            })
     }
 
     /// Sends one of this crate's own commands, addressed as `rigctld` wants.
@@ -260,6 +282,18 @@ mod tests {
         assert_eq!(rig.frequency_hz(), Ok(14_230_000));
         assert!(!rig.vfo_argument());
         assert_eq!(fake.received(), ["+\\chk_vfo", "+\\get_freq"]);
+    }
+
+    #[test]
+    fn a_mode_is_read_from_a_labelled_answer() {
+        let fake = FakeRig::spawn(&[
+            "chk_vfo:\nChkVFO: 1\nRPRT 0\n",
+            "get_mode: currVFO\nMode: USB\nPassband: 2400\nRPRT 0\n",
+        ]);
+        let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
+
+        assert_eq!(rig.mode(), Ok("USB".to_owned()));
+        assert_eq!(fake.received(), ["+\\chk_vfo", "+\\get_mode currVFO"]);
     }
 
     /// A `rigctld` started with `--vfo` refuses every command that does not

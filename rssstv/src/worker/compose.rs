@@ -494,6 +494,7 @@ mod tests {
         let variables = variables(&ComposeRequest {
             radio: Some(Reading {
                 frequency_hz: 14_230_000,
+                mode: "USB".to_owned(),
                 band: Some("20m".to_owned()),
             }),
             ..request()
@@ -516,6 +517,7 @@ mod tests {
         let variables = variables(&ComposeRequest {
             radio: Some(Reading {
                 frequency_hz: 6_000_000,
+                mode: "USB".to_owned(),
                 band: None,
             }),
             ..request()

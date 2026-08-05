@@ -26,7 +26,7 @@ local function receive(ctx)
 end
 
 local function poll_frequency(ctx)
-  return ctx.ports.rig:frequency()
+  return ctx.ports.rig:frequency(), ctx.ports.rig:mode()
 end
 
 local function set_frequency(ctx, hz)

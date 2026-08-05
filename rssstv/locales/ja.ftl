@@ -79,6 +79,7 @@ rig-state-receiving = 接続済み
 rig-state-transmitting = 送信中
 rig-state-failed = 接続失敗
 rig-frequency-unknown = 周波数未取得
+rig-mode-unknown = モード未取得
 
 section-radio = リグ
 radio-band-unknown = バンド外

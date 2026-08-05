@@ -79,6 +79,7 @@ rig-state-receiving = Connected
 rig-state-transmitting = Keyed
 rig-state-failed = Failed
 rig-frequency-unknown = Frequency not read
+rig-mode-unknown = Mode not read
 
 section-radio = Radio
 radio-band-unknown = Off band

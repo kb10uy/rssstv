@@ -250,10 +250,12 @@ fn transmit_loop(
         Err(error) => return fail(&snapshot, error.to_string()),
     };
     let sample_rate_hz = writer.sample_rate_hz();
-    let total_samples = samples_for(transmission.duration().as_picos(), sample_rate_hz);
+    let total_samples = transmission.duration().to_samples_ceil(sample_rate_hz);
     let raster = RasterTiming {
-        start_samples: samples_for(transmission.raster_start().as_picos(), sample_rate_hz),
-        samples: samples_for(transmission.raster_duration().as_picos(), sample_rate_hz),
+        start_samples: transmission.raster_start().to_samples_ceil(sample_rate_hz),
+        samples: transmission
+            .raster_duration()
+            .to_samples_ceil(sample_rate_hz),
         rows: usize::from(mode.spec().active_rows()),
     };
     update(&snapshot, |state| {
@@ -312,11 +314,6 @@ fn transmit_loop(
             }
         });
     }
-}
-
-fn samples_for(duration_picos: u64, sample_rate_hz: u32) -> u64 {
-    let scaled = u128::from(duration_picos) * u128::from(sample_rate_hz);
-    u64::try_from(scaled.div_ceil(1_000_000_000_000)).expect("SSTV transmission fits u64")
 }
 
 fn update(snapshot: &Mutex<TxSnapshot>, update: impl FnOnce(&mut TxSnapshot)) {

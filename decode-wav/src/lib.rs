@@ -298,7 +298,7 @@ mod tests {
         let mut phase = 0.0_f64;
         let mut written = 0_u64;
         for tone in TxEncoder::new(mode, source).unwrap() {
-            let deadline = tone.until().as_picos() * u64::from(sample_rate) / 1_000_000_000_000;
+            let deadline = tone.until().to_samples(sample_rate);
             while written < deadline {
                 let sample = (phase.sin() * 24_000.0) as i16;
                 writer.write_sample(sample).unwrap();

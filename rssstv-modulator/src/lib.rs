@@ -4,10 +4,8 @@
 #![forbid(unsafe_code)]
 
 use rssstv_dsp::oscillator::Vco;
-use rssstv_sstv::signal::TimedTone;
+use rssstv_sstv::{signal::TimedTone, time::PICOS_PER_SECOND};
 use thiserror::Error;
-
-const PICOS_PER_SECOND: u128 = 1_000_000_000_000;
 
 /// Errors produced while configuring or processing a tone stream.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]

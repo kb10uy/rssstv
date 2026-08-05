@@ -1143,7 +1143,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::{signal::TxComponent, tx::TxEncoder};
+    use crate::{signal::TxComponent, time::SstvDuration, tx::TxEncoder};
 
     const SAMPLE_RATE: u32 = 10_000;
     const VIS_END_PS: u64 = 910_000_000_000;
@@ -1185,8 +1185,8 @@ mod tests {
         let mut sync = vec![0.0; padding];
         for tone in TxEncoder::new(mode, image).unwrap().skip(13) {
             let relative_end = tone.until().as_picos() - VIS_END_PS;
-            let end_sample = (u128::from(relative_end) * u128::from(SAMPLE_RATE))
-                .div_ceil(1_000_000_000_000) as usize;
+            let end_sample =
+                SstvDuration::from_picos(relative_end).to_samples_ceil(SAMPLE_RATE) as usize;
             let end = padding + end_sample;
             frequency.resize(end, tone.frequency().as_hz() as f32);
             sync.resize(
@@ -1212,16 +1212,15 @@ mod tests {
             (153_010_000_000, 226_226_000_000, 1700.0, false),
         ];
         let raster_ps = PERIOD_PS * 256;
-        let samples = (u128::from(raster_ps) * u128::from(sample_rate_hz))
-            .div_ceil(1_000_000_000_000) as usize;
+        let samples = SstvDuration::from_picos(raster_ps).to_samples_ceil(sample_rate_hz) as usize;
         let mut frequency = vec![1500.0; padding + samples + TAIL];
         let mut sync = vec![0.0; frequency.len()];
         for unit in 0..256_u64 {
             for (start_ps, end_ps, value, is_sync) in SEGMENTS {
                 let edge = |offset_ps| {
                     padding
-                        + (u128::from(unit * PERIOD_PS + offset_ps) * u128::from(sample_rate_hz))
-                            .div_ceil(1_000_000_000_000) as usize
+                        + SstvDuration::from_picos(unit * PERIOD_PS + offset_ps)
+                            .to_samples_ceil(sample_rate_hz) as usize
                 };
                 let range = edge(start_ps)..edge(end_ps);
                 frequency[range.clone()].fill(value);
@@ -1582,8 +1581,8 @@ mod tests {
     #[test]
     fn acquisition_recovers_after_more_than_two_periods_of_noise_and_chunked_retry() {
         let profile = RasterProfile::for_mode(Mode::Martin2).unwrap();
-        let noise = (u128::from(profile.period_ps) * u128::from(SAMPLE_RATE) * 3
-            / 1_000_000_000_000) as usize;
+        let noise =
+            SstvDuration::from_picos(profile.period_ps * 3).to_samples(SAMPLE_RATE) as usize;
         let (frequency, sync) = sampled_body(Mode::Martin2, noise);
         let (_, rows, epoch) = decode(Mode::Martin2, &frequency, &sync, &[113, 997, 29]);
         assert_eq!(rows.len(), Mode::Martin2.spec().active_rows() as usize);
@@ -2094,9 +2093,9 @@ mod tests {
         let profile = RasterProfile::for_mode(Mode::Robot36).unwrap();
         let (start_ps, end_ps) = profile.selector_window_ps().unwrap();
         for unit in units {
-            let unit_start = u128::from(profile.period_ps) * u128::from(unit);
+            let unit_start_picos = profile.period_ps * unit;
             let sample = |offset_ps: u64| {
-                ((unit_start + u128::from(offset_ps)) * u128::from(SAMPLE_RATE) / 1_000_000_000_000)
+                SstvDuration::from_picos(unit_start_picos + offset_ps).to_samples(SAMPLE_RATE)
                     as usize
             };
             let (start, end) = (sample(start_ps), sample(end_ps));

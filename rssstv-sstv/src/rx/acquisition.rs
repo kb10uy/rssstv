@@ -31,8 +31,7 @@ pub(super) fn startup_window_samples(profile: RasterProfile, sample_rate_hz: u32
 }
 
 fn period_samples(profile: RasterProfile, sample_rate_hz: u32, periods: u64) -> u64 {
-    let product = u128::from(profile.period_ps) * u128::from(sample_rate_hz) * u128::from(periods);
-    product.div_ceil(1_000_000_000_000) as u64
+    SstvDuration::from_picos(profile.period_ps * periods).to_samples_ceil(sample_rate_hz)
 }
 
 /// Acquires the raster phase of a starting reception on the configured rate.

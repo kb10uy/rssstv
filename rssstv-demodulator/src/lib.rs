@@ -140,19 +140,19 @@ mod tests {
             .map(|segment| segment.duration().as_picos())
             .sum::<u64>();
         let stop_ps = 910_000_000_000 + leading_ps + mode.spec().period().as_picos() * 14;
-        let stop_sample = u128::from(stop_ps) * u128::from(rate) / 1_000_000_000_000;
+        let stop_sample = SstvDuration::from_picos(stop_ps).to_samples(rate);
         let mut samples = Vec::new();
         let mut phase = 0.0_f64;
         let mut written = 0_u64;
         for timed in TxEncoder::new(mode, image).unwrap() {
-            let deadline = timed.until().as_picos() * u64::from(rate) / 1_000_000_000_000;
-            while written < deadline && u128::from(written) < stop_sample {
+            let deadline = timed.until().to_samples(rate);
+            while written < deadline && written < stop_sample {
                 samples.push((phase.sin() * 0.8) as f32);
                 phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
                     .rem_euclid(TAU);
                 written += 1;
             }
-            if u128::from(written) >= stop_sample {
+            if written >= stop_sample {
                 break;
             }
         }
@@ -199,19 +199,19 @@ mod tests {
             .sum::<u64>();
         let epoch_ps = 910_000_000_000 + leading_ps;
         let stop_ps = epoch_ps + mode.spec().period().as_picos() * 40;
-        let stop_sample = u128::from(stop_ps) * u128::from(rate) / 1_000_000_000_000;
+        let stop_sample = SstvDuration::from_picos(stop_ps).to_samples(rate);
         let mut samples = Vec::new();
         let mut phase = 0.0_f64;
         let mut written = 0_u64;
         for timed in TxEncoder::new(mode, image).unwrap() {
-            let deadline = timed.until().as_picos() * u64::from(rate) / 1_000_000_000_000;
-            while written < deadline && u128::from(written) < stop_sample {
+            let deadline = timed.until().to_samples(rate);
+            while written < deadline && written < stop_sample {
                 samples.push((phase.sin() * 0.8) as f32);
                 phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
                     .rem_euclid(TAU);
                 written += 1;
             }
-            if u128::from(written) >= stop_sample {
+            if written >= stop_sample {
                 break;
             }
         }

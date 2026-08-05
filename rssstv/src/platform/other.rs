@@ -16,6 +16,15 @@ pub const FILE_MANAGER: Option<&str> = if cfg!(target_os = "linux") {
     None
 };
 
+/// Linux keeps its per-application directories lowercase, under a base
+/// directory that is already hidden. The platforms that show these to the
+/// operator name them the way the application is named.
+pub const APP_DIRECTORY: &str = if cfg!(target_os = "linux") {
+    "rssstv"
+} else {
+    "RSSSTV"
+};
+
 pub fn prepare_process() {}
 
 pub fn prepare_window(_cc: &eframe::CreationContext<'_>) {}

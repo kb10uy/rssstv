@@ -6,11 +6,8 @@ use std::{
 
 use directories::{BaseDirs, UserDirs};
 
-const APP_DIRECTORY: &str = if cfg!(target_os = "linux") {
-    "rssstv"
-} else {
-    "RSSSTV"
-};
+use crate::platform::APP_DIRECTORY;
+
 const DEFAULT_CONFIG: &str = "";
 
 /// One of the directories the application keeps for the operator.

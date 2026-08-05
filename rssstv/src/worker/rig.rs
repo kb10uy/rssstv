@@ -117,7 +117,10 @@ impl RigWorker {
         let (requests, incoming) = mpsc::channel();
         let worker_snapshot = Arc::clone(&snapshot);
         let plan = Plan::new(settings, config_dir, bands);
-        let thread = thread::spawn(move || rig_loop(plan, &incoming, &worker_snapshot));
+        let thread = thread::Builder::new()
+            .name("rssstv-rig".to_owned())
+            .spawn(move || rig_loop(plan, &incoming, &worker_snapshot))
+            .expect("the rig control thread should start");
         Self {
             snapshot,
             requests: Some(requests),

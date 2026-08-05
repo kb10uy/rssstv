@@ -179,17 +179,20 @@ impl TxWorker {
         let cancel = Arc::new(AtomicBool::new(false));
         let worker_snapshot = Arc::clone(&snapshot);
         let worker_cancel = Arc::clone(&cancel);
-        let thread = thread::spawn(move || {
-            transmit_loop(
-                writer,
-                mode,
-                frame,
-                identification,
-                gain,
-                worker_snapshot,
-                worker_cancel,
-            )
-        });
+        let thread = thread::Builder::new()
+            .name("rssstv-transmit".to_owned())
+            .spawn(move || {
+                transmit_loop(
+                    writer,
+                    mode,
+                    frame,
+                    identification,
+                    gain,
+                    worker_snapshot,
+                    worker_cancel,
+                )
+            })
+            .expect("the transmit thread should start");
         Self {
             snapshot,
             cancel,

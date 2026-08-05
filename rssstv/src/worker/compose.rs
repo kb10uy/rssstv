@@ -84,7 +84,10 @@ impl Composer {
         let result = Arc::new(Mutex::new(None));
         let worker_control = Arc::clone(&control);
         let worker_result = Arc::clone(&result);
-        let thread = thread::spawn(move || compose_loop(worker_control, worker_result));
+        let thread = thread::Builder::new()
+            .name("rssstv-compose".to_owned())
+            .spawn(move || compose_loop(worker_control, worker_result))
+            .expect("the composition thread should start");
         Self {
             control,
             result,

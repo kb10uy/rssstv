@@ -6,8 +6,8 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-rssstv-dsp = { path = "../rssstv-dsp", features = ["std"] }
-rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+rssstv-dsp = { path = "../rssstv-dsp" }
+rssstv-sstv = { path = "../rssstv-sstv" }
 thiserror = { workspace = true, features = ["std"] }
 
 [dev-dependencies]

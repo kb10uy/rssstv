@@ -49,8 +49,18 @@ jobs:
       # A workspace build does not cover this: another member enabling the
       # `std` feature hides a core primitive used through `std` alone, so the
       # crate can stop being `no_std` without any workspace command noticing.
-      - name: Build rssstv-sstv without std
-        run: cargo build -p rssstv-sstv --no-default-features
+      - name: Build the no_std crates without std
+        run: |
+          cargo build -p rssstv-sstv --no-default-features
+          cargo build -p rssstv-dsp --no-default-features
+
+      # For the same reason, a crate that asks for no `std` feature from these
+      # two is only held to it on its own: the workspace turns the feature on
+      # around it and would carry a new dependency on `std` in unremarked.
+      - name: Build the crates that ask for no std of their dependencies
+        run: |
+          cargo build -p rssstv-modulator
+          cargo build -p rssstv-demodulator
 
   licenses:
     name: Licenses

@@ -369,7 +369,7 @@ impl ModeSpec {
 }
 
 const SUP: Support = Support::Supported;
-const TODO: Support = Support::NotImplemented;
+const NYI: Support = Support::NotImplemented;
 const WIDE: LevelFrequencyBand = LevelFrequencyBand::Wide;
 const NARROW: LevelFrequencyBand = LevelFrequencyBand::Narrow;
 
@@ -449,8 +449,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x44, 0x44),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "Scottie 1",
@@ -533,8 +533,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x37, 0xb7),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "SC2 120",
@@ -547,8 +547,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x3f, 0x3f),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "SC2 60",
@@ -561,8 +561,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x3b, 0xbb),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "PD50",
@@ -673,8 +673,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x71, 0x71),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "P5",
@@ -687,8 +687,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x72, 0x72),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "P7",
@@ -701,8 +701,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x73, 0xf3),
         RasterOrganization::DirectRgb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MR73",
@@ -715,8 +715,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x45),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MR90",
@@ -729,8 +729,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x46),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MR115",
@@ -743,8 +743,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x49),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MR140",
@@ -757,8 +757,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x4a),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MR175",
@@ -771,8 +771,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x4c),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP73",
@@ -785,8 +785,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x25),
         RasterOrganization::PairedYCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP115",
@@ -799,8 +799,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x29),
         RasterOrganization::PairedYCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP140",
@@ -813,8 +813,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x2a),
         RasterOrganization::PairedYCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP175",
@@ -827,8 +827,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x2c),
         RasterOrganization::PairedYCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "ML180",
@@ -841,8 +841,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x85),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "ML240",
@@ -855,8 +855,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x86),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "ML280",
@@ -869,8 +869,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x89),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "ML320",
@@ -883,8 +883,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         ext(0x8a),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "Robot 24",
@@ -897,8 +897,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x04, 0x84),
         RasterOrganization::YCrCb,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "B/W 8",
@@ -911,8 +911,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x02, 0x82),
         RasterOrganization::PairedLuminance,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "B/W 12",
@@ -925,8 +925,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         vis(0x06, 0x86),
         RasterOrganization::PairedLuminance,
         WIDE,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP73-N",
@@ -939,8 +939,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x02),
         RasterOrganization::PairedYCrCb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP110-N",
@@ -953,8 +953,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x04),
         RasterOrganization::PairedYCrCb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MP140-N",
@@ -967,8 +967,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x05),
         RasterOrganization::PairedYCrCb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MC110-N",
@@ -981,8 +981,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x14),
         RasterOrganization::DirectRgb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MC140-N",
@@ -995,8 +995,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x15),
         RasterOrganization::DirectRgb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
     spec!(
         "MC180-N",
@@ -1009,8 +1009,8 @@ const MODE_SPECS: [ModeSpec; 43] = [
         narrow(0x16),
         RasterOrganization::DirectRgb,
         NARROW,
-        TODO,
-        TODO,
+        NYI,
+        NYI,
     ),
 ];
 
@@ -1109,7 +1109,7 @@ mod tests {
             Mode::Pd290,
         ];
         for mode in Mode::ALL {
-            let expected = if supported.contains(&mode) { SUP } else { TODO };
+            let expected = if supported.contains(&mode) { SUP } else { NYI };
             assert_eq!(mode.spec().encode_support(), expected, "{mode:?}");
             assert_eq!(mode.spec().decode_support(), expected, "{mode:?}");
         }

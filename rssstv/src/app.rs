@@ -325,16 +325,6 @@ pub struct App {
     activity: Activity,
 }
 
-/// The composed transmit frame, and everything it was composed from.
-///
-/// A frame is only true for the moment it was made in: it can print the clock
-/// and what the rig is tuned to, so what it was made from is kept beside it
-/// and compared against each frame to decide whether to compose again.
-/// The lists the operator picks a template and a background from.
-///
-/// The selections are indices rather than names because the lists are rebuilt
-/// from the directories they name, and what is stored between runs is the name
-/// the index stood for.
 /// What the station says about itself.
 ///
 /// Set once for the operator rather than per contact, which is why it is
@@ -347,6 +337,11 @@ pub struct Station {
     pub open: bool,
 }
 
+/// The lists the operator picks a template and a background from.
+///
+/// The selections are indices rather than names because the lists are rebuilt
+/// from the directories they name, and what is stored between runs is the name
+/// the index stood for.
 pub struct Library {
     pub templates: Vec<Entry>,
     pub template: Option<usize>,
@@ -356,6 +351,11 @@ pub struct Library {
     pub error: Option<String>,
 }
 
+/// The composed transmit frame, and everything it was composed from.
+///
+/// A frame is only true for the moment it was made in: it can print the clock
+/// and what the rig is tuned to, so what it was made from is kept beside it
+/// and compared against each frame to decide whether to compose again.
 struct Composition {
     composer: Composer,
     generation: u64,

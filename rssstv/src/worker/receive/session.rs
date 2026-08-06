@@ -62,7 +62,7 @@ const FSK_HISTORY_WAIT: Duration = Duration::from_secs(4);
 fn live_rx_config(mode: Mode, sample_rate_hz: u32, live_slant: bool) -> RxConfig {
     RxConfig {
         live_sync: true,
-        live_slant: live_slant,
+        live_slant,
         auto_stop: true,
         sync_detector_delay: sync_detector_delay(mode),
         staging: if live_slant {

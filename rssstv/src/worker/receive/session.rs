@@ -256,7 +256,7 @@ impl Session {
 
     /// Closes out whatever is being received and starts the pipeline over.
     ///
-    /// What a held worker misses is not silence the demodulator can read
+    /// What a muted worker misses is not silence the demodulator can read
     /// through, so no part of the reception it interrupts may carry across the
     /// gap. One far enough along is still kept, the same as any other reception
     /// cut short.
@@ -430,7 +430,7 @@ pub(super) fn run(
     mut reader: CaptureReader,
     mailbox: &Mailbox,
     stop: &AtomicBool,
-    hold: &AtomicBool,
+    mute: &AtomicBool,
     slant: &AtomicBool,
     vis_restart: &AtomicBool,
     sync_start: &Mutex<SyncStart>,
@@ -460,21 +460,21 @@ pub(super) fn run(
     let mut display_fraction = 0.0;
     let mut history_deadline = None;
     let mut progress_changed_at = Instant::now();
-    let mut held = false;
+    let mut muted = false;
 
     while !stop.load(Ordering::Relaxed) {
-        if hold.load(Ordering::Relaxed) {
+        if mute.load(Ordering::Relaxed) {
             // Everything the device produces while the station is transmitting
             // is read and thrown away: its own signal comes back off the
             // antenna, and a picture decoded from it is the one just sent.
             let discarded = reader.read(&mut pcm);
-            if held {
+            if muted {
                 if discarded.count == 0 {
                     thread::sleep(IDLE_POLL);
                 }
                 continue;
             }
-            held = true;
+            muted = true;
             let closed = match session.suspend() {
                 Ok(closed) => closed,
                 Err(reason) => {
@@ -502,8 +502,8 @@ pub(super) fn run(
             continue;
         }
         // A release has nothing to undo: the session was started over as the
-        // hold began, and nothing was fed to it while the hold lasted.
-        held = false;
+        // mute began, and nothing was fed to it while the mute lasted.
+        muted = false;
 
         let reading = reader.read(&mut pcm);
         if reading.count == 0 {

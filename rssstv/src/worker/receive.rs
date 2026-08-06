@@ -228,7 +228,7 @@ impl Mailbox {
 /// capture queue is never left with a live consumer.
 pub struct RxWorker {
     stop: Arc<AtomicBool>,
-    held: Arc<AtomicBool>,
+    muted_for_transmit: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
     slant: Arc<AtomicBool>,
@@ -246,14 +246,14 @@ impl RxWorker {
         waker: Waker,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
-        let held = Arc::new(AtomicBool::new(false));
+        let muted_for_transmit = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::new(waker));
         let join = {
             let stop = Arc::clone(&stop);
-            let held = Arc::clone(&held);
+            let muted_for_transmit = Arc::clone(&muted_for_transmit);
             let slant = Arc::clone(&slant);
             let vis_restart = Arc::clone(&vis_restart);
             let sync_start = Arc::clone(&sync_start);
@@ -265,7 +265,7 @@ impl RxWorker {
                         reader,
                         &mailbox,
                         &stop,
-                        &held,
+                        &muted_for_transmit,
                         &slant,
                         &vis_restart,
                         &sync_start,
@@ -284,7 +284,7 @@ impl RxWorker {
         }
         Self {
             stop,
-            held,
+            muted_for_transmit,
             join,
             mailbox,
             slant,
@@ -295,10 +295,11 @@ impl RxWorker {
 
     /// Stops or resumes decoding without closing the device.
     ///
-    /// A held worker throws away everything the device produces, so the samples
-    /// that arrive while it is held can never become a reception.
-    pub fn set_held(&self, held: bool) {
-        self.held.store(held, Ordering::Relaxed);
+    /// A muted worker throws away everything the device produces, so the
+    /// samples that arrive while the station transmits can never become a
+    /// reception.
+    pub fn set_muted_for_transmit(&self, muted: bool) {
+        self.muted_for_transmit.store(muted, Ordering::Relaxed);
     }
 
     pub fn set_slant(&self, enabled: bool) {
@@ -644,11 +645,11 @@ mod pipeline_tests {
     }
 
     /// A transmitting station hears its own signal come back off the antenna,
-    /// so nothing that arrives while the worker is held may become a reception.
-    /// What arrives after it is released still does: a hold stops the pipeline
-    /// rather than wedging it.
+    /// so nothing that arrives while the worker is muted may become a
+    /// reception. What arrives after it is released still does: the mute
+    /// stops the pipeline rather than wedging it.
     #[test]
-    fn a_held_worker_decodes_nothing_until_it_is_released() {
+    fn a_muted_worker_decodes_nothing_until_it_is_released() {
         let mode = Mode::Robot36;
         let expected = source_image(mode);
         let pcm = transmission(mode, expected.clone(), 0.0);
@@ -658,15 +659,15 @@ mod pipeline_tests {
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
 
-        worker.set_held(true);
+        worker.set_muted_for_transmit(true);
         push_all(&mut feed, &worker, &pcm, &mut snapshot, &mut frame);
         drain(&mut feed, &worker, &mut snapshot, &mut frame);
 
         assert_eq!(snapshot.mode, None, "{snapshot:?}");
         assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");
-        assert!(frame.is_none(), "a held worker decoded a picture");
+        assert!(frame.is_none(), "a muted worker decoded a picture");
 
-        worker.set_held(false);
+        worker.set_muted_for_transmit(false);
         push_all(&mut feed, &worker, &pcm, &mut snapshot, &mut frame);
         push_all(&mut feed, &worker, &silence, &mut snapshot, &mut frame);
         drain(&mut feed, &worker, &mut snapshot, &mut frame);
@@ -681,7 +682,7 @@ mod pipeline_tests {
     /// cuts it short, the same as one the signal itself cut short, and what was
     /// decoded of it stays on the canvas.
     #[test]
-    fn holding_keeps_the_reception_it_interrupts() {
+    fn muting_keeps_the_reception_it_interrupts() {
         let mode = Mode::Robot36;
         let pcm = transmission(mode, source_image(mode), 0.0);
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
@@ -704,7 +705,7 @@ mod pipeline_tests {
             "{snapshot:?}"
         );
 
-        worker.set_held(true);
+        worker.set_muted_for_transmit(true);
         drain(&mut feed, &worker, &mut snapshot, &mut frame);
 
         assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");

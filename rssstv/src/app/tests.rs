@@ -473,7 +473,7 @@ fn a_transmission_outranks_a_reception(#[case] phase: TxPhase, #[case] expected:
 #[case(TxPhase::Complete, false)]
 #[case(TxPhase::Cancelled, false)]
 #[case(TxPhase::Failed, false)]
-fn reception_is_held_for_as_long_as_a_transmission_runs(
+fn reception_is_muted_for_as_long_as_a_transmission_runs(
     #[case] phase: TxPhase,
     #[case] expected: bool,
 ) {
@@ -485,25 +485,25 @@ fn reception_is_held_for_as_long_as_a_transmission_runs(
 
     app.poll_audio();
 
-    assert_eq!(app.audio.is_held(), expected);
+    assert_eq!(app.audio.is_muted_for_transmit(), expected);
 }
 
 /// A tone keys the rig just as a picture does, and the operator stopping it
 /// is what gives reception back.
 #[test]
-fn a_tune_tone_holds_reception_until_it_is_stopped() {
+fn a_tune_tone_mutes_reception_until_it_is_stopped() {
     let mut app = App::headless();
     app.poll_audio();
-    assert!(!app.audio.is_held());
+    assert!(!app.audio.is_muted_for_transmit());
 
     app.tune_for_test();
     app.poll_audio();
-    assert!(app.audio.is_held());
+    assert!(app.audio.is_muted_for_transmit());
 
     app.stop_tone();
     app.poll_audio();
 
-    assert!(!app.audio.is_held());
+    assert!(!app.audio.is_muted_for_transmit());
 }
 
 #[test]

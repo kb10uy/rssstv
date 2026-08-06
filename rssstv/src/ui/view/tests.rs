@@ -336,19 +336,19 @@ fn no_report_is_drawn_without_a_fault() {
 /// The receive tab has to say why it has gone quiet while the station
 /// transmits: it is not waiting for a signal, it has stopped listening.
 #[test]
-fn the_receive_tab_reports_that_reception_is_held() {
+fn the_receive_tab_reports_that_reception_is_muted() {
     let mut app = App::headless();
     app.tab = Tab::Receive;
     let waiting = app.i18n.text("state-waiting");
-    let held = app.i18n.text("state-rx-held");
+    let muted = app.i18n.text("state-rx-muted");
     assert_eq!(state(&app), waiting);
 
     app.tx_snapshot.phase = TxPhase::Producing;
     app.poll_audio();
 
-    assert_eq!(state(&app), held);
+    assert_eq!(state(&app), muted);
     let harness = render(&mut app);
-    harness.get_by_label(&held);
+    harness.get_by_label(&muted);
 }
 
 /// A populated library exercises the entry rows, which an interface built

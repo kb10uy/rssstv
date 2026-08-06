@@ -1020,7 +1020,8 @@ impl App {
         // it is the picture being sent. Derived from the phase rather than
         // switched at either end of a transmission, so a tone, a picture, and a
         // transmission that failed all release it the same way.
-        self.audio.set_held(self.tx_snapshot.phase.is_active());
+        self.audio
+            .set_muted_for_transmit(self.tx_snapshot.phase.is_active());
         self.refresh_timed_composition();
         self.refresh_tuned_composition();
         self.report_activity();

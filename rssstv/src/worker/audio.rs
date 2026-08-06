@@ -34,7 +34,7 @@ pub struct AudioState {
     /// lists has to know it is looking at a new session rather than at the
     /// previous one grown or shrunk.
     session: u64,
-    held: bool,
+    muted_for_transmit: bool,
     slant: bool,
     vis_restart: bool,
     sync_start: SyncStart,
@@ -98,7 +98,7 @@ impl AudioState {
             worker: None,
             snapshot: RxSnapshot::default(),
             session: 0,
-            held: false,
+            muted_for_transmit: false,
             slant,
             vis_restart,
             sync_start: SyncStart::default(),
@@ -127,7 +127,7 @@ impl AudioState {
             worker: None,
             snapshot: RxSnapshot::default(),
             session: 0,
-            held: false,
+            muted_for_transmit: false,
             slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
@@ -183,9 +183,9 @@ impl AudioState {
                     self.sync_start,
                     self.waker.clone(),
                 );
-                // A device opened while the station is transmitting is held
+                // A device opened while the station is transmitting is muted
                 // exactly like the one it replaces.
-                worker.set_held(self.held);
+                worker.set_muted_for_transmit(self.muted_for_transmit);
                 self.worker = Some(worker);
                 self.capture = Some(capture);
                 self.error = None;
@@ -216,23 +216,23 @@ impl AudioState {
 
     /// Stops or resumes decoding without closing the device.
     ///
-    /// Reception is held while the station transmits: its own signal comes
+    /// Reception is muted while the station transmits: its own signal comes
     /// straight back off the antenna, and what would be decoded from it is the
     /// picture it is sending. Kept here as well as pushed to the worker,
     /// because a device opened later has to start out the same way.
-    pub fn set_held(&mut self, held: bool) {
-        if self.held == held {
+    pub fn set_muted_for_transmit(&mut self, muted: bool) {
+        if self.muted_for_transmit == muted {
             return;
         }
-        self.held = held;
+        self.muted_for_transmit = muted;
         if let Some(worker) = self.worker.as_ref() {
-            worker.set_held(held);
+            worker.set_muted_for_transmit(muted);
         }
     }
 
     /// Returns whether reception is currently stopped.
-    pub const fn is_held(&self) -> bool {
-        self.held
+    pub const fn is_muted_for_transmit(&self) -> bool {
+        self.muted_for_transmit
     }
 
     pub fn set_slant(&mut self, enabled: bool) {
@@ -352,7 +352,7 @@ impl core::fmt::Debug for AudioState {
             .debug_struct("AudioState")
             .field("device", &self.device)
             .field("capturing", &self.is_capturing())
-            .field("held", &self.held)
+            .field("muted_for_transmit", &self.muted_for_transmit)
             .field("output_device", &self.output_device)
             .finish_non_exhaustive()
     }

@@ -75,7 +75,7 @@ pub struct Rigctld {
     writer: TcpStream,
     /// Set when `rigctld` was started with `--vfo` and wants every command
     /// addressed to a VFO.
-    vfo_argument: bool,
+    requires_vfo: bool,
 }
 
 impl Rigctld {
@@ -105,9 +105,9 @@ impl Rigctld {
             address: address.to_owned(),
             reader: BufReader::new(stream),
             writer,
-            vfo_argument: false,
+            requires_vfo: false,
         };
-        rig.vfo_argument = rig.asks_for_a_vfo();
+        rig.requires_vfo = rig.asks_for_a_vfo();
         Ok(rig)
     }
 
@@ -115,8 +115,8 @@ impl Rigctld {
         &self.address
     }
 
-    pub const fn vfo_argument(&self) -> bool {
-        self.vfo_argument
+    pub const fn requires_vfo(&self) -> bool {
+        self.requires_vfo
     }
 
     /// Runs one command written by the operator's script, as written.
@@ -158,7 +158,7 @@ impl Rigctld {
 
     /// Sends one of this crate's own commands, addressed as `rigctld` wants.
     fn query(&mut self, name: &str) -> Result<Response, RigError> {
-        if self.vfo_argument {
+        if self.requires_vfo {
             self.send(&format!("{name} currVFO"))
         } else {
             self.send(name)
@@ -292,7 +292,7 @@ mod tests {
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
         assert_eq!(rig.frequency_hz(), Ok(14_230_000));
-        assert!(!rig.vfo_argument());
+        assert!(!rig.requires_vfo());
         assert_eq!(fake.received(), ["+\\chk_vfo", "+\\get_freq"]);
     }
 
@@ -318,7 +318,7 @@ mod tests {
         ]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        assert!(rig.vfo_argument());
+        assert!(rig.requires_vfo());
         assert_eq!(rig.frequency_hz(), Ok(7_178_000));
         assert_eq!(fake.received(), ["+\\chk_vfo", "+\\get_freq currVFO"]);
     }
@@ -411,7 +411,7 @@ mod tests {
         let fake = FakeRig::spawn(&["RPRT -11\n", "get_freq:\nFreq: 50110000\nRPRT 0\n"]);
         let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
 
-        assert!(!rig.vfo_argument());
+        assert!(!rig.requires_vfo());
         assert_eq!(rig.frequency_hz(), Ok(50_110_000));
     }
 

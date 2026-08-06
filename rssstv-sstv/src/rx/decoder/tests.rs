@@ -1068,6 +1068,34 @@ fn live_tracking_corrects_a_mistimed_raster_before_completion() {
     );
 }
 
+/// A decoder can be armed on a false detection and then hear nothing but
+/// noise. What acquisition passes over is retained by neither the working
+/// window nor staging, so waiting must never exhaust the staging capacity a
+/// real reception would then need.
+#[test]
+fn unacquirable_noise_does_not_exhaust_staging() {
+    let mode = Mode::Martin2;
+    let frequency = vec![1_900.0_f32; 200_000];
+    let sync = vec![0.0_f32; frequency.len()];
+    let mut decoder = RxDecoder::with_config(mode, SAMPLE_RATE, config(true, 50_000)).unwrap();
+    let mut offset = 0;
+    while offset < frequency.len() {
+        let result = decoder
+            .process(DemodulatedBlock::new(
+                offset as u64,
+                &frequency[offset..],
+                &sync[offset..],
+            ))
+            .expect("noise longer than the staging capacity still processes");
+        offset += result.consumed();
+        if result.consumed() == 0 && result.event().is_none() {
+            break;
+        }
+    }
+    assert_eq!(offset, frequency.len());
+    assert_eq!(decoder.state(), RxState::Acquiring);
+}
+
 /// A refit restates the delivery count for the rows it redrew, and the row
 /// events still queued at that moment deliver afterwards. Counting a row on
 /// both sides would complete the reception before its last rows, so every

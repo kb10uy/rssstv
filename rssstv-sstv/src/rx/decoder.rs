@@ -329,11 +329,17 @@ impl RxDecoder {
                         }
                         Err(SstvError::RasterNotAcquired) => {
                             let advance = (target / 3).max(1);
-                            let first = input.first();
+                            let keep_from = input.first().saturating_add(advance);
                             self.input
                                 .as_mut()
                                 .expect("input initialized")
-                                .discard_before(first.saturating_add(advance));
+                                .discard_before(keep_from);
+                            // What acquisition passed over can never be decoded,
+                            // so retaining it would only spend the staging
+                            // capacity a long stretch of noise then exhausts.
+                            if let Some(staged) = self.staged.as_mut() {
+                                staged.discard_before(keep_from);
+                            }
                             if consumed == block.frequency_hz().len() {
                                 return Ok(RxProcess::new(consumed, None));
                             }

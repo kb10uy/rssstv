@@ -145,7 +145,10 @@ mod tests {
             "the buffer grew to {} measurements",
             afc.measurements.capacity()
         );
-        assert!(!afc.finish_run(), "an overlong run must not update the offset");
+        assert!(
+            !afc.finish_run(),
+            "an overlong run must not update the offset"
+        );
         assert_eq!(afc.offset_hz(), 0.0);
     }
 

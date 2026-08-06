@@ -342,7 +342,10 @@ mod tests {
         #[case] sample_rate_hz: u32,
         #[case] expected: BufferSize,
     ) {
-        let supported = SupportedBufferSize::Range { min: 1, max: 65_536 };
+        let supported = SupportedBufferSize::Range {
+            min: 1,
+            max: 65_536,
+        };
 
         assert_eq!(bounded_buffer_size(&supported, sample_rate_hz), expected);
     }

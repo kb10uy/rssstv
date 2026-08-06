@@ -221,8 +221,8 @@ impl RxDecoder {
             .iter()
             .filter(|event| matches!(event, RxEvent::RowDecoded { .. }))
             .count();
-        self.decode.delivered_rows = (units * self.mode.spec().rows_per_raster_unit() as usize)
-            .saturating_sub(queued_rows);
+        self.decode.delivered_rows =
+            (units * self.mode.spec().rows_per_raster_unit() as usize).saturating_sub(queued_rows);
         self.decode.state = RxState::Decoding {
             completed_rows: self.decode.delivered_rows,
         };

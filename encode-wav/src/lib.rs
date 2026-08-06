@@ -180,6 +180,10 @@ fn render_frame(
     let assets = FileAssetProvider::new(template_path.parent().unwrap_or_else(|| Path::new(".")));
     let variables = template_variables(callsign);
     let mut context = RenderContext::new(&variables, &assets);
+    // The background stands in for the received image an `rximage` layer
+    // shows: offline there is no reception to show, and failing the render
+    // would refuse every template written for the desktop application. A
+    // template using `rximage` therefore renders differently here.
     context.received_image = Some(background);
     let mut renderer = Renderer::new();
     renderer.load_system_fonts();

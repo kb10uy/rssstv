@@ -96,6 +96,10 @@ impl TransmissionEncoder {
     }
 
     /// Returns the exact duration of this complete transmission.
+    ///
+    /// Only before the first tone has been pulled: the identifier is summed
+    /// from the tones still to come, so on an encoder already being iterated
+    /// the answer shrinks with it. Ask before iterating.
     pub fn duration(&self) -> SstvDuration {
         let identification = self.fsk.clone().map_or(0, |fsk| {
             300 * PS_PER_MS

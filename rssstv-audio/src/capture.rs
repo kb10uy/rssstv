@@ -111,7 +111,7 @@ impl Capture {
     }
 
     /// Starts or resumes delivery.
-    pub fn play(&self) -> Result<(), AudioError> {
+    pub fn resume(&self) -> Result<(), AudioError> {
         self.stream
             .play()
             .map_err(|error| AudioError::Backend(error.to_string()))

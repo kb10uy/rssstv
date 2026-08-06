@@ -159,7 +159,7 @@ impl AudioHost {
         .map_err(|error| AudioError::Backend(error.to_string()))?;
 
         let capture = Capture::new(stream, sample_rate, channels, faults);
-        capture.play()?;
+        capture.resume()?;
         Ok((capture, CaptureReader::new(consumer, dropped, sample_rate)))
     }
 

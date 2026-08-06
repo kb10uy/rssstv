@@ -306,6 +306,12 @@ pub struct App {
     /// How many decoded contest numbers have reached the QSO panel, followed
     /// the same way as the identifiers beside them.
     adopted_numbers: usize,
+    /// The receive session those counts were taken in.
+    ///
+    /// A reopened device starts a new worker with empty lists, and a count
+    /// carried over from the old session would swallow as many new arrivals
+    /// as it had already adopted.
+    adopted_session: u64,
     platform: Box<dyn Platform>,
     /// What the platform was last told the application is doing.
     ///
@@ -516,6 +522,7 @@ impl App {
             rig_keyed: false,
             adopted_callsigns: 0,
             adopted_numbers: 0,
+            adopted_session: 0,
             platform,
             activity: Activity::default(),
         }
@@ -881,6 +888,11 @@ impl App {
                 crate::storage::log::note(&format!("failed to save receive history: {error}"));
             }
         }
+        if self.audio.session() != self.adopted_session {
+            self.adopted_session = self.audio.session();
+            self.adopted_callsigns = 0;
+            self.adopted_numbers = 0;
+        }
         self.adopt_decoded_callsign();
         self.adopt_decoded_number();
         self.audio.set_sync_start(self.sync_start());
@@ -1094,11 +1106,6 @@ impl App {
         // The count is compared before anything is copied: this runs on every
         // frame, and the list is the same one on almost all of them.
         let decoded = self.audio.snapshot().callsigns.len();
-        // Reopening a device restarts the worker with an empty list, so the
-        // count is followed down as well as up.
-        if decoded < self.adopted_callsigns {
-            self.adopted_callsigns = 0;
-        }
         if decoded == self.adopted_callsigns {
             return;
         }
@@ -1130,9 +1137,6 @@ impl App {
     /// count is followed down as well as up.
     fn adopt_decoded_number(&mut self) {
         let decoded = self.audio.snapshot().numbers.len();
-        if decoded < self.adopted_numbers {
-            self.adopted_numbers = 0;
-        }
         if decoded == self.adopted_numbers {
             return;
         }

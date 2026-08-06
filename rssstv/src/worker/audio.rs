@@ -28,6 +28,12 @@ pub struct AudioState {
     capture: Option<Capture>,
     worker: Option<RxWorker>,
     snapshot: RxSnapshot,
+    /// Counts the receive sessions this state has started.
+    ///
+    /// A new worker starts its decoded lists over, so anything following those
+    /// lists has to know it is looking at a new session rather than at the
+    /// previous one grown or shrunk.
+    session: u64,
     held: bool,
     slant: bool,
     vis_restart: bool,
@@ -91,6 +97,7 @@ impl AudioState {
             capture: None,
             worker: None,
             snapshot: RxSnapshot::default(),
+            session: 0,
             held: false,
             slant,
             vis_restart,
@@ -119,12 +126,18 @@ impl AudioState {
             capture: None,
             worker: None,
             snapshot: RxSnapshot::default(),
+            session: 0,
             held: false,
             slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
             waker: Waker::default(),
         }
+    }
+
+    /// Identifies the receive session the current snapshot belongs to.
+    pub const fn session(&self) -> u64 {
+        self.session
     }
 
     /// Replaces the observed snapshot without a running worker.
@@ -160,6 +173,7 @@ impl AudioState {
         self.worker = None;
         self.capture = None;
         self.snapshot = RxSnapshot::default();
+        self.session += 1;
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
                 let worker = RxWorker::spawn(
@@ -288,6 +302,7 @@ impl AudioState {
         self.worker = None;
         self.capture = None;
         self.snapshot = RxSnapshot::default();
+        self.session += 1;
         Some(fault)
     }
 

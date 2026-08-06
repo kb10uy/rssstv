@@ -302,6 +302,24 @@ The receive staging option is bounded by a caller-provided sample limit. It is a
 deliberate offline or deferred-refinement facility, not an unbounded hidden
 queue.
 
+Retained samples are stored quantized rather than as the floats every caller
+works in: a frequency as a `u16` in sixteenths of a hertz, saturating at four
+kilohertz, and a synchronization strength as a `u8`. Three bytes per sample
+rather than eight is what decides whether the longest mode's reception fits on
+a machine with little memory, and the resolution given up is far below what the
+demodulator resolves — a sixteenth of a hertz is a fiftieth of one of the 256
+levels a pixel can take. The conversion is confined to the retained buffer, so
+acquisition, synchronization, and pixel reconstruction all read the same floats
+they did before.
+
+The decoder reserves the retained buffer once, at the smaller of the caller's
+limit and twice the mode's own raster. Growing into a long reception instead
+doubles its way there, which both leaves up to half the allocation unused and
+copies everything retained so far on each doubling; bounding the reservation
+against the raster keeps a caller that states a large limit for another reason,
+such as an offline decoder given the length of a recording, from reserving all
+of it for a picture that occupies a fraction.
+
 ## Platform Boundary
 
 The following concerns belong outside the portable DSP and SSTV core:
@@ -437,7 +455,12 @@ first WAV channel, enables live raster synchronization and bounded in-memory
 staging, performs global slant refinement, and saves BMP, JPEG, or PNG according
 to the output extension.
 
-The GUI receive worker enables the same bounded staging by default. Its Slant
+The GUI receive worker enables the same bounded staging by default, with the
+limit derived from the mode rather than fixed: one raster plus the trailing
+audio a refinement is fitted against. A fixed five-minute window was both far
+more than the short modes can use and less than PD290 needs, since that mode
+runs for nearly five minutes on its own and its refinement could therefore run
+the retention out before the tail arrived. Its Slant
 control applies to the next reception and performs a whole-image global
 rate/epoch refinement at completion. Disabling it during a reception suppresses
 that refinement; enabling it after reception has started cannot reconstruct the

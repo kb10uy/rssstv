@@ -89,23 +89,24 @@ fn acquire_inner(
     options: AcquisitionOptions,
 ) -> Result<RasterClock, SstvError> {
     let mut centers = Vec::new();
-    let sync = input.sync_values();
+    let retained = input.sync_len();
     let sync_len = options
         .max_samples
         .and_then(|count| usize::try_from(count).ok())
-        .map_or(sync.len(), |count| count.min(sync.len()));
+        .map_or(retained, |count| count.min(retained));
+    let strength = |index: usize| input.sync_at(index).unwrap_or(0.0);
     let mut index = 0;
     while index < sync_len {
-        if sync[index] < RUN_THRESHOLD {
+        if strength(index) < RUN_THRESHOLD {
             index += 1;
             continue;
         }
         let start = index;
         let mut weighted = 0.0_f64;
         let mut total = 0.0_f64;
-        while index < sync_len && sync[index] >= RUN_THRESHOLD {
-            weighted += index as f64 * f64::from(sync[index]);
-            total += f64::from(sync[index]);
+        while index < sync_len && strength(index) >= RUN_THRESHOLD {
+            weighted += index as f64 * f64::from(strength(index));
+            total += f64::from(strength(index));
             index += 1;
         }
         // A pulse the window cuts short has no usable center: both its envelope

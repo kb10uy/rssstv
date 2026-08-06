@@ -281,6 +281,9 @@ two megabytes thirty times a second.
 Slant correction is enabled by default. For a reception that starts while it is
 enabled, the worker retains a bounded full-rate frequency/sync stream and
 rebuilds the completed image with a fitted global raster rate and epoch. The
+bound follows the mode — one raster plus the tail a refinement is fitted
+against — so a Robot 36 reception does not reserve what PD290 needs, and PD290
+is not cut short by a limit shorter than its own picture. The
 control does not replace live phase synchronization, which remains enabled
 independently. Turning Slant on after a reception has started applies to the
 next reception because the earlier samples were not staged.

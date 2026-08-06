@@ -14,6 +14,7 @@ use rssstv_sstv::{
     RxDecoder, SstvError,
     mode::Mode,
     rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging, StopReason},
+    time::SstvDuration,
 };
 
 use crate::{
@@ -30,8 +31,6 @@ const IDLE_POLL: Duration = Duration::from_millis(2);
 /// Shortest interval between published image frames.
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
-const STAGING_SECONDS: usize = 300;
-
 /// Trailing audio staged between staged-refinement attempts, in milliseconds.
 ///
 /// A refit raster reaches a little past the samples decoded so far, so early
@@ -42,6 +41,13 @@ const REFINEMENT_RETRY_MS: usize = 250;
 
 /// Trailing audio staged before staged refinement is abandoned.
 const REFINEMENT_TAIL_SECONDS: usize = 15;
+
+/// Audio the retention allows for beyond the mode's own raster.
+///
+/// It has to cover the tail a refinement is fitted against, and the header the
+/// reception started on, with enough left over that a transmitter running slow
+/// does not run the retention out at the end of a picture.
+const STAGING_MARGIN_SECONDS: usize = REFINEMENT_TAIL_SECONDS + 10;
 
 /// Longest a reception may stall before the worker stops it.
 ///
@@ -61,12 +67,28 @@ fn live_rx_config(mode: Mode, sample_rate_hz: u32, slant: bool) -> RxConfig {
         sync_detector_delay: sync_detector_delay(mode),
         staging: if slant {
             Staging::Memory {
-                max_samples: (sample_rate_hz as usize).saturating_mul(STAGING_SECONDS),
+                max_samples: staging_limit(mode, sample_rate_hz),
             }
         } else {
             Staging::Disabled
         },
     }
+}
+
+/// How many demodulated samples one reception may retain.
+///
+/// Derived from the mode rather than fixed, because what staging has to hold is
+/// one picture and the tail it is refined against. A flat window was both far
+/// more than the short modes can use and, for the longest, less than a picture
+/// plus its tail: PD290 runs for nearly five minutes on its own, so a
+/// five-minute limit could stop its refinement from ever collecting the
+/// trailing audio it needs.
+fn staging_limit(mode: Mode, sample_rate_hz: u32) -> usize {
+    let spec = mode.spec();
+    let units = u64::from(spec.active_rows()) / u64::from(spec.rows_per_raster_unit()).max(1);
+    let raster = SstvDuration::from_picos(spec.period().as_picos().saturating_mul(units))
+        .to_samples_ceil(sample_rate_hz) as usize;
+    raster.saturating_add((sample_rate_hz as usize).saturating_mul(STAGING_MARGIN_SECONDS))
 }
 
 /// State of the staged slant refinement that follows a completed raster.
@@ -636,6 +658,36 @@ mod tests {
     #[case(true)]
     fn live_receptions_enable_automatic_stop(#[case] slant: bool) {
         assert!(live_rx_config(Mode::Robot36, 8_000, slant).auto_stop);
+    }
+
+    /// Refinement collects trailing audio after the picture is complete, so the
+    /// retention has to hold a whole raster and that tail. A fixed five-minute
+    /// window did not: PD290 runs for nearly five minutes on its own, so its
+    /// refinement could run the retention out before the tail arrived.
+    #[rstest]
+    #[case(Mode::Robot36)]
+    #[case(Mode::Scottie1)]
+    #[case(Mode::Pd120)]
+    #[case(Mode::Pd290)]
+    fn retention_covers_a_whole_raster_and_its_tail(#[case] mode: Mode) {
+        const RATE: u32 = 48_000;
+        let spec = mode.spec();
+        let units = u64::from(spec.active_rows()) / u64::from(spec.rows_per_raster_unit());
+        let raster = SstvDuration::from_picos(spec.period().as_picos() * units)
+            .to_samples_ceil(RATE) as usize;
+        let tail = RATE as usize * REFINEMENT_TAIL_SECONDS;
+        assert!(
+            staging_limit(mode, RATE) >= raster + tail,
+            "{} retains too little for a refinement",
+            spec.name()
+        );
+    }
+
+    /// The retention follows the mode rather than being one figure for all of
+    /// them, so a short reception does not reserve what the longest needs.
+    #[test]
+    fn a_short_mode_retains_less_than_a_long_one() {
+        assert!(staging_limit(Mode::Robot36, 48_000) < staging_limit(Mode::Pd290, 48_000));
     }
 
     #[rstest]

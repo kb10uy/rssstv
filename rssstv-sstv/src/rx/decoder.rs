@@ -6,6 +6,7 @@ use crate::{
     image::{ImageSize, Rgb8, RgbImage},
     mode::{Mode, RasterOrganization, ScanChannel, Support},
     signal::Frequency,
+    time::SstvDuration,
 };
 
 use super::{
@@ -291,8 +292,11 @@ impl RxDecoder {
         }
         if self.input.is_none() {
             self.input = Some(SampleBuffer::new(block.first_sample()));
-            if matches!(self.config.staging, Staging::Memory { .. }) {
-                self.staged = Some(SampleBuffer::new(block.first_sample()));
+            if let Staging::Memory { max_samples } = self.config.staging {
+                self.staged = Some(SampleBuffer::with_capacity(
+                    block.first_sample(),
+                    self.staging_reservation(max_samples),
+                ));
             }
             self.next_sample = Some(block.first_sample());
         }
@@ -398,6 +402,26 @@ impl RxDecoder {
     fn raster_units(&self) -> usize {
         let spec = self.mode.spec();
         spec.active_rows() as usize / spec.rows_per_raster_unit() as usize
+    }
+
+    /// How much room the retained stream is given before it has to grow.
+    ///
+    /// The configured maximum is what a caller intends to retain, so it is
+    /// asked for outright: growing into it instead would leave up to half the
+    /// allocation unused and copy everything retained so far on the way. It is
+    /// bounded against the mode's own raster because a caller can state a
+    /// maximum far larger than any one picture — an offline decoder handed a
+    /// long recording states the length of the file — and reserving that would
+    /// be worse than growing. Twice the raster leaves room for the trailing
+    /// audio a refinement is fitted against.
+    fn staging_reservation(&self, max_samples: usize) -> usize {
+        let raster = self
+            .profile
+            .period_ps
+            .saturating_mul(self.raster_units() as u64);
+        let samples =
+            SstvDuration::from_picos(raster).to_samples_ceil(self.sample_rate_hz) as usize;
+        max_samples.min(samples.saturating_mul(2))
     }
 
     /// Returns the half-open sample range averaged for one transmitted pixel.

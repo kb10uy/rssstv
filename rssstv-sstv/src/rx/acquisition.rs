@@ -62,7 +62,7 @@ pub(super) fn acquire_startup(
     )
 }
 
-pub(super) fn acquire(
+pub(super) fn acquire_full(
     input: &SampleBuffer,
     profile: RasterProfile,
     sample_rate_hz: u32,
@@ -275,7 +275,7 @@ mod tests {
         let block = DemodulatedBlock::new(0, &frequency, &sync);
         let mut input = SampleBuffer::new(0);
         input.append(block, frequency.len());
-        let clock = acquire(&input, profile, physical_rate, SstvDuration::ZERO).unwrap();
+        let clock = acquire_full(&input, profile, physical_rate, SstvDuration::ZERO).unwrap();
         assert!((clock.effective_sample_rate_hz() - effective_rate).abs() < 2.0);
         assert!(
             clock.source_epoch().abs_diff(epoch as u64) <= 1,
@@ -301,7 +301,7 @@ mod tests {
         let block = DemodulatedBlock::new(0, &frequency, &sync);
         let mut input = SampleBuffer::new(0);
         input.append(block, frequency.len());
-        let clock = acquire(&input, profile, sample_rate, SstvDuration::ZERO).unwrap();
+        let clock = acquire_full(&input, profile, sample_rate, SstvDuration::ZERO).unwrap();
         let last_protocol = profile.period_ps * 255 + profile.sync_center_ps;
         let fitted = clock.position_at(last_protocol).unwrap();
         let expected = epoch + f64::from(sample_rate) * last_protocol as f64 / 1.0e12;

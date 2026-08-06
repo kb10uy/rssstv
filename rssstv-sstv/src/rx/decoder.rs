@@ -10,7 +10,7 @@ use crate::{
 };
 
 use super::{
-    acquisition::{acquire, acquire_startup, startup_window_samples},
+    acquisition::{acquire_full, acquire_startup, startup_window_samples},
     clock::{RasterClock, ceil_sample},
     config::{RxConfig, Staging},
     event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason},

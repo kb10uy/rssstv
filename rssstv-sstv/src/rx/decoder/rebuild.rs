@@ -56,7 +56,7 @@ impl RxDecoder {
         let estimator = SlantEstimator::for_mode(self.sample_rate_hz, self.mode)
             .expect("decoder mode has a raster profile");
         let staged = self.staged.as_ref().expect("staging checked above");
-        let acquisition_clock = acquire(
+        let acquisition_clock = acquire_full(
             staged,
             self.profile,
             self.sample_rate_hz,

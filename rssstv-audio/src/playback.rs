@@ -19,6 +19,7 @@ pub(crate) struct PlaybackState {
     written: AtomicU64,
     played: AtomicU64,
     underrun: AtomicU64,
+    started: AtomicBool,
     finished: AtomicBool,
     cancelled: AtomicBool,
 }
@@ -68,7 +69,14 @@ impl Playback {
     }
 
     /// Starts or resumes playback.
+    ///
+    /// The queue is opened to the device here rather than when the stream was
+    /// built, because a host may ask a suspended stream for audio: PulseAudio
+    /// requests its whole buffer as soon as the stream exists, and answering
+    /// that from the queue would spend the transmission before it was started
+    /// and count the shortfall as starvation.
     pub fn play(&self) -> Result<(), AudioError> {
+        self.state.started.store(true, Ordering::Release);
         self.stream
             .play()
             .map_err(|error| AudioError::Backend(error.to_string()))
@@ -286,6 +294,13 @@ where
     if channels == 0 {
         return;
     }
+    // A stream the operator has not started yet is filled from nothing, so
+    // what the queue holds is still waiting when playback begins and the
+    // silence handed over in the meantime is not a shortfall.
+    if !state.started.load(Ordering::Acquire) {
+        output.fill(T::from_sample(0.0));
+        return;
+    }
     for frame in output.chunks_mut(channels) {
         let sample = match consumer.try_pop() {
             Some(sample) => {
@@ -339,6 +354,7 @@ mod tests {
     #[test]
     fn callback_duplicates_mono_and_fills_underflow_with_silence() {
         let (mut writer, mut consumer, state) = queue(PREFERRED_SAMPLE_RATE_HZ, 4).unwrap();
+        state.started.store(true, Ordering::Release);
         writer.write(&[0.25, -0.5]);
         let mut output = [1.0_f32; 6];
 
@@ -352,6 +368,7 @@ mod tests {
     #[test]
     fn finished_queue_does_not_count_trailing_silence_as_underrun() {
         let (writer, mut consumer, state) = queue(PREFERRED_SAMPLE_RATE_HZ, 2).unwrap();
+        state.started.store(true, Ordering::Release);
         writer.finish();
         let mut output = [1_i16; 4];
 
@@ -359,6 +376,30 @@ mod tests {
 
         assert_eq!(output, [0; 4]);
         assert_eq!(state.underrun.load(Ordering::Acquire), 0);
+    }
+
+    /// PulseAudio asks for a whole buffer as soon as the stream is built, which
+    /// on Linux is seconds before the operator starts the transmission. Serving
+    /// that from the queue would send the opening of the picture nowhere and
+    /// report the emptiness it left as starvation.
+    #[test]
+    fn a_stream_that_was_never_started_neither_spends_the_queue_nor_counts_it() {
+        let (mut writer, mut consumer, state) = queue(PREFERRED_SAMPLE_RATE_HZ, 4).unwrap();
+        writer.write(&[0.25, -0.5]);
+        let mut output = [1.0_f32; 6];
+
+        render(&mut output, 2, &mut consumer, &state);
+
+        assert_eq!(output, [0.0; 6]);
+        assert_eq!(state.played.load(Ordering::Acquire), 0);
+        assert_eq!(state.underrun.load(Ordering::Acquire), 0);
+
+        // The samples the stream was not given are still the ones it plays.
+        state.started.store(true, Ordering::Release);
+        render(&mut output, 2, &mut consumer, &state);
+
+        assert_eq!(output, [0.25, 0.25, -0.5, -0.5, 0.0, 0.0]);
+        assert_eq!(state.played.load(Ordering::Acquire), 2);
     }
 
     #[test]

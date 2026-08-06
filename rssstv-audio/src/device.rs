@@ -3,9 +3,19 @@ use std::{
     fmt,
 };
 
-use cpal::{SampleFormat, traits::DeviceTrait};
+use cpal::{BufferSize, FrameCount, SampleFormat, SupportedBufferSize, traits::DeviceTrait};
 
 use crate::PREFERRED_SAMPLE_RATE_HZ;
+
+/// How much audio the crate asks a playback device to hold, in milliseconds.
+///
+/// Left to the host the buffer is whatever the server likes, and PulseAudio
+/// likes two seconds. Those two seconds are the end of the transmission still
+/// sitting in the server once the queue has drained, which the application
+/// reads as a picture already sent: it closes the stream and drops the
+/// transmitter over the remainder. Kept this short, what the closing cuts is
+/// the tail of the last line rather than seconds of the picture.
+const OUTPUT_BUFFER_MS: u32 = 40;
 
 /// One selectable capture device.
 ///
@@ -188,6 +198,48 @@ pub(crate) fn preferred_output_rate(
     }
 }
 
+/// Asks the device for [`OUTPUT_BUFFER_MS`] of audio, within what it accepts.
+pub(crate) fn preferred_output_buffer_size(
+    device: &cpal::Device,
+    sample_rate_hz: u32,
+    channels: u16,
+    sample_format: SampleFormat,
+) -> BufferSize {
+    let Ok(configs) = device.supported_output_configs() else {
+        return BufferSize::Default;
+    };
+    configs
+        .into_iter()
+        .find(|range| {
+            range.channels() == channels
+                && range.sample_format() == sample_format
+                && range.min_sample_rate() <= sample_rate_hz
+                && sample_rate_hz <= range.max_sample_rate()
+        })
+        .map_or(BufferSize::Default, |range| {
+            bounded_buffer_size(range.buffer_size(), sample_rate_hz)
+        })
+}
+
+/// Fits the preferred buffer into the size a device is willing to be given.
+///
+/// A device that will not say what it accepts is left to size itself, because
+/// a size out of range is not a longer buffer but a refusal: CoreAudio applies
+/// a fixed size to the device rather than to the stream and rejects one its
+/// hardware cannot hold, which would reach the operator as an output that
+/// cannot be opened at all.
+fn bounded_buffer_size(supported: &SupportedBufferSize, sample_rate_hz: u32) -> BufferSize {
+    let SupportedBufferSize::Range { min, max } = *supported else {
+        return BufferSize::Default;
+    };
+    if min > max || max == 0 {
+        return BufferSize::Default;
+    }
+    let preferred = u64::from(sample_rate_hz) * u64::from(OUTPUT_BUFFER_MS) / 1_000;
+    let preferred = FrameCount::try_from(preferred).unwrap_or(FrameCount::MAX);
+    BufferSize::Fixed(preferred.max(1).clamp(min, max))
+}
+
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
@@ -278,6 +330,44 @@ mod tests {
             distinguish(&labels),
             ["Codec (hw:CARD=1,DEV=0)", "Codec #1", "Codec #2"]
         );
+    }
+
+    /// The buffer is asked for in time, not in frames, so a device running at
+    /// twice the rate is not given twice the delay.
+    #[rstest]
+    #[case(48_000, BufferSize::Fixed(1_920))]
+    #[case(44_100, BufferSize::Fixed(1_764))]
+    #[case(96_000, BufferSize::Fixed(3_840))]
+    fn a_permissive_device_is_asked_for_the_same_span_of_audio(
+        #[case] sample_rate_hz: u32,
+        #[case] expected: BufferSize,
+    ) {
+        let supported = SupportedBufferSize::Range { min: 1, max: 65_536 };
+
+        assert_eq!(bounded_buffer_size(&supported, sample_rate_hz), expected);
+    }
+
+    /// CoreAudio refuses a size its hardware cannot hold, and a refusal is an
+    /// operator who cannot transmit, so what the device accepts wins over what
+    /// the crate would rather have.
+    #[rstest]
+    #[case(SupportedBufferSize::Range { min: 4_096, max: 8_192 }, BufferSize::Fixed(4_096))]
+    #[case(SupportedBufferSize::Range { min: 64, max: 512 }, BufferSize::Fixed(512))]
+    fn a_device_that_will_not_hold_it_is_given_the_nearest_size_it_will(
+        #[case] supported: SupportedBufferSize,
+        #[case] expected: BufferSize,
+    ) {
+        assert_eq!(bounded_buffer_size(&supported, 48_000), expected);
+    }
+
+    /// A device that reports no range would be sized on a guess, and a guess
+    /// out of range is not a longer buffer but a stream that will not open.
+    #[rstest]
+    #[case(SupportedBufferSize::Unknown)]
+    #[case(SupportedBufferSize::Range { min: 2_048, max: 1_024 })]
+    #[case(SupportedBufferSize::Range { min: 0, max: 0 })]
+    fn a_device_that_states_no_usable_range_sizes_itself(#[case] supported: SupportedBufferSize) {
+        assert_eq!(bounded_buffer_size(&supported, 48_000), BufferSize::Default);
     }
 
     /// Two devices may report the same identifier as their name; a name

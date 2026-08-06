@@ -200,7 +200,7 @@ fn transmit_controls(ui: &mut Ui, app: &mut App, height: f32) {
         let full = ui.available_width();
         let tone = ((full - gap) / 4.0).max(0.0);
         transmit_button(ui, app, full - gap - tone, height);
-        tone_button(ui, app, tone, height);
+        tune_button(ui, app, tone, height);
     });
 }
 
@@ -243,14 +243,14 @@ fn transmit_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
 ///
 /// Captioned with the frequency itself, the way MMSSTV captions it: the button
 /// is asked for by that number rather than by anything it could be called.
-fn tone_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
+fn tune_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
     let active = app.is_tuning();
     let caption = TUNE_FREQUENCY_HZ.to_string();
     let hint = app
         .i18n
         .text_with("action-tone", &[("frequency", arg(&caption))]);
     let size = egui::vec2(width, height);
-    let problem = (!active).then(|| app.tone_problem()).flatten();
+    let problem = (!active).then(|| app.tune_problem()).flatten();
     let button = egui::Button::new(RichText::new(caption).size(SMALL)).selected(active);
     let mut response = ui
         .add_enabled_ui(problem.is_none(), |ui| ui.add_sized(size, button))
@@ -260,9 +260,9 @@ fn tone_button(ui: &mut Ui, app: &mut App, width: f32, height: f32) {
     }
     if response.on_hover_text(hint).clicked() {
         if active {
-            app.stop_tone();
+            app.stop_tune();
         } else {
-            app.start_tone();
+            app.start_tune();
         }
     }
 }

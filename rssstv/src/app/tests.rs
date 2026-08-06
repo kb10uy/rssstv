@@ -500,7 +500,7 @@ fn a_tune_tone_mutes_reception_until_it_is_stopped() {
     app.poll_workers();
     assert!(app.audio.is_muted_for_transmit());
 
-    app.stop_tone();
+    app.stop_tune();
     app.poll_workers();
 
     assert!(!app.audio.is_muted_for_transmit());
@@ -534,11 +534,11 @@ fn a_tune_tone_needs_only_an_output_device() {
     assert!(app.composition.frame.is_none());
 
     assert_eq!(
-        app.tone_problem(),
+        app.tune_problem(),
         Some(app.i18n.text("error-no-output-device"))
     );
 
-    app.start_tone();
+    app.start_tune();
 
     assert!(!app.is_tuning());
     assert_eq!(app.tx_error, Some(app.i18n.text("error-no-output-device")));
@@ -551,7 +551,7 @@ fn a_tone_and_a_picture_refuse_each_other() {
     app.tx_snapshot.phase = TxPhase::Producing;
 
     assert_eq!(
-        app.tone_problem(),
+        app.tune_problem(),
         Some(app.i18n.text("error-transmit-active"))
     );
 
@@ -570,7 +570,7 @@ fn a_tone_and_a_picture_refuse_each_other() {
 fn a_tune_tone_stops_itself_once_its_time_is_up() {
     let mut app = App::headless();
     app.tune_for_test();
-    app.tone_until = Some(Instant::now() - Duration::from_millis(1));
+    app.tune_until = Some(Instant::now() - Duration::from_millis(1));
 
     app.poll_transmit();
 
@@ -583,7 +583,7 @@ fn stopping_a_tune_tone_ends_the_transmission() {
     let mut app = App::headless();
     app.tune_for_test();
 
-    app.stop_tone();
+    app.stop_tune();
 
     assert!(!app.is_tuning());
     assert_eq!(app.tx_snapshot.phase, TxPhase::Cancelled);

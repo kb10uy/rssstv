@@ -295,7 +295,7 @@ pub struct App {
     /// The deadline is what says a tone is running rather than a picture: the
     /// two use the same worker and the same stream, and everything else about
     /// them differs only in what the operator is told.
-    tone_until: Option<Instant>,
+    tune_until: Option<Instant>,
     rig_worker: Option<RigWorker>,
     /// Set while a transmission has asked for the rig to be keyed.
     ///
@@ -524,7 +524,7 @@ impl App {
             playback: None,
             tx_worker: None,
             playback_started: false,
-            tone_until: None,
+            tune_until: None,
             rig_worker: None,
             rig_keyed: false,
             adopted_callsigns: 0,
@@ -957,7 +957,7 @@ impl App {
         // A transmission is read from its worker and from the playback queue,
         // neither of which announces anything, and the row being sent moves
         // continuously while it runs.
-        if self.tx_snapshot.phase.is_active() || self.tone_until.is_some() {
+        if self.tx_snapshot.phase.is_active() || self.tune_until.is_some() {
             at_most(LIVE_INTERVAL);
         }
         if self.composition.pending {
@@ -1488,7 +1488,7 @@ impl App {
 
         // Checked before the worker is read, because the tone it produces never
         // runs out on its own and the deadline is the only thing that ends it.
-        if let Some(deadline) = self.tone_until
+        if let Some(deadline) = self.tune_until
             && Instant::now() >= deadline
         {
             self.stop_transmit_with(TxPhase::Complete);
@@ -1694,7 +1694,7 @@ impl App {
     ///
     /// Less stands in its way than in a picture's: a tone carries no image and
     /// names no station, so only the output device and the rig are asked.
-    pub fn tone_problem(&self) -> Option<String> {
+    pub fn tune_problem(&self) -> Option<String> {
         if self.tx_snapshot.phase.is_active() && !self.is_tuning() {
             return Some(self.i18n.text("error-transmit-active"));
         }
@@ -1705,23 +1705,23 @@ impl App {
     }
 
     /// Keys the rig and sends the steady tone a repeater is opened with.
-    pub fn start_tone(&mut self) {
-        if let Some(error) = self.tone_problem() {
+    pub fn start_tune(&mut self) {
+        if let Some(error) = self.tune_problem() {
             self.tx_error = Some(error);
             return;
         }
         let Some(writer) = self.begin_transmission() else {
             return;
         };
-        self.tone_until = Some(Instant::now() + TUNE_LIMIT);
-        self.tx_worker = Some(TxWorker::spawn_tone(
+        self.tune_until = Some(Instant::now() + TUNE_LIMIT);
+        self.tx_worker = Some(TxWorker::spawn_tune(
             writer,
             TUNE_FREQUENCY_HZ,
             Arc::clone(&self.tx_gain),
         ));
     }
 
-    pub fn stop_tone(&mut self) {
+    pub fn stop_tune(&mut self) {
         if self.is_tuning() {
             self.stop_transmit_with(TxPhase::Cancelled);
         }
@@ -1729,7 +1729,7 @@ impl App {
 
     /// Whether a tune tone is what the rig is currently keyed for.
     pub const fn is_tuning(&self) -> bool {
-        self.tone_until.is_some()
+        self.tune_until.is_some()
     }
 
     /// Puts the interface in the state a running tone leaves it in.
@@ -1738,7 +1738,7 @@ impl App {
     /// is what the operator can do while it runs rather than its audio.
     #[cfg(test)]
     pub(crate) fn tune_for_test(&mut self) {
-        self.tone_until = Some(Instant::now() + TUNE_LIMIT);
+        self.tune_until = Some(Instant::now() + TUNE_LIMIT);
         self.tx_snapshot.phase = TxPhase::Producing;
     }
 
@@ -1752,7 +1752,7 @@ impl App {
         self.playback = None;
         self.tx_worker = None;
         self.playback_started = false;
-        self.tone_until = None;
+        self.tune_until = None;
         self.unkey_rig();
         self.tx_snapshot.phase = phase;
         // Whatever was chosen while the transmission was running takes effect

@@ -196,9 +196,9 @@ impl TxWorker {
     /// Nothing about it ends, so it drives the same phases a picture does
     /// except the last: it primes, produces, and then keeps producing until the
     /// operator or the time limit takes it down.
-    pub fn spawn_tone(writer: PlaybackWriter, frequency_hz: u32, gain: Arc<TxGain>) -> Self {
+    pub fn spawn_tune(writer: PlaybackWriter, frequency_hz: u32, gain: Arc<TxGain>) -> Self {
         Self::start("rssstv-tune", move |snapshot, cancel| {
-            tone_loop(writer, frequency_hz, gain, snapshot, cancel);
+            tune_loop(writer, frequency_hz, gain, snapshot, cancel);
         })
     }
 
@@ -354,7 +354,7 @@ fn transmit_loop(
     }
 }
 
-fn tone_loop(
+fn tune_loop(
     mut writer: PlaybackWriter,
     frequency_hz: u32,
     gain: Arc<TxGain>,
@@ -521,7 +521,7 @@ mod tests {
     fn the_tune_worker_sends_a_steady_tone_at_the_frequency_it_was_given() {
         let sample_rate_hz = 8_000;
         let (writer, mut reader) = synthetic_playback(sample_rate_hz, 4_096).unwrap();
-        let worker = TxWorker::spawn_tone(writer, 1_000, Arc::new(TxGain::from_travel(1.0)));
+        let worker = TxWorker::spawn_tune(writer, 1_000, Arc::new(TxGain::from_travel(1.0)));
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut samples = Vec::new();

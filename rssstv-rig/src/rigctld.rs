@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpStream, ToSocketAddrs},
     time::Duration,
 };
@@ -18,6 +18,13 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1_500);
 /// this, so a count past it means the stream is no longer framed the way the
 /// protocol says and reading on would never end.
 const MAXIMUM_RESPONSE_LINES: usize = 512;
+
+/// How long one line of an answer may run, for the same reason.
+///
+/// The read timeout only catches a peer that goes quiet; a peer that streams
+/// bytes without ever framing a line would otherwise grow the buffer for as
+/// long as it keeps talking.
+const MAXIMUM_RESPONSE_LINE_BYTES: u64 = 4_096;
 
 /// What `rigctld` said in answer to one command.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -176,12 +183,17 @@ impl Rigctld {
         let mut lines = Vec::new();
         loop {
             let mut raw = String::new();
-            let read = self
-                .reader
+            let read = (&mut self.reader)
+                .take(MAXIMUM_RESPONSE_LINE_BYTES)
                 .read_line(&mut raw)
                 .map_err(|error| RigError::Transport(error.to_string()))?;
             if read == 0 {
                 return Err(RigError::Closed);
+            }
+            if read as u64 == MAXIMUM_RESPONSE_LINE_BYTES && !raw.ends_with('\n') {
+                return Err(RigError::Unreadable {
+                    command: line.to_owned(),
+                });
             }
             let trimmed = raw.trim_end_matches(['\r', '\n']);
             if let Some(status) = trimmed.strip_prefix("RPRT ") {
@@ -336,6 +348,23 @@ mod tests {
         assert_eq!(rig.run(written), Err(RigError::NotOneLine));
         // Nothing reached the far end, so the stream is still in step.
         assert_eq!(fake.received(), ["+\\chk_vfo"]);
+    }
+
+    /// A peer that streams bytes without ever framing a line has left the
+    /// protocol, and the answer is refused at a fixed size rather than being
+    /// buffered for as long as the peer keeps talking.
+    #[test]
+    fn an_unframed_answer_is_refused_at_a_fixed_size() {
+        let unframed = "x".repeat(MAXIMUM_RESPONSE_LINE_BYTES as usize * 2);
+        let fake = FakeRig::spawn(&["chk_vfo:\nChkVFO: 0\nRPRT 0\n", &unframed]);
+        let mut rig = Rigctld::connect(&fake.address, TEST_TIMEOUT).unwrap();
+
+        assert_eq!(
+            rig.run("f"),
+            Err(RigError::Unreadable {
+                command: "f".to_owned(),
+            })
+        );
     }
 
     /// Spacing a command out to read well in a script is not a reason to

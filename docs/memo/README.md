@@ -34,6 +34,8 @@ that program does, including where it departs from published descriptions.
 - [mmsstv/modes.md](mmsstv/modes.md): how its mode table is written, and where
   it differs from public tables.
 - [mmsstv/fskid.md](mmsstv/fskid.md): its FSKID detector and acquisition.
+- [mmsstv/jasta.md](mmsstv/jasta.md): MMJASTA, the contest scorer bundled with
+  the source, and the MDT log format it reads.
 - [mmsstv/porting.md](mmsstv/porting.md): reading the original source for the
   Rust port.
 

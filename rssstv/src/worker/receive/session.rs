@@ -343,11 +343,7 @@ impl Session {
     fn drive(&mut self, decoder: &mut RxDecoder, chunk: &DemodulatedChunk) -> Result<(), AppError> {
         let mut offset = 0;
         while offset < chunk.frequency_hz().len() {
-            let block = DemodulatedBlock::new(
-                chunk.first_sample() + offset as u64,
-                &chunk.frequency_hz()[offset..],
-                &chunk.sync_strength()[offset..],
-            );
+            let block = chunk.block_from(offset);
             match decoder.state() {
                 RxState::Complete => {
                     self.stage_tail(decoder, block);

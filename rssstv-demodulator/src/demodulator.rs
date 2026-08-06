@@ -54,6 +54,19 @@ impl DemodulatedChunk {
     pub fn fsk_numbers(&self) -> &[FskNumber] {
         &self.fsk_numbers
     }
+
+    /// Returns the chunk's samples from `offset` on, as the decoder takes them.
+    ///
+    /// A decoder consumes a chunk in as many calls as it needs, so every
+    /// driver holds an offset and re-slices what is left; the arithmetic lives
+    /// here so each of them does not carry its own copy.
+    pub fn block_from(&self, offset: usize) -> rssstv_sstv::rx::DemodulatedBlock<'_> {
+        rssstv_sstv::rx::DemodulatedBlock::new(
+            self.first_sample + offset as u64,
+            &self.frequency_hz[offset..],
+            &self.sync_strength[offset..],
+        )
+    }
 }
 
 /// Stateful incremental SSTV receive front end.

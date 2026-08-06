@@ -8,6 +8,7 @@ mod demodulator;
 mod error;
 mod frontend;
 mod hilbert;
+mod pipeline;
 mod sync;
 mod vis;
 
@@ -18,6 +19,7 @@ use rssstv_sstv::{
 
 pub use demodulator::{DemodulatedAudio, DemodulatedChunk, Demodulator, demodulate};
 pub use error::DemodulatorError;
+pub use pipeline::{PipelineError, PipelineOptions, PipelineOutcome, ReceivePipeline};
 pub use sync::SyncStart;
 
 const SYNC_DETECTOR_DELAY_PS: u64 = 6_000_000_000;

@@ -17,10 +17,10 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
-use rssstv_demodulator::{Demodulator, sync_detector_delay};
+use rssstv_demodulator::{PipelineOptions, ReceivePipeline};
 use rssstv_sstv::{
     RxDecoder,
-    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging},
+    rx::{RxEvent, RxState},
 };
 
 /// Matches the application's receive worker.
@@ -112,73 +112,47 @@ fn main() -> Result<()> {
         if options.live_slant { "on" } else { "off" },
     );
 
-    let mut demodulator = Demodulator::new(rate)?;
-    let mut decoder: Option<RxDecoder> = None;
+    let mut pipeline = ReceivePipeline::new(
+        rate,
+        PipelineOptions {
+            live_slant: options.live_slant,
+            staging_max_samples: (rate as usize).saturating_mul(STAGING_SECONDS),
+        },
+    )?;
     let mut rows = 0_usize;
+    let mut announced = None;
     for packet in samples.chunks(decode_wav::DEFAULT_PCM_PACKET_SIZE) {
-        let chunk = demodulator.process(packet)?;
-        if let Some(mode) = chunk.detected_mode() {
+        pipeline.process(packet, |event| match event {
+            RxEvent::RowDecoded { .. } => rows += 1,
+            RxEvent::SlantAdjusted {
+                unit,
+                effective_sample_rate_hz,
+            } => println!(
+                "slant at unit {unit}: {effective_sample_rate_hz:.3} Hz ({:+.1} ppm)",
+                (effective_sample_rate_hz / f64::from(rate) - 1.0) * 1.0e6
+            ),
+            RxEvent::PhaseAdjusted {
+                unit,
+                displacement_samples,
+                ..
+            } => println!("phase at unit {unit}: {displacement_samples:+} samples"),
+            event => println!("{event:?}"),
+        })?;
+        if let Some(mode) = pipeline.decoder().map(RxDecoder::mode)
+            && announced != Some(mode)
+        {
             println!("detected {}", mode.spec().name());
-            decoder = Some(RxDecoder::with_config(
-                mode,
-                rate,
-                RxConfig {
-                    live_sync: true,
-                    live_slant: options.live_slant,
-                    auto_stop: false,
-                    sync_detector_delay: sync_detector_delay(mode),
-                    staging: Staging::Memory {
-                        max_samples: (rate as usize).saturating_mul(STAGING_SECONDS),
-                    },
-                },
-            )?);
-        }
-        let Some(decoder) = decoder.as_mut() else {
-            continue;
-        };
-        let mut offset = 0;
-        while offset < chunk.frequency_hz().len() {
-            if matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. }) {
-                break;
-            }
-            let processed = decoder
-                .process(DemodulatedBlock::new(
-                    chunk.first_sample() + offset as u64,
-                    &chunk.frequency_hz()[offset..],
-                    &chunk.sync_strength()[offset..],
-                ))
-                .map_err(|error| anyhow::anyhow!("{}", error.error()))?;
-            match processed.event() {
-                Some(RxEvent::RowDecoded { .. }) => rows += 1,
-                Some(RxEvent::SlantAdjusted {
-                    unit,
-                    effective_sample_rate_hz,
-                }) => println!(
-                    "slant at unit {unit}: {effective_sample_rate_hz:.3} Hz ({:+.1} ppm)",
-                    (effective_sample_rate_hz / f64::from(rate) - 1.0) * 1.0e6
-                ),
-                Some(RxEvent::PhaseAdjusted {
-                    unit,
-                    displacement_samples,
-                    ..
-                }) => println!("phase at unit {unit}: {displacement_samples:+} samples"),
-                Some(event) => println!("{event:?}"),
-                None => {}
-            }
-            offset += processed.consumed();
-            if processed.consumed() == 0 && processed.event().is_none() {
-                break;
-            }
+            announced = Some(mode);
         }
     }
     println!(
         "{rows} rows, state {:?}, raster rate {:?}",
-        decoder.as_ref().map(RxDecoder::state),
-        decoder
-            .as_ref()
+        pipeline.decoder().map(RxDecoder::state),
+        pipeline
+            .decoder()
             .and_then(RxDecoder::effective_sample_rate_hz),
     );
-    if let Some(decoder) = decoder.as_mut()
+    if let Some(decoder) = pipeline.decoder_mut()
         && decoder.state() == RxState::Complete
     {
         match decoder.refine_staged() {

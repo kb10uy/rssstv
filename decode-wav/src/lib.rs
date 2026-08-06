@@ -2,14 +2,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
-use rssstv_demodulator::{DemodulatedChunk, Demodulator, sync_detector_delay};
+use rssstv_demodulator::{PipelineOptions, ReceivePipeline};
 use rssstv_fskid::FskId;
-use rssstv_sstv::{
-    RxDecoder,
-    image::RgbImage,
-    mode::Mode,
-    rx::{DemodulatedBlock, RxConfig, RxOutcome, RxState, Staging},
-};
+use rssstv_sstv::{image::RgbImage, mode::Mode, rx::RxOutcome};
 
 /// First-channel mono PCM samples handed to the pipeline per packet.
 pub const DEFAULT_PCM_PACKET_SIZE: usize = 1_024;
@@ -71,7 +66,13 @@ pub fn decode_file_with_options(
     }
     let channels = spec.channels as usize;
     let max_samples = reader.duration() as usize;
-    let pipeline = ReceivePipeline::new(spec.sample_rate, max_samples)?;
+    let pipeline = ReceivePipeline::new(
+        spec.sample_rate,
+        PipelineOptions {
+            live_slant: false,
+            staging_max_samples: max_samples,
+        },
+    )?;
     let result = match spec.sample_format {
         SampleFormat::Int => {
             if spec.bits_per_sample == 0 || spec.bits_per_sample > 32 {
@@ -108,121 +109,29 @@ pub fn decode_file_with_options(
     Ok(result.report)
 }
 
-struct ReceivePipeline {
-    demodulator: Demodulator,
-    decoder: Option<RxDecoder>,
-    max_samples: usize,
-    fsk_ids: Vec<FskId>,
-}
-
-impl ReceivePipeline {
-    fn new(sample_rate_hz: u32, max_samples: usize) -> Result<Self> {
-        Ok(Self {
-            demodulator: Demodulator::new(sample_rate_hz)?,
-            decoder: None,
-            max_samples,
-            fsk_ids: Vec::new(),
-        })
-    }
-
-    fn process_pcm(&mut self, samples: &[f32]) -> Result<()> {
-        let output = self.demodulator.process(samples)?;
-        self.process_demodulated(&output)
-    }
-
-    fn process_demodulated(&mut self, output: &DemodulatedChunk) -> Result<()> {
-        self.fsk_ids.extend_from_slice(output.fsk_ids());
-        if let Some(mode) = output.detected_mode() {
-            self.decoder = Some(
-                RxDecoder::with_config(
-                    mode,
-                    self.demodulator.sample_rate_hz(),
-                    RxConfig {
-                        live_sync: true,
-                        live_slant: false,
-                        auto_stop: false,
-                        sync_detector_delay: sync_detector_delay(mode),
-                        staging: Staging::Memory {
-                            max_samples: self.max_samples,
-                        },
-                    },
-                )
-                .with_context(|| format!("cannot decode VIS mode {}", mode.spec().name()))?,
-            );
-        }
-        if output.frequency_hz().is_empty() {
-            return Ok(());
-        }
-        let decoder = self
-            .decoder
-            .as_mut()
-            .context("demodulator produced image data before VIS detection")?;
-        let mut offset = 0;
-        while offset < output.frequency_hz().len() {
-            match decoder.state() {
-                RxState::Complete => {
-                    decoder.stage_for_refinement(DemodulatedBlock::new(
-                        output.first_sample() + offset as u64,
-                        &output.frequency_hz()[offset..],
-                        &output.sync_strength()[offset..],
-                    ))?;
-                    break;
-                }
-                RxState::Stopped { .. } => break,
-                _ => {}
-            }
-            let processed = decoder
-                .process(DemodulatedBlock::new(
-                    output.first_sample() + offset as u64,
-                    &output.frequency_hz()[offset..],
-                    &output.sync_strength()[offset..],
-                ))
-                .map_err(|error| {
-                    anyhow::anyhow!(
-                        "receive decoding failed at sample {}: {}",
-                        output.first_sample() + offset as u64 + error.consumed() as u64,
-                        error.error()
-                    )
-                })?;
-            offset += processed.consumed();
-            if processed.consumed() == 0 && processed.event().is_none() {
-                bail!("receive decoder made no progress");
-            }
-        }
-        Ok(())
-    }
-
-    fn finish(mut self) -> Result<PipelineResult> {
-        let mode = self.demodulator.finish()?;
-        let frequency_offset_hz = self.demodulator.frequency_offset_hz();
-        let mut decoder = self.decoder.take().context("VIS mode was not detected")?;
-        if decoder.state() == RxState::Complete {
-            decoder
-                .refine_staged()
-                .context("failed to refine raster slant from staged synchronization")?;
-        }
-        let effective_sample_rate_hz = decoder.effective_sample_rate_hz();
-        let (image, status) = match decoder.finish() {
-            RxOutcome::Complete(image) => (image, DecodeStatus::Complete),
-            RxOutcome::Incomplete { image, .. } => (image, DecodeStatus::Incomplete),
-            RxOutcome::Stopped { image, .. } => (image, DecodeStatus::SynchronizationLost),
-        };
-        Ok(PipelineResult {
-            image,
-            report: DecodeReport {
-                mode,
-                status,
-                frequency_offset_hz,
-                effective_sample_rate_hz,
-                fsk_ids: self.fsk_ids,
-            },
-        })
-    }
-}
-
 struct PipelineResult {
     image: RgbImage,
     report: DecodeReport,
+}
+
+/// Maps what the shared pipeline reports into this command's own report.
+fn finish_pipeline(pipeline: ReceivePipeline) -> Result<PipelineResult> {
+    let outcome = pipeline.finish()?;
+    let (image, status) = match outcome.outcome {
+        RxOutcome::Complete(image) => (image, DecodeStatus::Complete),
+        RxOutcome::Incomplete { image, .. } => (image, DecodeStatus::Incomplete),
+        RxOutcome::Stopped { image, .. } => (image, DecodeStatus::SynchronizationLost),
+    };
+    Ok(PipelineResult {
+        image,
+        report: DecodeReport {
+            mode: outcome.mode,
+            status,
+            frequency_offset_hz: outcome.frequency_offset_hz,
+            effective_sample_rate_hz: outcome.effective_sample_rate_hz,
+            fsk_ids: outcome.fsk_ids,
+        },
+    })
 }
 
 fn decode_samples<I>(
@@ -239,7 +148,7 @@ where
         packet.push(sample?);
         sample_count += 1;
         if packet.len() == packet_size {
-            pipeline.process_pcm(&packet)?;
+            pipeline.process(&packet, |_| {})?;
             packet.clear();
         }
     }
@@ -247,9 +156,9 @@ where
         bail!("WAV file contains no samples");
     }
     if !packet.is_empty() {
-        pipeline.process_pcm(&packet)?;
+        pipeline.process(&packet, |_| {})?;
     }
-    pipeline.finish()
+    finish_pipeline(pipeline)
 }
 
 fn save_image(image: &RgbImage, path: &Path) -> Result<()> {

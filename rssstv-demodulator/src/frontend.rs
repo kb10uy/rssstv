@@ -4,8 +4,8 @@ use rssstv_dsp::{
     frequency::ZeroCrossingFrequency,
 };
 
-use rssstv_fskid::{FskDecoder, FskRecord, FskTone};
-use rssstv_sstv::mode::Mode;
+use rssstv_fskid::{FskDecoder, FskRecord, FskTone, FskTxTone};
+use rssstv_sstv::{mode::Mode, signal::SYNC_HZ};
 
 use crate::{
     DemodulatorError,
@@ -15,12 +15,24 @@ use crate::{
     vis::VisDecoder,
 };
 
+/// Where MMSSTV centers its VIS bit detectors.
+///
+/// Deliberately off the nominal 1100 and 1300 Hz bit tones: the original
+/// places its resonators at these frequencies, and the receive behavior
+/// answers to it rather than to the published figures.
+const VIS_MARK_DETECTOR_HZ: f64 = 1_080.0;
+const VIS_SPACE_DETECTOR_HZ: f64 = 1_320.0;
+
+/// The tone detector bank, as `(center, bandwidth)` in hertz.
+///
+/// The sync and FSK centers are the protocol's own, so they are read from the
+/// crates that define them and cannot drift from what the transmit side sends.
 const DETECTORS: [(f64, f64); 5] = [
-    (1_080.0, 80.0),
-    (1_200.0, 100.0),
-    (1_320.0, 80.0),
-    (1_900.0, 100.0),
-    (2_100.0, 100.0),
+    (VIS_MARK_DETECTOR_HZ, 80.0),
+    (SYNC_HZ as f64, 100.0),
+    (VIS_SPACE_DETECTOR_HZ, 80.0),
+    (FskTxTone::Mark.frequency_hz() as f64, 100.0),
+    (FskTxTone::Space.frequency_hz() as f64, 100.0),
 ];
 const FSK_MINIMUM_CONTRAST: f64 = 0.125;
 

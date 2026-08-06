@@ -11,7 +11,10 @@ mod hilbert;
 mod sync;
 mod vis;
 
-use rssstv_sstv::{mode::Mode, time::SstvDuration};
+use rssstv_sstv::{
+    mode::{Mode, Support},
+    time::SstvDuration,
+};
 
 pub use demodulator::{DemodulatedAudio, DemodulatedChunk, Demodulator, demodulate};
 pub use error::DemodulatorError;
@@ -25,24 +28,12 @@ const SYNC_DETECTOR_DELAY_PS: u64 = 6_000_000_000;
 /// the raster, so the single measured figure covers every supported mode even
 /// though the envelope's exact lag varies with pulse length and picture content.
 ///
-/// Modes without an implemented raster decoder return zero.
+/// Modes without an implemented raster decoder return zero. Which modes have
+/// one is read from the mode table, so a decoder landing there is enough for
+/// its delay to apply.
 pub const fn sync_detector_delay(mode: Mode) -> SstvDuration {
-    let delay = match mode {
-        Mode::Martin1
-        | Mode::Martin2
-        | Mode::Scottie1
-        | Mode::Scottie2
-        | Mode::ScottieDx
-        | Mode::Robot36
-        | Mode::Robot72
-        | Mode::Pd50
-        | Mode::Pd90
-        | Mode::Pd120
-        | Mode::Pd160
-        | Mode::Pd180
-        | Mode::Pd240
-        | Mode::Pd290 => SYNC_DETECTOR_DELAY_PS,
-        _ => 0,
-    };
-    SstvDuration::from_picos(delay)
+    match mode.spec().decode_support() {
+        Support::Supported => SstvDuration::from_picos(SYNC_DETECTOR_DELAY_PS),
+        _ => SstvDuration::ZERO,
+    }
 }

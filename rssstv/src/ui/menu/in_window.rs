@@ -4,9 +4,9 @@ use super::{Action, Menu};
 ///
 /// The menu is drawn by [`super::bar`] instead; this type exists so the
 /// application does not need to know which path is in use.
-pub struct Native;
+pub struct MenuHost;
 
-impl Native {
+impl MenuHost {
     pub fn install(
         _cc: &eframe::CreationContext<'_>,
         _model: &[Menu],

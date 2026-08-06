@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 /// The eframe entry point, holding the application and its menu bar.
 struct Interface {
     app: App,
-    menu: Option<menu::Native>,
+    menu: Option<menu::MenuHost>,
     /// The title the window is currently showing.
     ///
     /// Held so the localized title is only pushed to the platform when it
@@ -205,7 +205,7 @@ impl Interface {
         let app = App::new(paths, worker::Waker::new(cc.egui_ctx.clone()));
         cc.egui_ctx.set_zoom_factor(app.ui_scale);
         let model = menu::model(&app);
-        let menu = match menu::Native::install(cc, &model) {
+        let menu = match menu::MenuHost::install(cc, &model) {
             Ok(menu) => Some(menu),
             Err(error) => {
                 log::note(&format!("could not install the platform menu bar: {error}"));

@@ -9,7 +9,7 @@ use super::{Action, Item, Menu};
 /// The menu is built once and then updated in place. Rebuilding it every
 /// frame would be visible to the window manager, and on Windows would
 /// re-measure the client area on each pass.
-pub struct Native {
+pub struct MenuHost {
     menu: muda::Menu,
     /// The top-level menus, in bar order.
     bar: Vec<Submenu>,
@@ -50,7 +50,7 @@ impl Entry {
     }
 }
 
-impl Native {
+impl MenuHost {
     /// Builds the menu and attaches it to the platform.
     ///
     /// A failure here is reported rather than fatal: the application is
@@ -303,7 +303,7 @@ mod tests {
     };
     use crate::{app::App, i18n::Locale};
 
-    /// The labels a menu should be showing, in the order [`Native::labels`]
+    /// The labels a menu should be showing, in the order [`MenuHost::labels`]
     /// reports them.
     fn expected(model: &[Menu]) -> Vec<String> {
         let bar = model.iter().map(|menu| menu.label.clone());
@@ -317,7 +317,7 @@ mod tests {
         bar.chain(items).collect()
     }
 
-    /// The check marks a menu should be showing, in [`Native::checks`] order.
+    /// The check marks a menu should be showing, in [`MenuHost::checks`] order.
     fn expected_checks(model: &[Menu]) -> Vec<bool> {
         flatten(model)
             .into_iter()
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn a_freshly_built_menu_shows_the_model() {
         let model = model(&App::headless());
-        assert_eq!(Native::detached(&model).labels(), expected(&model));
+        assert_eq!(MenuHost::detached(&model).labels(), expected(&model));
     }
 
     /// Activating a check entry flips its mark, so choosing the device or the
@@ -343,7 +343,7 @@ mod tests {
     fn choosing_the_selected_entry_again_keeps_its_mark() {
         let mut app = App::headless();
         let english = model(&app);
-        let mut native = Native::detached(&english);
+        let mut native = MenuHost::detached(&english);
         assert!(
             expected_checks(&english).contains(&true),
             "a selected entry is needed for this to be worth asserting"
@@ -372,7 +372,7 @@ mod tests {
     fn relabelling_lands_on_the_right_entries() {
         let mut app = App::headless();
         let english = model(&app);
-        let mut native = Native::detached(&english);
+        let mut native = MenuHost::detached(&english);
 
         app.select_locale(Locale::Ja);
         let japanese = model(&app);
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn repeated_syncs_do_not_accumulate_drift() {
         let mut app = App::headless();
-        let mut native = Native::detached(&model(&app));
+        let mut native = MenuHost::detached(&model(&app));
         for locale in [Locale::Ja, Locale::En, Locale::Ja, Locale::En] {
             app.select_locale(locale);
             native.sync(&model(&app));

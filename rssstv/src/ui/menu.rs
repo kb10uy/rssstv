@@ -19,10 +19,10 @@ mod native;
 mod in_window;
 
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub use native::Native;
+pub use native::MenuHost;
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-pub use in_window::Native;
+pub use in_window::MenuHost;
 
 /// What activating a menu entry asks the application to do.
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -183,6 +183,25 @@ impl RigWorker {
     }
 }
 
+impl RigWorker {
+    /// Stops the worker without making the caller wait for it.
+    ///
+    /// The worker may be sleeping through a keying lead-in or waiting on a
+    /// script, either of which runs to seconds, and switching rig control off
+    /// is routine interface work. The wait moves to a thread of its own;
+    /// dropping still joins, so quitting waits for the unkeying a script owes.
+    pub fn stop_in_background(mut self) {
+        self.requests = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread::Builder::new()
+                .name("rssstv-rig-stop".to_owned())
+                .spawn(move || {
+                    let _ = thread.join();
+                });
+        }
+    }
+}
+
 impl Drop for RigWorker {
     fn drop(&mut self) {
         self.requests = None;

@@ -115,6 +115,7 @@ fn automatic_history_follows_its_setting(#[case] enabled: bool, #[case] expected
     });
 
     app.poll_audio();
+    app.wait_for_history_writers();
 
     assert_eq!(fs::read_dir(received).unwrap().count(), expected_files);
 }
@@ -1051,6 +1052,7 @@ fn library_refresh_lists_matching_files_and_preserves_selection() {
     app.library.template = Some(1);
     fs::write(paths.templates_dir().join("aardvark.kdl"), "").unwrap();
     app.refresh_templates();
+    app.wait_for_library_scan();
 
     assert_eq!(
         app.library

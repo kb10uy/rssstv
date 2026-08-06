@@ -2,7 +2,8 @@ use std::{
     collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, mpsc},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -238,6 +239,10 @@ pub struct App {
     /// cursor would move out from under it.
     pub custom_draft: Vec<(String, String)>,
     pub library: Library,
+    /// The library scan whose result has not arrived yet, if one is running.
+    library_scan: Option<mpsc::Receiver<LibraryScan>>,
+    /// Receptions still being written out, joined before the interface goes.
+    history_writers: Vec<thread::JoinHandle<()>>,
     /// A success the status line reports, as opposed to a failure: writing
     /// out the rig script or the band plan says where the file went.
     pub notice: Option<String>,
@@ -486,6 +491,8 @@ impl App {
                 stock: None,
                 error: bands_error,
             },
+            library_scan: None,
+            history_writers: Vec::new(),
             notice: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
@@ -805,16 +812,117 @@ impl App {
         self.library.error = (!errors.is_empty()).then(|| errors.join("; "));
     }
 
-    pub fn refresh_templates(&mut self) {
-        self.library.error = self.load_templates().err().map(|error| error.to_string());
+    /// Reads the library again without making the interface wait for it.
+    ///
+    /// A stock folder is read file by file for each image's geometry, which on
+    /// a networked folder takes longer than a frame has. The scan runs on a
+    /// thread of its own and is adopted on the frame its result arrives.
+    fn start_library_scan(&mut self) {
+        let (sender, receiver) = mpsc::channel();
+        let templates_dir = self.paths.templates_dir().to_path_buf();
+        let stocks_dir = self.paths.stocks_dir().to_path_buf();
+        let spawned = thread::Builder::new()
+            .name("rssstv-library".to_owned())
+            .spawn(move || {
+                let _ = sender.send(LibraryScan {
+                    templates: template_entries(&templates_dir),
+                    stocks: stock_entries(&stocks_dir),
+                });
+            });
+        match spawned {
+            Ok(_) => self.library_scan = Some(receiver),
+            Err(_) => {
+                let scan = LibraryScan {
+                    templates: template_entries(self.paths.templates_dir()),
+                    stocks: stock_entries(self.paths.stocks_dir()),
+                };
+                self.adopt_library_scan(scan);
+            }
+        }
+    }
+
+    fn poll_library_scan(&mut self) {
+        let Some(receiver) = self.library_scan.as_ref() else {
+            return;
+        };
+        match receiver.try_recv() {
+            Ok(scan) => {
+                self.library_scan = None;
+                self.adopt_library_scan(scan);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => self.library_scan = None,
+        }
+    }
+
+    fn adopt_library_scan(&mut self, scan: LibraryScan) {
+        let mut errors = Vec::new();
+        match scan.templates {
+            Ok(entries) => replace_entries(
+                &mut self.library.templates,
+                &mut self.library.template,
+                entries,
+            ),
+            Err(error) => errors.push(error.to_string()),
+        }
+        match scan.stocks {
+            Ok(entries) => {
+                replace_entries(&mut self.library.stocks, &mut self.library.stock, entries);
+            }
+            Err(error) => errors.push(error.to_string()),
+        }
+        self.library.error = (!errors.is_empty()).then(|| errors.join("; "));
         self.composition.template_generation = self.composition.template_generation.wrapping_add(1);
+        self.composition.stock_generation = self.composition.stock_generation.wrapping_add(1);
         self.request_composition();
     }
 
+    /// Writes a completed reception out without making the interface wait.
+    ///
+    /// Encoding a lossless frame and writing it to disk takes longer than a
+    /// frame has, and it would land exactly when the operator is looking at
+    /// the finished picture. The writer is joined when the interface goes
+    /// down, so quitting right after a reception still keeps it.
+    fn save_history_in_background(&mut self, candidate: crate::worker::receive::HistoryCandidate) {
+        let directory = self.paths.received_dir().to_path_buf();
+        let format = self.history_format;
+        let spawned = thread::Builder::new()
+            .name("rssstv-history".to_owned())
+            .spawn(move || {
+                if let Err(error) = crate::storage::history::save(&directory, candidate, format) {
+                    crate::storage::log::note(&format!("failed to save receive history: {error}"));
+                }
+            });
+        match spawned {
+            Ok(writer) => self.history_writers.push(writer),
+            Err(_) => crate::storage::log::note("failed to start the receive history writer"),
+        }
+    }
+
+    /// Waits for every reception on its way to disk, for tests that read it.
+    #[cfg(test)]
+    fn wait_for_history_writers(&mut self) {
+        for writer in self.history_writers.drain(..) {
+            let _ = writer.join();
+        }
+    }
+
+    /// Blocks on a scan already started, for tests that assert on its result.
+    #[cfg(test)]
+    fn wait_for_library_scan(&mut self) {
+        if let Some(receiver) = self.library_scan.take()
+            && let Ok(scan) = receiver.recv()
+        {
+            self.adopt_library_scan(scan);
+        }
+    }
+
+    pub fn refresh_templates(&mut self) {
+        self.start_library_scan();
+    }
+
     pub fn refresh_stocks(&mut self) {
-        self.library.error = self.load_stocks().err().map(|error| error.to_string());
-        self.composition.stock_generation = self.composition.stock_generation.wrapping_add(1);
-        self.request_composition();
+        self.start_library_scan();
     }
 
     fn load_templates(&mut self) -> io::Result<()> {
@@ -855,6 +963,10 @@ impl App {
         if self.composition.pending {
             at_most(COMPOSE_POLL);
         }
+        // The library scan has no way to ask for a repaint of its own either.
+        if self.library_scan.is_some() {
+            at_most(COMPOSE_POLL);
+        }
         // A composed frame that prints the clock stops being what a
         // transmission should send as the minute turns.
         if self.composition.timed {
@@ -878,16 +990,12 @@ impl App {
         }
         if let Some(candidate) = self.audio.take_history() {
             self.adopt_received_image(&candidate.frame);
-            if self.auto_history
-                && let Err(error) = crate::storage::history::save(
-                    self.paths.received_dir(),
-                    candidate,
-                    self.history_format,
-                )
-            {
-                crate::storage::log::note(&format!("failed to save receive history: {error}"));
+            if self.auto_history {
+                self.save_history_in_background(candidate);
             }
         }
+        self.history_writers.retain(|writer| !writer.is_finished());
+        self.poll_library_scan();
         if self.audio.session() != self.adopted_session {
             self.adopted_session = self.audio.session();
             self.adopted_callsigns = 0;
@@ -936,7 +1044,9 @@ impl App {
                 // and the request has to go before the channel closes for the
                 // worker to see it at all.
                 self.unkey_rig();
-                self.rig_worker = None;
+                if let Some(worker) = self.rig_worker.take() {
+                    worker.stop_in_background();
+                }
                 self.rig_snapshot = RigSnapshot::default();
             }
             _ => {}
@@ -961,7 +1071,9 @@ impl App {
     /// on, the next frame is what starts one.
     pub fn retry_rig(&mut self) {
         self.unkey_rig();
-        self.rig_worker = None;
+        if let Some(worker) = self.rig_worker.take() {
+            worker.stop_in_background();
+        }
         self.rig_snapshot = RigSnapshot::default();
     }
 
@@ -1717,6 +1829,22 @@ fn template_entries(directory: &Path) -> io::Result<Vec<Entry>> {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("kdl"))
             .then(|| Entry::new(path.to_owned(), String::new()))
     })
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        // A reception may still be on its way to disk, and the interface
+        // going down is the last chance to wait for it.
+        for writer in self.history_writers.drain(..) {
+            let _ = writer.join();
+        }
+    }
+}
+
+/// What a library scan brought back, adopted on the frame it arrives.
+struct LibraryScan {
+    templates: io::Result<Vec<Entry>>,
+    stocks: io::Result<Vec<Entry>>,
 }
 
 fn stock_entries(directory: &Path) -> io::Result<Vec<Entry>> {

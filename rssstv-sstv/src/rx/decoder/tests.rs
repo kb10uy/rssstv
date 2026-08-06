@@ -1068,6 +1068,37 @@ fn live_tracking_corrects_a_mistimed_raster_before_completion() {
     );
 }
 
+/// A refit restates the delivery count for the rows it redrew, and the row
+/// events still queued at that moment deliver afterwards. Counting a row on
+/// both sides would complete the reception before its last rows, so every
+/// active row has to arrive exactly once however many refits run.
+#[rstest]
+#[case(Mode::Martin2)]
+#[case(Mode::Robot36)]
+fn every_row_is_delivered_once_across_live_slant_refits(#[case] mode: Mode) {
+    let (frequency, sync) = mistimed_body(mode, source_image(mode), 4_000.0);
+    let (decoder, events) =
+        drive_configured(mode, &frequency, &sync, config(true, frequency.len()));
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, RxEvent::SlantAdjusted { .. })),
+        "the reception was supposed to be refitted while decoding"
+    );
+    let mut delivered: Vec<usize> = events
+        .iter()
+        .filter_map(|event| match event {
+            RxEvent::RowDecoded { row } => Some(*row),
+            _ => None,
+        })
+        .collect();
+    delivered.sort_unstable();
+    delivered.dedup();
+    assert_eq!(delivered.len(), mode.spec().active_rows() as usize);
+    assert_eq!(decoder.state(), RxState::Complete);
+}
+
 /// MMSSTV starts a reception on its calibrated sample rate, so acquisition
 /// must not hand the decoder a rate fitted from the few startup periods.
 #[test]

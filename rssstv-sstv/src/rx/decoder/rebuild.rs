@@ -213,7 +213,16 @@ impl RxDecoder {
         )?;
         // Rows are delivered by the live path, not by a rebuild, so the
         // delivery bookkeeping is restated for the units that were redrawn.
-        self.decode.delivered_rows = units * self.mode.spec().rows_per_raster_unit() as usize;
+        // Row events still queued deliver later and count themselves then, so
+        // the restatement leaves them out rather than counting their rows
+        // twice and completing the reception early.
+        let queued_rows = old_decode
+            .pending_events
+            .iter()
+            .filter(|event| matches!(event, RxEvent::RowDecoded { .. }))
+            .count();
+        self.decode.delivered_rows = (units * self.mode.spec().rows_per_raster_unit() as usize)
+            .saturating_sub(queued_rows);
         self.decode.state = RxState::Decoding {
             completed_rows: self.decode.delivered_rows,
         };

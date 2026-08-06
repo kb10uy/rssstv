@@ -3,7 +3,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, PoisonError,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -100,24 +100,33 @@ impl Composer {
         // A request no worker will ever pick up is answered here, so the
         // interface hears a failure instead of waiting for a frame forever.
         if self.thread.is_none() {
-            if let Ok(mut result) = self.result.lock() {
-                *result = Some(ComposeResult {
-                    generation: request.generation,
-                    frame: Err(AppError::WorkerUnavailable("composition").to_string()),
-                    uses_timestamps: false,
-                    uses_radio: false,
-                });
-            }
+            *self.result.lock().unwrap_or_else(PoisonError::into_inner) = Some(ComposeResult {
+                generation: request.generation,
+                frame: Err(AppError::WorkerUnavailable("composition").to_string()),
+                uses_timestamps: false,
+                uses_radio: false,
+            });
             return;
         }
-        if let Ok(mut pending) = self.control.request.lock() {
-            *pending = Some(request);
-            self.control.wake.notify_one();
-        }
+        let mut pending = self
+            .control
+            .request
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *pending = Some(request);
+        self.control.wake.notify_one();
     }
 
+    /// Takes the newest finished frame.
+    ///
+    /// A poisoned result slot still answers: the value is plain data, and an
+    /// interface that stopped hearing results would show its waiting spinner
+    /// forever.
     pub fn latest(&self) -> Option<ComposeResult> {
-        self.result.lock().ok()?.take()
+        self.result
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
     }
 }
 

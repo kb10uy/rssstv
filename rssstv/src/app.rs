@@ -238,6 +238,9 @@ pub struct App {
     /// cursor would move out from under it.
     pub custom_draft: Vec<(String, String)>,
     pub library: Library,
+    /// A success the status line reports, as opposed to a failure: writing
+    /// out the rig script or the band plan says where the file went.
+    pub notice: Option<String>,
     pub rx_raster: Raster,
     pub tx_raster: Raster,
     pub tx_snapshot: TxSnapshot,
@@ -477,6 +480,7 @@ impl App {
                 stock: None,
                 error: bands_error,
             },
+            notice: None,
             rx_raster: Raster::blank(settings.rx_mode),
             tx_raster: Raster::test_pattern(settings.tx_mode),
             tx_snapshot: TxSnapshot::default(),
@@ -1030,13 +1034,17 @@ impl App {
     fn report_written(&mut self, written: io::Result<PathBuf>) {
         match written {
             Ok(path) => {
-                self.library.error = Some(self.i18n.text_with(
+                self.notice = Some(self.i18n.text_with(
                     "rig-script-written",
                     &[("path", owned(path.display().to_string()))],
                 ));
+                self.library.error = None;
                 self.reveal(Folder::Config);
             }
-            Err(error) => self.library.error = Some(error.to_string()),
+            Err(error) => {
+                self.library.error = Some(error.to_string());
+                self.notice = None;
+            }
         }
     }
 

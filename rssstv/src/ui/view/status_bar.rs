@@ -51,6 +51,9 @@ pub(super) fn status_bar(ui: &mut Ui, app: &App) {
         ) {
             ui.label(RichText::new(error).size(LABEL).color(error_color));
         }
+        if let Some(notice) = app.notice.as_deref() {
+            ui.label(RichText::new(notice.to_owned()).size(LABEL));
+        }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if !snapshot.callsigns.is_empty() {
                 ui.label(RichText::new(snapshot.callsigns.join(" ")).size(LABEL));

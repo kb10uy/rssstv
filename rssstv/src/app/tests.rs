@@ -1243,3 +1243,17 @@ fn the_shortest_interval_wins() {
     app.tune_for_test();
     assert_eq!(app.repaint_after(), Some(LIVE_INTERVAL));
 }
+
+/// Writing a file out is a success, and the status line must not dress it in
+/// the error color a failure gets.
+#[test]
+fn a_written_file_reports_as_a_notice_rather_than_a_failure() {
+    let mut app = App::headless();
+    app.report_written(Ok(std::path::PathBuf::from("rig.lua")));
+    assert!(app.notice.is_some());
+    assert!(app.library.error.is_none());
+
+    app.report_written(Err(std::io::Error::other("disk full")));
+    assert!(app.notice.is_none());
+    assert_eq!(app.library.error.as_deref(), Some("disk full"));
+}

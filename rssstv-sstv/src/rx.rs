@@ -5,6 +5,7 @@ mod clock;
 mod config;
 mod decoder;
 mod event;
+mod fit;
 mod input;
 mod raster;
 mod slant;

@@ -107,41 +107,15 @@ impl SlantEstimator {
             return None;
         }
 
-        let n = filtered.len() as f64;
-        let mean_x = filtered.iter().map(|value| value.unit as f64).sum::<f64>() / n;
-        let mean_y = filtered
+        let points: Vec<(f64, f64)> = filtered
             .iter()
-            .map(|value| value.center_sample as f64)
-            .sum::<f64>()
-            / n;
-        let denominator = filtered
-            .iter()
-            .map(|value| {
-                let distance = value.unit as f64 - mean_x;
-                distance * distance
-            })
-            .sum::<f64>();
-        if denominator <= 0.0 {
-            return None;
-        }
-        let slope = filtered
-            .iter()
-            .map(|value| (value.unit as f64 - mean_x) * (value.center_sample as f64 - mean_y))
-            .sum::<f64>()
-            / denominator;
-        let intercept = mean_y - slope * mean_x;
+            .map(|value| (value.unit as f64, value.center_sample as f64))
+            .collect();
+        let (slope, intercept, residual_variance) = super::fit::least_squares_line(&points)?;
         let effective_sample_rate_hz = slope * 1.0e12 / self.period_ps as f64;
         if !effective_sample_rate_hz.is_finite() || effective_sample_rate_hz <= 0.0 {
             return None;
         }
-        let residual_variance = filtered
-            .iter()
-            .map(|value| {
-                let residual = value.center_sample as f64 - (intercept + slope * value.unit as f64);
-                residual * residual
-            })
-            .sum::<f64>()
-            / n;
         let residual_samples = libm::sqrt(residual_variance);
         let source_epoch =
             intercept - effective_sample_rate_hz * self.sync_center_ps as f64 / 1.0e12;

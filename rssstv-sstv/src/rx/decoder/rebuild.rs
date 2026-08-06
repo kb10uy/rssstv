@@ -232,57 +232,6 @@ impl RxDecoder {
         self.image_revision = self.image_revision.saturating_add(1);
         Ok(units)
     }
-    pub(super) fn append(
-        &mut self,
-        block: DemodulatedBlock<'_>,
-        offset: usize,
-        count: usize,
-    ) -> Result<(), SstvError> {
-        block.validate_range(offset, count)?;
-        let first = block
-            .first_sample()
-            .checked_add(offset as u64)
-            .ok_or(SstvError::SamplePositionOverflow)?;
-        let part = DemodulatedBlock::new(
-            first,
-            &block.frequency_hz()[offset..offset + count],
-            &block.sync_strength()[offset..offset + count],
-        );
-        if let Staging::Memory { max_samples } = self.config.staging {
-            let staged_len = self.staged.as_ref().map_or(0, SampleBuffer::len);
-            if staged_len
-                .checked_add(count)
-                .is_none_or(|len| len > max_samples)
-            {
-                return Err(SstvError::StagingCapacityExceeded { max_samples });
-            }
-            self.staged
-                .as_mut()
-                .expect("staging initialized")
-                .append(part, count);
-        }
-        self.input
-            .as_mut()
-            .expect("input initialized")
-            .append(part, count);
-        self.next_sample = Some(
-            first
-                .checked_add(count as u64)
-                .ok_or(SstvError::SamplePositionOverflow)?,
-        );
-        Ok(())
-    }
-    pub(super) fn required_end(&self) -> Result<u64, SstvError> {
-        let clock = self.decode.clock.expect("clock acquired");
-        let last = self
-            .profile
-            .pixels()
-            .last()
-            .ok_or(SstvError::UnsupportedRxMode(self.mode))?;
-        let width = self.decode.image.size().width();
-        let (_, end) = self.pixel_window(clock, self.decode.raster_unit, last, width - 1)?;
-        Ok(end)
-    }
     /// Returns how many leading raster units `staged` covers under `clock`.
     ///
     /// A refit that runs faster than the current estimate places already

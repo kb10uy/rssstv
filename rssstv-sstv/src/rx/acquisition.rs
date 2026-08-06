@@ -174,33 +174,14 @@ fn acquire_inner(
         }
 
         let first_sample = sequence[0];
-        let count = sequence.len() as f64;
-        let mean_step = (sequence.len() - 1) as f64 / 2.0;
-        let mean_offset = sequence
-            .iter()
-            .map(|sample| (*sample - first_sample) as f64)
-            .sum::<f64>()
-            / count;
-        let (numerator, denominator) = sequence.iter().enumerate().fold(
-            (0.0, 0.0),
-            |(numerator, denominator), (step, sample)| {
-                let x = step as f64 - mean_step;
-                let y = (*sample - first_sample) as f64 - mean_offset;
-                (numerator + x * y, denominator + x * x)
-            },
-        );
-        let slope = numerator / denominator;
-        let intercept = mean_offset - slope * mean_step;
-        let residual_squared = sequence
+        let points: Vec<(f64, f64)> = sequence
             .iter()
             .enumerate()
-            .map(|(step, sample)| {
-                let fitted = intercept + slope * step as f64;
-                let error = (*sample - first_sample) as f64 - fitted;
-                error * error
-            })
-            .sum::<f64>()
-            / count;
+            .map(|(step, sample)| (step as f64, (*sample - first_sample) as f64))
+            .collect();
+        let Some((slope, _, residual_squared)) = super::fit::least_squares_line(&points) else {
+            continue;
+        };
         let candidate = (sequence, slope, residual_squared);
         if best.as_ref().is_none_or(|current| {
             candidate.0.len() > current.0.len()

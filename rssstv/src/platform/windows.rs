@@ -1,6 +1,10 @@
 //! Windows integration.
 
-use std::{ffi::c_void, mem, ptr};
+use std::{
+    ffi::c_void,
+    mem, ptr,
+    sync::atomic::{AtomicI64, Ordering},
+};
 
 use egui::IconData;
 use windows_sys::Win32::{
@@ -170,7 +174,11 @@ unsafe fn raise_running_instance(window_name: &str) {
         }
         let view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, mem::size_of::<i64>());
         if !view.Value.is_null() {
-            let hwnd = view.Value.cast::<i64>().read_volatile() as HWND;
+            // The mapping is shared with the running copy, which stores the
+            // handle concurrently, so the read is atomic rather than a plain
+            // load the compiler may assume unshared. The view is page-aligned,
+            // which is more than the atomic asks for.
+            let hwnd = (*view.Value.cast::<AtomicI64>()).load(Ordering::Acquire) as HWND;
             if !hwnd.is_null() && IsWindow(hwnd) != 0 {
                 if IsIconic(hwnd) != 0 {
                     ShowWindow(hwnd, SW_RESTORE);
@@ -203,7 +211,7 @@ impl Claim {
         let (Some(hwnd), false) = (main_window(cc), self.published.is_null()) else {
             return;
         };
-        unsafe { self.published.cast::<i64>().write_volatile(hwnd as i64) };
+        unsafe { (*self.published.cast::<AtomicI64>()).store(hwnd as i64, Ordering::Release) };
     }
 }
 

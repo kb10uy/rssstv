@@ -59,13 +59,13 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 const FSK_HISTORY_WAIT: Duration = Duration::from_secs(4);
 
-fn live_rx_config(mode: Mode, sample_rate_hz: u32, slant: bool) -> RxConfig {
+fn live_rx_config(mode: Mode, sample_rate_hz: u32, live_slant: bool) -> RxConfig {
     RxConfig {
         live_sync: true,
-        live_slant: slant,
+        live_slant: live_slant,
         auto_stop: true,
         sync_detector_delay: sync_detector_delay(mode),
-        staging: if slant {
+        staging: if live_slant {
             Staging::Memory {
                 max_samples: staging_limit(mode, sample_rate_hz),
             }
@@ -91,11 +91,11 @@ fn staging_limit(mode: Mode, sample_rate_hz: u32) -> usize {
     raster.saturating_add((sample_rate_hz as usize).saturating_mul(STAGING_MARGIN_SECONDS))
 }
 
-/// State of the staged slant refinement that follows a completed raster.
+/// State of the staged live_slant refinement that follows a completed raster.
 ///
 /// Startup acquisition fits the raster rate from only a few periods, so the
 /// live clock can be off by thousands of parts per million. Refitting the rate
-/// over the whole staged reception is what removes the resulting slant, and it
+/// over the whole staged reception is what removes the resulting live_slant, and it
 /// is not optional for a usable image.
 #[derive(Clone, Debug)]
 enum Refinement {
@@ -113,7 +113,7 @@ struct Session {
     decoder: Option<RxDecoder>,
     sample_rate_hz: u32,
     published_revision: Option<u64>,
-    searching: bool,
+    awaiting_signal: bool,
     /// Which modes a reception may start in without a VIS header.
     ///
     /// Held here because every demodulator the session builds has to be given
@@ -147,7 +147,7 @@ impl Session {
             decoder: None,
             sample_rate_hz,
             published_revision: None,
-            searching: true,
+            awaiting_signal: true,
             sync_start,
             vis_restart,
             refinement: Refinement::NotApplicable,
@@ -274,7 +274,7 @@ impl Session {
         self.demodulator = Demodulator::new(self.sample_rate_hz)?;
         self.demodulator.set_sync_start(self.sync_start);
         self.demodulator.set_header_restart(self.vis_restart);
-        self.searching = true;
+        self.awaiting_signal = true;
         Ok(())
     }
 
@@ -283,7 +283,7 @@ impl Session {
     /// Refinement needs trailing audio, so the search for the next signal must
     /// not restart the demodulator while it is still waiting.
     fn reception_finished(&self) -> bool {
-        !self.searching
+        !self.awaiting_signal
             && !matches!(self.refinement, Refinement::Waiting)
             && self.decoder.as_ref().is_some_and(|decoder| {
                 matches!(decoder.state(), RxState::Complete | RxState::Stopped { .. })
@@ -300,7 +300,7 @@ impl Session {
     }
 
     /// Feeds one demodulated chunk into the raster decoder.
-    fn decode(&mut self, chunk: &DemodulatedChunk, slant: bool) -> Result<(), AppError> {
+    fn decode(&mut self, chunk: &DemodulatedChunk, live_slant: bool) -> Result<(), AppError> {
         if let Some(mode) = chunk.detected_mode() {
             // A header during a reception is the station sending again, so the
             // picture it interrupts is closed out before the decoder is handed
@@ -313,11 +313,11 @@ impl Session {
             self.decoder = Some(RxDecoder::with_config(
                 mode,
                 self.sample_rate_hz,
-                live_rx_config(mode, self.sample_rate_hz, slant),
+                live_rx_config(mode, self.sample_rate_hz, live_slant),
             )?);
             self.published_revision = None;
-            self.searching = false;
-            self.refinement = if slant {
+            self.awaiting_signal = false;
+            self.refinement = if live_slant {
                 Refinement::Waiting
             } else {
                 Refinement::NotApplicable
@@ -431,7 +431,7 @@ pub(super) fn run(
     mailbox: &Mailbox,
     stop: &AtomicBool,
     mute: &AtomicBool,
-    slant: &AtomicBool,
+    live_slant: &AtomicBool,
     vis_restart: &AtomicBool,
     sync_start: &Mutex<SyncStart>,
 ) {
@@ -520,7 +520,7 @@ pub(super) fn run(
 
         match session.demodulator.process(samples) {
             Ok(chunk) => {
-                if let Err(reason) = session.decode(&chunk, slant.load(Ordering::Relaxed)) {
+                if let Err(reason) = session.decode(&chunk, live_slant.load(Ordering::Relaxed)) {
                     error = Some(reason);
                     let _ = session.reset();
                 }
@@ -656,8 +656,8 @@ mod tests {
     #[rstest]
     #[case(false)]
     #[case(true)]
-    fn live_receptions_enable_automatic_stop(#[case] slant: bool) {
-        assert!(live_rx_config(Mode::Robot36, 8_000, slant).auto_stop);
+    fn live_receptions_enable_automatic_stop(#[case] live_slant: bool) {
+        assert!(live_rx_config(Mode::Robot36, 8_000, live_slant).auto_stop);
     }
 
     /// Refinement collects trailing audio after the picture is complete, so the

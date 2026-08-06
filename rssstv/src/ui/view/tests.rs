@@ -66,7 +66,7 @@ fn the_variable_dialog_renders_a_row_for_every_name() {
         ("rig".to_owned(), "FT-991A".to_owned()),
     ]);
     app.open_custom_variables();
-    assert_eq!(app.custom_draft.len(), 2);
+    assert_eq!(app.variables_draft.len(), 2);
     let title = app.i18n.text("custom-title");
 
     let harness = render(&mut app);

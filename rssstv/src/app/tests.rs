@@ -636,7 +636,7 @@ fn dsp_toggles_flip_one_flag(#[case] dsp: Dsp, #[case] expected: bool) {
     app.toggle_dsp(dsp);
     assert_eq!(app.dsp.get(dsp), expected);
     if dsp == Dsp::Slant {
-        assert_eq!(app.audio.slant(), expected);
+        assert_eq!(app.audio.live_slant(), expected);
     }
 }
 
@@ -647,12 +647,12 @@ fn only_a_composition_that_shows_the_time_is_made_again() {
     let mut app = App::headless();
     let stale = current_minute() - 1;
 
-    app.composition.timed = false;
+    app.composition.shows_clock = false;
     app.composition.minute = stale;
     app.refresh_timed_composition();
     assert_eq!(app.composition.minute, stale);
 
-    app.composition.timed = true;
+    app.composition.shows_clock = true;
     app.refresh_timed_composition();
     assert_eq!(app.composition.minute, current_minute());
 }
@@ -662,7 +662,7 @@ fn only_a_composition_that_shows_the_time_is_made_again() {
 #[test]
 fn an_unusable_custom_variable_name_is_kept_out_of_the_composition() {
     let mut app = App::headless();
-    app.custom_draft = vec![
+    app.variables_draft = vec![
         ("club".to_owned(), "JARL".to_owned()),
         ("2m rig".to_owned(), "FT-991A".to_owned()),
     ];
@@ -673,14 +673,14 @@ fn an_unusable_custom_variable_name_is_kept_out_of_the_composition() {
         app.custom_variables,
         BTreeMap::from([("club".to_owned(), "JARL".to_owned())])
     );
-    assert_eq!(app.custom_draft.len(), 2);
+    assert_eq!(app.variables_draft.len(), 2);
 }
 
 #[test]
 fn slant_is_enabled_by_default_in_the_ui_and_worker_settings() {
     let app = App::headless();
-    assert!(app.dsp.slant);
-    assert!(app.audio.slant());
+    assert!(app.dsp.live_slant);
+    assert!(app.audio.live_slant());
 }
 
 /// The setting reaches the receive worker rather than only the menu mark,
@@ -763,7 +763,7 @@ fn leaving_a_qso_field_trims_it() {
 #[test]
 fn custom_variables_are_kept_exactly_as_they_were_entered() {
     let mut app = App::headless();
-    app.custom_draft = vec![("club".to_owned(), "  JARL  ".to_owned())];
+    app.variables_draft = vec![("club".to_owned(), "  JARL  ".to_owned())];
 
     app.commit_custom_variables();
 
@@ -935,7 +935,7 @@ fn changed_settings_are_written_and_restored_on_the_next_start() {
     assert_eq!(next.i18n.locale(), Locale::Ja);
     assert_eq!(next.rx_mode, Mode::Robot36);
     assert_eq!(next.tx_mode, Mode::Martin1);
-    assert!(next.dsp.lms);
+    assert!(next.dsp.lms_filter);
     assert!(!next.auto_mode);
     assert!(!next.auto_history);
     assert_eq!(

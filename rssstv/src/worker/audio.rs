@@ -35,7 +35,7 @@ pub struct AudioState {
     /// previous one grown or shrunk.
     session: u64,
     muted_for_transmit: bool,
-    slant: bool,
+    live_slant: bool,
     vis_restart: bool,
     sync_start: SyncStart,
     /// Handed to every worker opened here, so a decoded row reaches the canvas
@@ -52,7 +52,7 @@ impl AudioState {
     pub fn new(
         preferred: Option<&str>,
         preferred_output: Option<&str>,
-        slant: bool,
+        live_slant: bool,
         vis_restart: bool,
         waker: Waker,
     ) -> Self {
@@ -99,7 +99,7 @@ impl AudioState {
             snapshot: RxSnapshot::default(),
             session: 0,
             muted_for_transmit: false,
-            slant,
+            live_slant,
             vis_restart,
             sync_start: SyncStart::default(),
             waker,
@@ -128,7 +128,7 @@ impl AudioState {
             snapshot: RxSnapshot::default(),
             session: 0,
             muted_for_transmit: false,
-            slant: true,
+            live_slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
             waker: Waker::default(),
@@ -178,7 +178,7 @@ impl AudioState {
             Ok((capture, reader)) => {
                 let worker = RxWorker::spawn(
                     reader,
-                    self.slant,
+                    self.live_slant,
                     self.vis_restart,
                     self.sync_start,
                     self.waker.clone(),
@@ -235,10 +235,10 @@ impl AudioState {
         self.muted_for_transmit
     }
 
-    pub fn set_slant(&mut self, enabled: bool) {
-        self.slant = enabled;
+    pub fn set_live_slant(&mut self, enabled: bool) {
+        self.live_slant = enabled;
         if let Some(worker) = self.worker.as_ref() {
-            worker.set_slant(enabled);
+            worker.set_live_slant(enabled);
         }
     }
 
@@ -273,8 +273,8 @@ impl AudioState {
     }
 
     #[cfg(test)]
-    pub const fn slant(&self) -> bool {
-        self.slant
+    pub const fn live_slant(&self) -> bool {
+        self.live_slant
     }
 
     #[cfg(test)]

@@ -96,16 +96,16 @@ impl Dsp {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DspFlags {
     pub afc: bool,
-    pub lms: bool,
-    pub slant: bool,
+    pub lms_filter: bool,
+    pub live_slant: bool,
 }
 
 impl Default for DspFlags {
     fn default() -> Self {
         Self {
             afc: true,
-            lms: false,
-            slant: true,
+            lms_filter: false,
+            live_slant: true,
         }
     }
 }
@@ -114,16 +114,16 @@ impl DspFlags {
     pub const fn get(self, dsp: Dsp) -> bool {
         match dsp {
             Dsp::Afc => self.afc,
-            Dsp::Lms => self.lms,
-            Dsp::Slant => self.slant,
+            Dsp::Lms => self.lms_filter,
+            Dsp::Slant => self.live_slant,
         }
     }
 
     const fn toggle(&mut self, dsp: Dsp) {
         match dsp {
             Dsp::Afc => self.afc = !self.afc,
-            Dsp::Lms => self.lms = !self.lms,
-            Dsp::Slant => self.slant = !self.slant,
+            Dsp::Lms => self.lms_filter = !self.lms_filter,
+            Dsp::Slant => self.live_slant = !self.live_slant,
         }
     }
 }
@@ -231,13 +231,13 @@ pub struct App {
     /// The operator's own template variables, offered as `${custom.<name>}`.
     pub custom_variables: BTreeMap<String, String>,
     /// Set while the template variable dialog is open.
-    pub custom_open: bool,
+    pub variables_dialog_open: bool,
     /// The rows that dialog is editing.
     ///
     /// Kept as a list rather than edited in the map directly, because a map
     /// reorders itself the moment a name is typed into and the row under the
     /// cursor would move out from under it.
-    pub custom_draft: Vec<(String, String)>,
+    pub variables_draft: Vec<(String, String)>,
     pub library: Library,
     /// The library scan whose result has not arrived yet, if one is running.
     library_scan: Option<mpsc::Receiver<LibraryScan>>,
@@ -391,7 +391,7 @@ struct Composition {
     ///
     /// A frame that prints the clock is only true for the minute it was made
     /// in, so the pair together say when it has to be made again.
-    timed: bool,
+    shows_clock: bool,
     minute: i64,
     /// Whether the composed frame prints what the rig is tuned to, and what it
     /// was tuned to when it was composed.
@@ -399,7 +399,7 @@ struct Composition {
     /// The pair says the same thing about the rig as the two above say about
     /// the clock: a frame showing a frequency is only true while the rig is
     /// still on it.
-    tuned: bool,
+    shows_frequency: bool,
     reading: Option<Reading>,
 }
 
@@ -410,7 +410,7 @@ impl App {
         let audio = AudioState::new(
             settings.input_device.as_deref(),
             settings.output_device.as_deref(),
-            settings.dsp.slant,
+            settings.dsp.live_slant,
             settings.vis_restart,
             waker,
         );
@@ -482,8 +482,8 @@ impl App {
                 open: false,
             },
             custom_variables: settings.custom_variables.clone(),
-            custom_open: false,
-            custom_draft: Vec::new(),
+            variables_dialog_open: false,
+            variables_draft: Vec::new(),
             library: Library {
                 templates: Vec::new(),
                 template: None,
@@ -516,9 +516,9 @@ impl App {
                 frame: None,
                 deferred: false,
                 pending: false,
-                timed: false,
+                shows_clock: false,
                 minute: current_minute(),
-                tuned: false,
+                shows_frequency: false,
                 reading: None,
             },
             playback: None,
@@ -679,7 +679,7 @@ impl App {
     pub fn toggle_dsp(&mut self, dsp: Dsp) {
         self.dsp.toggle(dsp);
         if dsp == Dsp::Slant {
-            self.audio.set_slant(self.dsp.slant);
+            self.audio.set_live_slant(self.dsp.live_slant);
         }
     }
 
@@ -769,17 +769,17 @@ impl App {
 
     /// Puts the operator's own variables in front of them for editing.
     pub fn open_custom_variables(&mut self) {
-        self.custom_draft = self
+        self.variables_draft = self
             .custom_variables
             .iter()
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
-        self.custom_open = true;
+        self.variables_dialog_open = true;
     }
 
     /// Adds a row for a variable that has not been named yet.
     pub fn add_custom_variable(&mut self) {
-        self.custom_draft.push((String::new(), String::new()));
+        self.variables_draft.push((String::new(), String::new()));
     }
 
     /// Takes the edited rows as the variables templates may read.
@@ -790,7 +790,7 @@ impl App {
     /// never asked for it.
     pub fn commit_custom_variables(&mut self) {
         let variables: BTreeMap<_, _> = self
-            .custom_draft
+            .variables_draft
             .iter()
             .filter(|(name, _)| valid_variable_name(name))
             .map(|(name, value)| (name.clone(), value.clone()))
@@ -969,7 +969,7 @@ impl App {
         }
         // A composed frame that prints the clock stops being what a
         // transmission should send as the minute turns.
-        if self.composition.timed {
+        if self.composition.shows_clock {
             at_most(Duration::from_secs(
                 60 - Timestamp::now().as_second().rem_euclid(60) as u64,
             ));
@@ -1392,9 +1392,9 @@ impl App {
         // Recorded before anything can turn back, so a composition that is put
         // off is not also asked for again on every frame that follows.
         self.composition.minute = current_minute();
-        self.composition.timed = false;
+        self.composition.shows_clock = false;
         self.composition.reading = self.rig_snapshot.reading.clone();
-        self.composition.tuned = false;
+        self.composition.shows_frequency = false;
         // A transmission is sending the frame currently on the tab. Replacing
         // it would show something that is not going out, so the change waits
         // until the transmission is over.
@@ -1445,7 +1445,7 @@ impl App {
     /// moving on is exactly when the frame on the transmit tab stops being
     /// what a transmission should send.
     fn refresh_timed_composition(&mut self) {
-        if self.composition.timed && current_minute() != self.composition.minute {
+        if self.composition.shows_clock && current_minute() != self.composition.minute {
             self.request_composition();
         }
     }
@@ -1456,7 +1456,8 @@ impl App {
     /// frequency has no reason to be composed again every time the operator
     /// turns the dial.
     fn refresh_tuned_composition(&mut self) {
-        if self.composition.tuned && self.rig_snapshot.reading != self.composition.reading {
+        if self.composition.shows_frequency && self.rig_snapshot.reading != self.composition.reading
+        {
             self.request_composition();
         }
     }
@@ -1466,8 +1467,8 @@ impl App {
             && result.generation == self.composition.generation
         {
             self.composition.pending = false;
-            self.composition.timed = result.uses_timestamps;
-            self.composition.tuned = result.uses_radio;
+            self.composition.shows_clock = result.uses_timestamps;
+            self.composition.shows_frequency = result.uses_radio;
             match result.frame {
                 Ok(frame) => {
                     self.tx_raster.set_image(&frame);

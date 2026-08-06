@@ -59,7 +59,7 @@ pub(super) fn station_dialog(ui: &mut Ui, app: &mut App) {
 /// knows; these are the ones only the operator does, so this is the one place
 /// where both the name and the value are typed.
 pub(super) fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
-    if !app.custom_open {
+    if !app.variables_dialog_open {
         return;
     }
 
@@ -80,7 +80,7 @@ pub(super) fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
         let gaps = ui.spacing().item_spacing.x * 2.0;
         let name_width = (ui.available_width() - remove_width - gaps) * 0.4;
         let value_width = ui.available_width() - remove_width - gaps - name_width;
-        for (index, (name, value)) in app.custom_draft.iter_mut().enumerate() {
+        for (index, (name, value)) in app.variables_draft.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 let usable = valid_variable_name(name);
                 let field = egui::TextEdit::singleline(name)
@@ -113,7 +113,7 @@ pub(super) fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
     });
 
     if let Some(index) = removed {
-        app.custom_draft.remove(index);
+        app.variables_draft.remove(index);
         changed = true;
     }
     let closing = done || response.should_close();
@@ -121,7 +121,7 @@ pub(super) fn custom_variable_dialog(ui: &mut Ui, app: &mut App) {
         app.commit_custom_variables();
     }
     if closing {
-        app.custom_open = false;
+        app.variables_dialog_open = false;
     }
 }
 

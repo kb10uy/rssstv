@@ -265,9 +265,10 @@ impl Config {
                 .unwrap_or(defaults.auto_mode),
             dsp: DspFlags {
                 afc: boolean(&self.document, Some("receive"), "afc").unwrap_or(defaults.dsp.afc),
-                lms: boolean(&self.document, Some("receive"), "lms").unwrap_or(defaults.dsp.lms),
-                slant: boolean(&self.document, Some("receive"), "slant")
-                    .unwrap_or(defaults.dsp.slant),
+                lms_filter: boolean(&self.document, Some("receive"), "lms")
+                    .unwrap_or(defaults.dsp.lms_filter),
+                live_slant: boolean(&self.document, Some("receive"), "slant")
+                    .unwrap_or(defaults.dsp.live_slant),
             },
             vis_restart: boolean(&self.document, Some("receive"), "vis-restart")
                 .unwrap_or(defaults.vis_restart),
@@ -377,13 +378,13 @@ impl Config {
             document,
             Some("receive"),
             "lms",
-            Some(value(settings.dsp.lms)),
+            Some(value(settings.dsp.lms_filter)),
         );
         set(
             document,
             Some("receive"),
             "slant",
-            Some(value(settings.dsp.slant)),
+            Some(value(settings.dsp.live_slant)),
         );
         set(
             document,
@@ -694,8 +695,8 @@ mod tests {
             tx_volume: 0.5,
             dsp: DspFlags {
                 afc: false,
-                lms: true,
-                slant: false,
+                lms_filter: true,
+                live_slant: false,
             },
             auto_history: false,
             history_format: HistoryFormat::Jpeg,

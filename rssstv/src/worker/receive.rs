@@ -130,9 +130,9 @@ pub struct RxSnapshot {
 struct Visible {
     mode: Option<Mode>,
     progress: RxProgress,
-    frame: bool,
-    history: bool,
-    error: bool,
+    has_frame: bool,
+    has_history: bool,
+    has_error: bool,
     callsigns: usize,
     numbers: usize,
     dropped_samples: u64,
@@ -144,9 +144,9 @@ impl Visible {
         Self {
             mode: snapshot.mode,
             progress: snapshot.progress,
-            frame: snapshot.frame.is_some(),
-            history: snapshot.history.is_some(),
-            error: snapshot.error.is_some(),
+            has_frame: snapshot.frame.is_some(),
+            has_history: snapshot.history.is_some(),
+            has_error: snapshot.error.is_some(),
             callsigns: snapshot.callsigns.len(),
             numbers: snapshot.numbers.len(),
             dropped_samples: snapshot.dropped_samples,
@@ -231,7 +231,7 @@ pub struct RxWorker {
     muted_for_transmit: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
-    slant: Arc<AtomicBool>,
+    live_slant: Arc<AtomicBool>,
     vis_restart: Arc<AtomicBool>,
     sync_start: Arc<Mutex<SyncStart>>,
 }
@@ -240,21 +240,21 @@ impl RxWorker {
     /// Starts decoding everything `reader` produces.
     pub fn spawn(
         reader: CaptureReader,
-        slant: bool,
+        live_slant: bool,
         vis_restart: bool,
         sync_start: SyncStart,
         waker: Waker,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let muted_for_transmit = Arc::new(AtomicBool::new(false));
-        let slant = Arc::new(AtomicBool::new(slant));
+        let live_slant = Arc::new(AtomicBool::new(live_slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::new(waker));
         let join = {
             let stop = Arc::clone(&stop);
             let muted_for_transmit = Arc::clone(&muted_for_transmit);
-            let slant = Arc::clone(&slant);
+            let live_slant = Arc::clone(&live_slant);
             let vis_restart = Arc::clone(&vis_restart);
             let sync_start = Arc::clone(&sync_start);
             let mailbox = Arc::clone(&mailbox);
@@ -266,7 +266,7 @@ impl RxWorker {
                         &mailbox,
                         &stop,
                         &muted_for_transmit,
-                        &slant,
+                        &live_slant,
                         &vis_restart,
                         &sync_start,
                     );
@@ -287,7 +287,7 @@ impl RxWorker {
             muted_for_transmit,
             join,
             mailbox,
-            slant,
+            live_slant,
             vis_restart,
             sync_start,
         }
@@ -302,8 +302,8 @@ impl RxWorker {
         self.muted_for_transmit.store(muted, Ordering::Relaxed);
     }
 
-    pub fn set_slant(&self, enabled: bool) {
-        self.slant.store(enabled, Ordering::Relaxed);
+    pub fn set_live_slant(&self, enabled: bool) {
+        self.live_slant.store(enabled, Ordering::Relaxed);
     }
 
     pub fn set_vis_restart(&self, enabled: bool) {
@@ -510,7 +510,7 @@ mod pipeline_tests {
     const RATE: u32 = 8_000;
 
     /// Smooth ramps keep chroma subsampling out of the measurement while still
-    /// making a mistimed raster obvious: any slant shears the gradient.
+    /// making a mistimed raster obvious: any live_slant shears the gradient.
     fn source_image(mode: Mode) -> RgbImage {
         let width = mode.spec().width() as usize;
         let height = mode.spec().height() as usize;
@@ -530,7 +530,7 @@ mod pipeline_tests {
     }
 
     /// Renders one transmission whose clock runs `offset_ppm` away from the
-    /// receiver's, which is what puts slant into a real reception.
+    /// receiver's, which is what puts live_slant into a real reception.
     fn transmission(mode: Mode, image: RgbImage, offset_ppm: f64) -> Vec<f32> {
         let transmit_rate = f64::from(RATE) * (1.0 + offset_ppm / 1.0e6);
         let mut pcm = Vec::new();
@@ -784,7 +784,7 @@ mod pipeline_tests {
     /// the worker keeps staging its tail.
     ///
     /// The mistimed reception is judged against a matched reception rather
-    /// than an absolute threshold, so the assertion measures slant correction
+    /// than an absolute threshold, so the assertion measures live_slant correction
     /// and not codec fidelity.
     #[test]
     fn a_mistimed_transmission_decodes_like_a_matched_one() {

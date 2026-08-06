@@ -23,7 +23,7 @@ impl Vco {
         control_gain_hz: f64,
     ) -> Result<Self, DspError> {
         validate_sample_rate(sample_rate_hz)?;
-        validate_frequency(free_frequency_hz, sample_rate_hz)?;
+        validate_free_frequency(sample_rate_hz, free_frequency_hz)?;
         if !control_gain_hz.is_finite() {
             return Err(DspError::InvalidFrequency);
         }
@@ -57,7 +57,7 @@ impl Vco {
 
     /// Changes the free-running frequency without resetting phase.
     pub fn set_free_frequency(&mut self, frequency_hz: f64) -> Result<(), DspError> {
-        validate_frequency(frequency_hz, self.sample_rate_hz)?;
+        validate_free_frequency(self.sample_rate_hz, frequency_hz)?;
         self.free_frequency_hz = frequency_hz;
         Ok(())
     }
@@ -111,7 +111,7 @@ fn validate_sample_rate(sample_rate_hz: f64) -> Result<(), DspError> {
     }
 }
 
-fn validate_frequency(frequency_hz: f64, sample_rate_hz: f64) -> Result<(), DspError> {
+fn validate_free_frequency(sample_rate_hz: f64, frequency_hz: f64) -> Result<(), DspError> {
     if !frequency_hz.is_finite() || frequency_hz < 0.0 || frequency_hz >= sample_rate_hz * 0.5 {
         Err(DspError::InvalidFrequency)
     } else {

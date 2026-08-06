@@ -1,6 +1,6 @@
 use crate::{
     DspError,
-    filter::{IirFilter, IirLowPassDesign, IirResponse},
+    filter::{Iir, IirLowPassDesign, IirResponse},
     oscillator::Vco,
 };
 
@@ -69,8 +69,8 @@ impl PllDesign {
 #[derive(Clone, Debug)]
 pub struct Pll {
     vco: Vco,
-    loop_filter: IirFilter,
-    output_filter: IirFilter,
+    loop_filter: Iir,
+    output_filter: Iir,
     free_frequency_hz: f64,
     shift_hz: f64,
     phase_error: f64,
@@ -92,7 +92,7 @@ impl Pll {
         let free_frequency_hz = (design.lower_frequency_hz + design.upper_frequency_hz) * 0.5;
         let shift_hz = design.upper_frequency_hz - design.lower_frequency_hz;
         let low_pass = |order, cutoff_hz| {
-            IirFilter::from_low_pass(IirLowPassDesign {
+            Iir::from_low_pass(IirLowPassDesign {
                 order,
                 sample_rate_hz: design.sample_rate_hz,
                 cutoff_hz,

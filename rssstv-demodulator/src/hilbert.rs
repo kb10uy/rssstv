@@ -1,7 +1,7 @@
 use std::f64::consts::{PI, TAU};
 
 use rssstv_dsp::{
-    filter::{IirFilter, IirLowPassDesign, IirResponse},
+    filter::{Iir, IirLowPassDesign, IirResponse},
     transform::HilbertTransformer,
 };
 
@@ -12,7 +12,7 @@ pub(crate) struct HilbertDiscriminator {
     phase_history_len: usize,
     next_phase: usize,
     phase_lag: usize,
-    output_filter: IirFilter,
+    output_filter: Iir,
     held_frequency: f64,
 }
 
@@ -27,13 +27,13 @@ impl HilbertDiscriminator {
         };
         let upper_frequency_hz = sample_rate_hz * 0.5 - 100.0;
         Ok(Self {
-            transformer: HilbertTransformer::new(order, sample_rate_hz, 100.0, upper_frequency_hz)?,
+            transformer: HilbertTransformer::new(sample_rate_hz, order, 100.0, upper_frequency_hz)?,
             sample_rate_hz,
             phase_history: [0.0; 4],
             phase_history_len: 0,
             next_phase: 0,
             phase_lag,
-            output_filter: IirFilter::from_low_pass(IirLowPassDesign {
+            output_filter: Iir::from_low_pass(IirLowPassDesign {
                 order: 3,
                 sample_rate_hz,
                 cutoff_hz: 1_800.0_f64.min(sample_rate_hz * 0.45),

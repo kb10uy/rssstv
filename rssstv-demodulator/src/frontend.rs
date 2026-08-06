@@ -1,6 +1,6 @@
 use core::num::NonZeroU32;
 use rssstv_dsp::{
-    filter::{Fir, FirDesign, FirKind, IirFilter, IirLowPassDesign, IirResponse, Resonator},
+    filter::{Fir, FirDesign, FirKind, Iir, IirLowPassDesign, IirResponse, Resonator},
     frequency::ZeroCrossingFrequency,
 };
 
@@ -175,7 +175,7 @@ impl FrontEnd {
 
 struct ToneDetector {
     resonator: Resonator,
-    envelope: IirFilter,
+    envelope: Iir,
 }
 
 impl ToneDetector {
@@ -185,8 +185,8 @@ impl ToneDetector {
         sample_rate_hz: f64,
     ) -> Result<Self, rssstv_dsp::DspError> {
         Ok(Self {
-            resonator: Resonator::new(frequency_hz, sample_rate_hz, bandwidth_hz)?,
-            envelope: IirFilter::from_low_pass(IirLowPassDesign {
+            resonator: Resonator::new(sample_rate_hz, frequency_hz, bandwidth_hz)?,
+            envelope: Iir::from_low_pass(IirLowPassDesign {
                 order: 2,
                 sample_rate_hz,
                 cutoff_hz: 50.0,

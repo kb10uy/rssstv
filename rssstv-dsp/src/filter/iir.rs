@@ -132,12 +132,12 @@ struct SosState {
 
 #[derive(Clone, Debug)]
 /// An owned cascade of transposed direct-form-II sections.
-pub struct IirFilter {
+pub struct Iir {
     coefficients: Vec<SosCoefficients>,
     states: Vec<SosState>,
 }
 
-impl IirFilter {
+impl Iir {
     /// Creates a filter from one or more finite SOS coefficient sets.
     pub fn new(coefficients: Vec<SosCoefficients>) -> Result<Self, DspError> {
         if coefficients.is_empty() {
@@ -231,7 +231,7 @@ mod tests {
     #[case(3)]
     #[case(6)]
     fn low_pass_converges_to_unity_for_dc(#[case] order: usize) {
-        let mut filter = IirFilter::from_low_pass(IirLowPassDesign {
+        let mut filter = Iir::from_low_pass(IirLowPassDesign {
             order,
             sample_rate_hz: 11_025.0,
             cutoff_hz: 900.0,
@@ -253,7 +253,7 @@ mod tests {
             cutoff_hz: 1_800.0,
             response: IirResponse::Butterworth,
         };
-        let mut filter = IirFilter::from_low_pass(design).unwrap();
+        let mut filter = Iir::from_low_pass(design).unwrap();
         let expected = filter.process_sample(1.0);
         filter.process_sample(0.5);
         filter.reset();
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn chebyshev_even_order_applies_requested_dc_gain() {
         let ripple_db = 0.5;
-        let mut filter = IirFilter::from_low_pass(IirLowPassDesign {
+        let mut filter = Iir::from_low_pass(IirLowPassDesign {
             order: 4,
             sample_rate_hz: 11_025.0,
             cutoff_hz: 900.0,
@@ -286,8 +286,8 @@ mod tests {
             cutoff_hz: 50.0,
             response: IirResponse::Butterworth,
         };
-        let mut block_filter = IirFilter::from_low_pass(design).unwrap();
-        let mut sample_filter = IirFilter::from_low_pass(design).unwrap();
+        let mut block_filter = Iir::from_low_pass(design).unwrap();
+        let mut sample_filter = Iir::from_low_pass(design).unwrap();
         let mut block = [1.0, -1.0, 0.5, 0.25];
         let expected = block.map(|sample| sample_filter.process_sample(sample));
         block_filter.process_in_place(&mut block);
@@ -304,14 +304,14 @@ mod tests {
             a2: 0.0,
         };
         assert_eq!(
-            IirFilter::new(alloc::vec![section]).err(),
+            Iir::new(alloc::vec![section]).err(),
             Some(DspError::InvalidCoefficient)
         );
     }
 
     #[test]
     fn normal_f64_values_are_not_flushed_as_denormals() {
-        let mut filter = IirFilter::new(alloc::vec![SosCoefficients {
+        let mut filter = Iir::new(alloc::vec![SosCoefficients {
             b0: 0.0,
             b1: 1.0e-100,
             b2: 0.0,

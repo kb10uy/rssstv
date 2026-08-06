@@ -25,8 +25,8 @@ pub struct HilbertTransformer {
 impl HilbertTransformer {
     /// Creates a transformer for the given passband and sampling frequency.
     pub fn new(
-        order: usize,
         sample_rate_hz: f64,
+        order: usize,
         lower_frequency_hz: f64,
         upper_frequency_hz: f64,
     ) -> Result<Self, DspError> {
@@ -126,7 +126,7 @@ mod tests {
     fn hilbert_transformer_produces_quadrature_for_a_passband_tone() {
         let sample_rate_hz = 8_000.0;
         let frequency_hz = 1_500.0;
-        let mut transformer = HilbertTransformer::new(64, sample_rate_hz, 500.0, 3_000.0).unwrap();
+        let mut transformer = HilbertTransformer::new(sample_rate_hz, 64, 500.0, 3_000.0).unwrap();
         let mut in_phase_power = 0.0;
         let mut quadrature_power = 0.0;
         let mut cross = 0.0;

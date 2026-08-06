@@ -18,8 +18,8 @@ pub struct Resonator {
 impl Resonator {
     /// Creates a resonator centered at `frequency_hz` with the requested bandwidth.
     pub fn new(
-        frequency_hz: f64,
         sample_rate_hz: f64,
+        frequency_hz: f64,
         bandwidth_hz: f64,
     ) -> Result<Self, DspError> {
         validate_parameters(frequency_hz, sample_rate_hz, bandwidth_hz)?;
@@ -132,7 +132,7 @@ mod tests {
 
     fn rms_at(resonator_frequency: f64, input_frequency: f64) -> f64 {
         let sample_rate = 11_025.0;
-        let mut resonator = Resonator::new(resonator_frequency, sample_rate, 80.0).unwrap();
+        let mut resonator = Resonator::new(sample_rate, resonator_frequency, 80.0).unwrap();
         let mut sum = 0.0;
         for index in 0..22_050 {
             let sample = libm::sin(2.0 * PI * input_frequency * index as f64 / sample_rate);
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn retuning_preserves_state_and_reset_clears_it() {
-        let mut resonator = Resonator::new(1_200.0, 11_025.0, 80.0).unwrap();
+        let mut resonator = Resonator::new(11_025.0, 1_200.0, 80.0).unwrap();
         resonator.process_sample(1.0);
         resonator.set_frequency(1_320.0).unwrap();
         assert_ne!(resonator.process_sample(0.0), 0.0);
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn bandwidth_can_be_retuned_without_clearing_state() {
-        let mut resonator = Resonator::new(1_200.0, 11_025.0, 80.0).unwrap();
+        let mut resonator = Resonator::new(11_025.0, 1_200.0, 80.0).unwrap();
         resonator.process_sample(1.0);
         resonator.set_bandwidth(120.0).unwrap();
         assert_eq!(resonator.bandwidth_hz(), 120.0);
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn normal_f64_values_are_not_flushed_as_denormals() {
-        let mut resonator = Resonator::new(1_200.0, 11_025.0, 80.0).unwrap();
+        let mut resonator = Resonator::new(11_025.0, 1_200.0, 80.0).unwrap();
         assert_ne!(resonator.process_sample(1.0e-100), 0.0);
     }
 }

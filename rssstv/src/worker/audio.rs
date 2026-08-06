@@ -8,6 +8,7 @@ use crate::{
     worker::{
         Waker,
         receive::{HistoryCandidate, RxSnapshot, RxWorker},
+        transmit::{TxSnapshot, TxWorker},
     },
 };
 
@@ -343,6 +344,92 @@ impl AudioState {
         };
         self.open(&device);
         self.is_capturing()
+    }
+}
+
+/// The playback device and worker one transmission runs on.
+///
+/// The receive half keeps its device and worker together in [`AudioState`];
+/// this is the transmit mirror, so the orchestrator holds one facade per
+/// direction instead of spreading the transmit device across its own fields.
+#[derive(Default)]
+pub struct TxState {
+    playback: Option<Playback>,
+    /// Whether the device was told to start consuming the queue.
+    started: bool,
+    worker: Option<TxWorker>,
+}
+
+impl TxState {
+    /// Adopts the stream a transmission is about to fill.
+    pub fn begin(&mut self, playback: Playback) {
+        self.playback = Some(playback);
+        self.started = false;
+    }
+
+    /// Adopts the worker filling that stream.
+    pub fn attach_worker(&mut self, worker: TxWorker) {
+        self.worker = Some(worker);
+    }
+
+    /// Reads the newest worker snapshot, if a worker is running.
+    pub fn latest(&self) -> Option<TxSnapshot> {
+        self.worker.as_ref().map(TxWorker::latest)
+    }
+
+    /// Asks the device to start consuming the queue.
+    pub fn start_playback(&mut self) -> Result<(), AppError> {
+        self.playback
+            .as_ref()
+            .ok_or(AppError::PlaybackClosed)?
+            .play()?;
+        self.started = true;
+        Ok(())
+    }
+
+    /// Whether the device has been told to start.
+    pub const fn is_started(&self) -> bool {
+        self.started
+    }
+
+    /// Whether the device ran the queue dry while a picture was going out.
+    pub fn has_underrun(&self) -> bool {
+        self.started
+            && self
+                .playback
+                .as_ref()
+                .is_some_and(|playback| playback.underrun_samples() > 0)
+    }
+
+    /// Whether the queue was closed by the worker and played to its end.
+    pub fn is_drained(&self) -> bool {
+        self.playback.as_ref().is_some_and(Playback::is_complete)
+    }
+
+    /// Returns how many samples the device has actually played.
+    pub fn played_samples(&self) -> u64 {
+        self.playback.as_ref().map_or(0, Playback::played_samples)
+    }
+
+    /// Returns the physical playback rate, if a stream is open.
+    pub fn sample_rate_hz(&self) -> Option<u32> {
+        self.playback.as_ref().map(Playback::sample_rate_hz)
+    }
+
+    /// Releases the stream and the worker, however the transmission ended.
+    pub fn stop(&mut self) {
+        self.playback = None;
+        self.worker = None;
+        self.started = false;
+    }
+}
+
+impl core::fmt::Debug for TxState {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("TxState")
+            .field("started", &self.started)
+            .finish_non_exhaustive()
     }
 }
 

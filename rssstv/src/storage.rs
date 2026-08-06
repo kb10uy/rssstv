@@ -6,5 +6,6 @@
 pub mod bands;
 pub mod config;
 pub mod history;
+pub mod library;
 pub mod log;
 pub mod paths;

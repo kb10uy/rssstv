@@ -1,14 +1,14 @@
 use std::{
     collections::BTreeMap,
     fs, io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
 use jiff::{Timestamp, Zoned};
-use rssstv_audio::{InputDevice, OutputDevice, Playback, PlaybackWriter, StreamFault};
+use rssstv_audio::{InputDevice, OutputDevice, PlaybackWriter, StreamFault};
 use rssstv_fskid::{FskId, FskNumber};
 use rssstv_sstv::{
     image::RgbImage,
@@ -30,7 +30,7 @@ use crate::{
     ui::raster::{Raster, test_pattern_image},
     worker::{
         Waker,
-        audio::AudioState,
+        audio::{AudioState, TxState},
         compose::{ComposeRequest, Composer},
         receive::{Frame, RxProgress},
         rig::{Reading, RigSnapshot, RigState, RigWorker, script},
@@ -42,6 +42,8 @@ use crate::{
 };
 
 pub use crate::storage::config::{DspFlags, FIRST_QSO_NUMBER};
+pub use crate::storage::library::Entry;
+use crate::storage::library::{LibraryScan, stock_entries, template_entries};
 
 const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
 
@@ -148,38 +150,6 @@ impl Default for Qso {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Entry {
-    pub name: String,
-    pub geometry: String,
-    path: PathBuf,
-}
-
-impl Entry {
-    /// Builds an entry that names no real file, for tests.
-    #[cfg(test)]
-    pub(crate) fn sample(name: &str, geometry: &str) -> Self {
-        Self {
-            name: name.to_owned(),
-            geometry: geometry.to_owned(),
-            path: PathBuf::from(name),
-        }
-    }
-
-    fn new(path: PathBuf, geometry: String) -> Self {
-        let name = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-            .into_owned();
-        Self {
-            name,
-            geometry,
-            path,
-        }
-    }
-}
-
 pub struct App {
     pub tab: Tab,
     pub i18n: I18n,
@@ -269,9 +239,8 @@ pub struct App {
     composition: Composition,
     /// The amplitude a running transmission reads, shared with its worker.
     tx_gain: Arc<TxGain>,
-    playback: Option<Playback>,
-    tx_worker: Option<TxWorker>,
-    playback_started: bool,
+    /// The playback device and worker of the running transmission, if one is.
+    tx: TxState,
     /// When a tune tone stops itself, set for as long as one is being sent.
     ///
     /// The deadline is what says a tone is running rather than a picture: the
@@ -503,9 +472,7 @@ impl App {
                 shows_frequency: false,
                 reading: None,
             },
-            playback: None,
-            tx_worker: None,
-            playback_started: false,
+            tx: TxState::default(),
             tune_until: None,
             rig_worker: None,
             rig_keyed: false,
@@ -1477,10 +1444,10 @@ impl App {
             return;
         }
 
-        let Some(worker) = self.tx_worker.as_ref() else {
+        let Some(snapshot) = self.tx.latest() else {
             return;
         };
-        self.tx_snapshot = worker.latest();
+        self.tx_snapshot = snapshot;
         if self.tx_snapshot.phase == TxPhase::Failed {
             self.tx_error = self.tx_snapshot.error.as_ref().map(AppError::to_string);
             self.stop_transmit_with(TxPhase::Failed);
@@ -1495,41 +1462,23 @@ impl App {
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
-        let should_start = !self.playback_started
+        let should_start = !self.tx.is_started()
             && self.rig_ready_to_send()
             && matches!(
                 self.tx_snapshot.phase,
                 TxPhase::Producing | TxPhase::Draining
             );
-        if should_start {
-            let result = self
-                .playback
-                .as_ref()
-                .ok_or(AppError::PlaybackClosed)
-                .and_then(|playback| Ok(playback.play()?))
-                .map_err(|error: AppError| error.to_string());
-            match result {
-                Ok(()) => self.playback_started = true,
-                Err(error) => {
-                    self.tx_error = Some(error);
-                    self.stop_transmit_with(TxPhase::Failed);
-                    return;
-                }
-            }
+        if should_start && let Err(error) = self.tx.start_playback() {
+            self.tx_error = Some(error.to_string());
+            self.stop_transmit_with(TxPhase::Failed);
+            return;
         }
-        if self.playback_started
-            && self
-                .playback
-                .as_ref()
-                .is_some_and(|playback| playback.underrun_samples() > 0)
-        {
+        if self.tx.has_underrun() {
             self.tx_error = Some(AppError::PlaybackUnderrun.to_string());
             self.stop_transmit_with(TxPhase::Failed);
             return;
         }
-        if self.tx_snapshot.phase == TxPhase::Draining
-            && self.playback.as_ref().is_some_and(Playback::is_complete)
-        {
+        if self.tx_snapshot.phase == TxPhase::Draining && self.tx.is_drained() {
             self.stop_transmit_with(TxPhase::Complete);
         }
     }
@@ -1633,7 +1582,7 @@ impl App {
         let Some(writer) = self.begin_transmission() else {
             return;
         };
-        self.tx_worker = Some(TxWorker::spawn(
+        self.tx.attach_worker(TxWorker::spawn(
             writer,
             self.tx_mode,
             frame,
@@ -1660,8 +1609,7 @@ impl App {
             ..TxSnapshot::default()
         };
         self.tx_error = None;
-        self.playback = Some(playback);
-        self.playback_started = false;
+        self.tx.begin(playback);
         self.tx_gain.set_travel(self.tx_volume);
         // Asked for before the audio is generated, so the lead-in the rig
         // needs runs alongside filling the queue rather than after it.
@@ -1696,7 +1644,7 @@ impl App {
             return;
         };
         self.tune_until = Some(Instant::now() + TUNE_LIMIT);
-        self.tx_worker = Some(TxWorker::spawn_tune(
+        self.tx.attach_worker(TxWorker::spawn_tune(
             writer,
             TUNE_FREQUENCY_HZ,
             Arc::clone(&self.tx_gain),
@@ -1731,9 +1679,7 @@ impl App {
     }
 
     fn stop_transmit_with(&mut self, phase: TxPhase) {
-        self.playback = None;
-        self.tx_worker = None;
-        self.playback_started = false;
+        self.tx.stop();
         self.tune_until = None;
         self.unkey_rig();
         self.tx_snapshot.phase = phase;
@@ -1758,12 +1704,13 @@ impl App {
         if !self.tx_snapshot.phase.is_active() {
             return TxProgress::Idle;
         }
-        let played = self.playback.as_ref().map_or(0, Playback::played_samples);
-        self.tx_snapshot.raster.progress_at(played)
+        self.tx_snapshot
+            .raster
+            .progress_at(self.tx.played_samples())
     }
 
     pub fn output_sample_rate_hz(&self) -> Option<u32> {
-        self.playback.as_ref().map(Playback::sample_rate_hz)
+        self.tx.sample_rate_hz()
     }
 }
 
@@ -1810,15 +1757,6 @@ fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {
         .collect()
 }
 
-fn template_entries(directory: &Path) -> io::Result<Vec<Entry>> {
-    directory_entries(directory, |path| {
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("kdl"))
-            .then(|| Entry::new(path.to_owned(), String::new()))
-    })
-}
-
 impl Drop for App {
     fn drop(&mut self) {
         // A reception may still be on its way to disk, and the interface
@@ -1827,42 +1765,6 @@ impl Drop for App {
             let _ = writer.join();
         }
     }
-}
-
-/// What a library scan brought back, adopted on the frame it arrives.
-struct LibraryScan {
-    templates: io::Result<Vec<Entry>>,
-    stocks: io::Result<Vec<Entry>>,
-}
-
-fn stock_entries(directory: &Path) -> io::Result<Vec<Entry>> {
-    directory_entries(directory, |path| {
-        image::image_dimensions(path)
-            .ok()
-            .map(|(width, height)| Entry::new(path.to_owned(), format!("{width}×{height}")))
-    })
-}
-
-fn directory_entries(
-    directory: &Path,
-    load: impl Fn(&Path) -> Option<Entry>,
-) -> io::Result<Vec<Entry>> {
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path.is_file()
-            && let Some(entry) = load(&path)
-        {
-            entries.push(entry);
-        }
-    }
-    entries.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
-            .then_with(|| left.name.cmp(&right.name))
-    });
-    Ok(entries)
 }
 
 fn index_of(entries: &[Entry], name: Option<&str>) -> Option<usize> {

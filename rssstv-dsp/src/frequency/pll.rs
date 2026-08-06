@@ -16,9 +16,6 @@ const AGC_MIN_SPAN: f64 = 1.0e-4;
 const CONTROL_LIMIT: f64 = 1.5;
 
 /// Parameters for a multiplier phase-locked frequency discriminator.
-///
-/// Defaults follow MMSSTV's ordinary image band: a 1500-2300 Hz range, a
-/// first-order 1500 Hz loop filter, and a third-order 900 Hz output filter.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PllDesign {
     /// Sampling frequency in hertz.
@@ -35,30 +32,6 @@ pub struct PllDesign {
     pub output_order: usize,
     /// Output low-pass cutoff in hertz.
     pub output_cutoff_hz: f64,
-}
-
-impl PllDesign {
-    /// Returns MMSSTV's wide-band image discriminator design.
-    pub const fn wide(sample_rate_hz: f64) -> Self {
-        Self {
-            sample_rate_hz,
-            lower_frequency_hz: 1_500.0,
-            upper_frequency_hz: 2_300.0,
-            loop_order: 1,
-            loop_cutoff_hz: 1_500.0,
-            output_order: 3,
-            output_cutoff_hz: 900.0,
-        }
-    }
-
-    /// Returns MMSSTV's narrow-band image discriminator design.
-    pub const fn narrow(sample_rate_hz: f64) -> Self {
-        Self {
-            lower_frequency_hz: 2_044.0,
-            upper_frequency_hz: 2_300.0,
-            ..Self::wide(sample_rate_hz)
-        }
-    }
 }
 
 /// A multiplier phase-locked loop used as an FM discriminator.
@@ -219,6 +192,31 @@ mod tests {
 
     const SAMPLE_RATE: f64 = 11_025.0;
 
+    /// MMSSTV's wide-band image discriminator design.
+    ///
+    /// The SSTV band is protocol knowledge, so it lives with the tests that
+    /// exercise it rather than in the primitive they exercise.
+    const fn wide(sample_rate_hz: f64) -> PllDesign {
+        PllDesign {
+            sample_rate_hz,
+            lower_frequency_hz: 1_500.0,
+            upper_frequency_hz: 2_300.0,
+            loop_order: 1,
+            loop_cutoff_hz: 1_500.0,
+            output_order: 3,
+            output_cutoff_hz: 900.0,
+        }
+    }
+
+    /// MMSSTV's narrow-band image discriminator design.
+    const fn narrow(sample_rate_hz: f64) -> PllDesign {
+        PllDesign {
+            lower_frequency_hz: 2_044.0,
+            upper_frequency_hz: 2_300.0,
+            ..wide(sample_rate_hz)
+        }
+    }
+
     fn settled_estimate(pll: &mut Pll, frequency_hz: f64, phase: f64, count: usize) -> f64 {
         let mut estimates = Vec::new();
         for index in 0..count {
@@ -236,7 +234,7 @@ mod tests {
     #[case(1_900.0)]
     #[case(2_300.0)]
     fn locks_onto_tones_across_the_image_band(#[case] frequency_hz: f64) {
-        let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+        let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
         let estimate = settled_estimate(&mut pll, frequency_hz, 0.31, 8_192);
         assert!(
             (estimate - frequency_hz).abs() < 10.0,
@@ -247,7 +245,7 @@ mod tests {
     #[test]
     fn amplitude_does_not_change_the_reported_frequency() {
         let quiet = {
-            let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+            let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
             let mut estimate = 0.0;
             for index in 0..8_192 {
                 let sample = 0.02 * libm::sin(TAU * 2_100.0 * index as f64 / SAMPLE_RATE);
@@ -255,14 +253,14 @@ mod tests {
             }
             estimate
         };
-        let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+        let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
         let loud = settled_estimate(&mut pll, 2_100.0, 0.0, 8_192);
         assert!((quiet - loud).abs() < 20.0, "quiet={quiet} loud={loud}");
     }
 
     #[test]
     fn tracks_a_frequency_step_within_one_line() {
-        let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+        let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
         let mut phase = 0.0;
         let mut estimate = 0.0;
         for index in 0..4_096 {
@@ -275,7 +273,7 @@ mod tests {
 
     #[test]
     fn reset_reproduces_the_initial_response() {
-        let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+        let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
         let expected = settled_estimate(&mut pll, 1_700.0, 0.0, 512);
         settled_estimate(&mut pll, 2_300.0, 1.0, 512);
         pll.reset();
@@ -284,14 +282,14 @@ mod tests {
 
     #[test]
     fn narrow_range_is_centered_on_the_narrow_band() {
-        let pll = Pll::new(PllDesign::narrow(SAMPLE_RATE)).unwrap();
+        let pll = Pll::new(narrow(SAMPLE_RATE)).unwrap();
         assert_eq!(pll.free_frequency_hz(), 2_172.0);
         assert_eq!(pll.shift_hz(), 256.0);
     }
 
     #[test]
     fn retuning_preserves_state_and_invalid_ranges_are_rejected() {
-        let mut pll = Pll::new(PllDesign::wide(SAMPLE_RATE)).unwrap();
+        let mut pll = Pll::new(wide(SAMPLE_RATE)).unwrap();
         settled_estimate(&mut pll, 1_900.0, 0.0, 512);
         let control = pll.control();
         pll.set_frequency_range(2_044.0, 2_300.0).unwrap();
@@ -304,10 +302,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case(PllDesign { lower_frequency_hz: 2_300.0, ..PllDesign::wide(SAMPLE_RATE) }, DspError::InvalidFrequency)]
-    #[case(PllDesign { sample_rate_hz: 0.0, ..PllDesign::wide(SAMPLE_RATE) }, DspError::InvalidSampleRate)]
-    #[case(PllDesign { loop_order: 0, ..PllDesign::wide(SAMPLE_RATE) }, DspError::InvalidOrder)]
-    #[case(PllDesign { output_cutoff_hz: SAMPLE_RATE, ..PllDesign::wide(SAMPLE_RATE) }, DspError::InvalidFrequency)]
+    #[case(PllDesign { lower_frequency_hz: 2_300.0, ..wide(SAMPLE_RATE) }, DspError::InvalidFrequency)]
+    #[case(PllDesign { sample_rate_hz: 0.0, ..wide(SAMPLE_RATE) }, DspError::InvalidSampleRate)]
+    #[case(PllDesign { loop_order: 0, ..wide(SAMPLE_RATE) }, DspError::InvalidOrder)]
+    #[case(PllDesign { output_cutoff_hz: SAMPLE_RATE, ..wide(SAMPLE_RATE) }, DspError::InvalidFrequency)]
     fn invalid_designs_are_typed(#[case] design: PllDesign, #[case] expected: DspError) {
         assert_eq!(Pll::new(design).err(), Some(expected));
     }

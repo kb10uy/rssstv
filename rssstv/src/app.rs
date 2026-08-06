@@ -41,6 +41,8 @@ use crate::{
     },
 };
 
+pub use crate::storage::config::{DspFlags, FIRST_QSO_NUMBER};
+
 const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
 
 /// How often the interface draws while it is showing something that moves.
@@ -93,23 +95,8 @@ impl Dsp {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct DspFlags {
-    pub afc: bool,
-    pub lms_filter: bool,
-    pub live_slant: bool,
-}
-
-impl Default for DspFlags {
-    fn default() -> Self {
-        Self {
-            afc: true,
-            lms_filter: false,
-            live_slant: true,
-        }
-    }
-}
-
+/// How the interface reaches each persisted flag, kept beside the panel that
+/// shows them rather than with the storage the flags live in.
 impl DspFlags {
     pub const fn get(self, dsp: Dsp) -> bool {
         match dsp {
@@ -130,11 +117,6 @@ impl DspFlags {
 
 /// The report offered before the operator has changed it.
 pub const DEFAULT_RSV: &str = "595";
-/// The serial number a fresh log starts from.
-///
-/// Three digits, which is how a serial is given whatever its value, and how
-/// the counted FSKID record carries it.
-pub const FIRST_QSO_NUMBER: &str = "001";
 /// The report the identifier's contest number is read as.
 ///
 /// Only the number travels over the air; the readability and strength in front

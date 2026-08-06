@@ -15,11 +15,31 @@ use rssstv_sstv::mode::Mode;
 use rssstv_template::valid_variable_name;
 use toml_edit::{DocumentMut, Item, Table, value};
 
-use crate::{
-    app::{DspFlags, FIRST_QSO_NUMBER},
-    i18n::Locale,
-    storage::history::HistoryFormat,
-};
+use crate::{i18n::Locale, storage::history::HistoryFormat};
+
+/// The serial number a fresh log starts from.
+///
+/// Three digits, which is how a serial is given whatever its value, and how
+/// the counted FSKID record carries it.
+pub const FIRST_QSO_NUMBER: &str = "001";
+
+/// The receive processing switches the DSP panel offers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DspFlags {
+    pub afc: bool,
+    pub lms_filter: bool,
+    pub live_slant: bool,
+}
+
+impl Default for DspFlags {
+    fn default() -> Self {
+        Self {
+            afc: true,
+            lms_filter: false,
+            live_slant: true,
+        }
+    }
+}
 
 pub const DEFAULT_RX_MODE: Mode = Mode::Pd120;
 pub const DEFAULT_TX_MODE: Mode = Mode::Scottie2;

@@ -982,8 +982,12 @@ impl App {
         soonest
     }
 
-    /// Adopts anything the receive worker produced since the last frame.
-    pub fn poll_audio(&mut self) {
+    /// Adopts anything any worker produced since the last frame.
+    ///
+    /// The receive snapshot, the finished history write, the library scan,
+    /// the rig, the transmit state machine, and the composition are all read
+    /// by polling, and this is the once-per-frame pump that reads them.
+    pub fn poll_workers(&mut self) {
         self.poll_device_fault();
         if let Some(frame) = self.audio.poll() {
             self.rx_raster.set_frame(&frame);

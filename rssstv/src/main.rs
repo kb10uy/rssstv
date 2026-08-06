@@ -236,7 +236,7 @@ impl eframe::App for Interface {
         if !self.fitted {
             self.fitted = fit_to_monitor(ui.ctx());
         }
-        self.app.poll_audio();
+        self.app.poll_workers();
 
         // egui handles Ctrl+Plus/Minus itself, so the factor it holds is
         // adopted before the menu can change it. Whichever route the operator

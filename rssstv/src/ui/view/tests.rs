@@ -344,7 +344,7 @@ fn the_receive_tab_reports_that_reception_is_muted() {
     assert_eq!(state(&app), waiting);
 
     app.tx_snapshot.phase = TxPhase::Producing;
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(state(&app), muted);
     let harness = render(&mut app);

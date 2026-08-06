@@ -114,7 +114,7 @@ fn automatic_history_follows_its_setting(#[case] enabled: bool, #[case] expected
         ..RxSnapshot::default()
     });
 
-    app.poll_audio();
+    app.poll_workers();
     app.wait_for_history_writers();
 
     assert_eq!(fs::read_dir(received).unwrap().count(), expected_files);
@@ -147,7 +147,7 @@ fn a_kept_reception_becomes_the_received_image(#[case] saving: bool) {
         ..RxSnapshot::default()
     });
 
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.composition.received_image.size().width(), 2);
     assert_eq!(app.composition.received_image.size().height(), 1);
@@ -164,7 +164,7 @@ fn a_reception_without_a_candidate_leaves_the_received_image_alone() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(decoding(10, 100));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(
         *app.composition.received_image,
@@ -177,7 +177,7 @@ fn a_decoded_identifier_fills_the_qso_contact_field() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(identified(&["JA1ABC"]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.call, "JA1ABC");
 }
@@ -189,9 +189,9 @@ fn an_unchanged_identifier_list_leaves_the_contact_field_alone() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(identified(&["JA1ABC"]));
-    app.poll_audio();
+    app.poll_workers();
     app.qso.call = "JA1XYZ".to_owned();
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.call, "JA1XYZ");
 }
@@ -203,10 +203,10 @@ fn a_newly_decoded_identifier_replaces_the_contact_field() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(identified(&["JA1ABC"]));
-    app.poll_audio();
+    app.poll_workers();
     app.qso.call = "TYPED".to_owned();
     app.audio.set_snapshot(identified(&["JA1ABC", "JH1XYZ"]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.call, "JH1XYZ");
 }
@@ -218,11 +218,11 @@ fn an_identifier_after_a_restart_is_adopted_again() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(identified(&["JA1ABC", "JH1XYZ"]));
-    app.poll_audio();
+    app.poll_workers();
     app.audio.set_snapshot(RxSnapshot::default());
-    app.poll_audio();
+    app.poll_workers();
     app.audio.set_snapshot(identified(&["JA1ABC"]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.call, "JA1ABC");
 }
@@ -235,16 +235,16 @@ fn an_identifier_after_a_restart_is_adopted_again() {
 fn sync_start_scope_follows_automatic_mode_detection() {
     let mut app = App::headless();
     app.auto_mode = true;
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.audio.sync_start(), SyncStart::Any);
 
     app.auto_mode = false;
     app.select_rx_mode(Mode::Scottie1);
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.audio.sync_start(), SyncStart::Only(Mode::Scottie1));
 
     app.select_rx_mode(Mode::Pd120);
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.audio.sync_start(), SyncStart::Only(Mode::Pd120));
 }
 
@@ -256,7 +256,7 @@ fn a_blank_identifier_does_not_reach_the_contact_field() {
     app.qso.call = "JA1ABC".to_owned();
 
     app.audio.set_snapshot(identified(&["   "]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.call, "JA1ABC");
 }
@@ -414,11 +414,11 @@ fn a_reception_asks_the_platform_to_stay_awake_until_it_ends() {
     let mut app = App::headless_on(Box::new(recorder.clone()));
 
     app.audio.set_snapshot(decoding(40, 100));
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.activity(), Activity::Receiving);
 
     app.audio.set_snapshot(RxSnapshot::default());
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.activity(), Activity::Idle);
     assert_eq!(
         recorder.0.take(),
@@ -435,9 +435,9 @@ fn an_unchanged_activity_is_not_reported_again() {
     let mut app = App::headless_on(Box::new(recorder.clone()));
 
     app.audio.set_snapshot(decoding(10, 100));
-    app.poll_audio();
+    app.poll_workers();
     app.audio.set_snapshot(decoding(20, 100));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(recorder.0.take(), vec![Activity::Receiving]);
 }
@@ -458,7 +458,7 @@ fn a_transmission_outranks_a_reception(#[case] phase: TxPhase, #[case] expected:
         ..TxSnapshot::default()
     };
 
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.activity(), expected);
 }
@@ -483,7 +483,7 @@ fn reception_is_muted_for_as_long_as_a_transmission_runs(
         ..TxSnapshot::default()
     };
 
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.audio.is_muted_for_transmit(), expected);
 }
@@ -493,15 +493,15 @@ fn reception_is_muted_for_as_long_as_a_transmission_runs(
 #[test]
 fn a_tune_tone_mutes_reception_until_it_is_stopped() {
     let mut app = App::headless();
-    app.poll_audio();
+    app.poll_workers();
     assert!(!app.audio.is_muted_for_transmit());
 
     app.tune_for_test();
-    app.poll_audio();
+    app.poll_workers();
     assert!(app.audio.is_muted_for_transmit());
 
     app.stop_tone();
-    app.poll_audio();
+    app.poll_workers();
 
     assert!(!app.audio.is_muted_for_transmit());
 }
@@ -862,7 +862,7 @@ fn a_decoded_contest_number_fills_the_received_report() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(numbered(&["001"]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.rsv_received, "595001");
 }
@@ -874,9 +874,9 @@ fn an_unchanged_number_list_leaves_the_received_report_alone() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(numbered(&["001"]));
-    app.poll_audio();
+    app.poll_workers();
     app.qso.rsv_received = "599".to_owned();
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.rsv_received, "599");
 }
@@ -888,12 +888,12 @@ fn a_number_after_a_restart_is_adopted_again() {
     let mut app = App::headless();
 
     app.audio.set_snapshot(numbered(&["001", "002"]));
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.qso.rsv_received, "595002");
     app.audio.set_snapshot(RxSnapshot::default());
-    app.poll_audio();
+    app.poll_workers();
     app.audio.set_snapshot(numbered(&["001"]));
-    app.poll_audio();
+    app.poll_workers();
 
     assert_eq!(app.qso.rsv_received, "595001");
 }
@@ -982,7 +982,7 @@ fn transient_state_is_not_written_to_the_configuration_file() {
     app.saved = app.settings();
     app.tab = Tab::Transmit;
     app.qso.call = "JA1XYZ".to_owned();
-    app.poll_audio();
+    app.poll_workers();
     app.persist();
 
     assert_eq!(fs::read_to_string(paths.config_file()).unwrap(), "");
@@ -1091,7 +1091,7 @@ fn qso_changes_do_not_invalidate_template_or_stock_files() {
 fn composed(app: &mut App) -> Arc<RgbImage> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        app.poll_audio();
+        app.poll_workers();
         assert!(app.tx_error.is_none(), "{:?}", app.tx_error);
         assert!(Instant::now() < deadline, "no composition arrived");
         if let Some(frame) = app.composition.frame.clone() {
@@ -1176,7 +1176,7 @@ size width=(fw)100 height=(fh)100 fit="stretch"
         ..RxSnapshot::default()
     });
 
-    app.poll_audio();
+    app.poll_workers();
 
     // The stock images the library holds are black, so a composition made
     // of the received color could not have come from the background.
@@ -1206,7 +1206,7 @@ fn a_selection_during_a_transmission_takes_effect_when_it_ends() {
     app.library.stock = Some(1);
     app.stock_changed();
 
-    app.poll_audio();
+    app.poll_workers();
     assert_eq!(app.composition.frame.as_deref(), Some(first.as_ref()));
 
     app.stop_transmit();

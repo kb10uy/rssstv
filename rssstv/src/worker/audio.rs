@@ -25,6 +25,7 @@ pub struct AudioState {
     capture: Option<Capture>,
     worker: Option<RxWorker>,
     snapshot: RxSnapshot,
+    held: bool,
     slant: bool,
     vis_restart: bool,
     sync_start: SyncStart,
@@ -83,6 +84,7 @@ impl AudioState {
             capture: None,
             worker: None,
             snapshot: RxSnapshot::default(),
+            held: false,
             slant,
             vis_restart,
             sync_start: SyncStart::default(),
@@ -109,6 +111,7 @@ impl AudioState {
             capture: None,
             worker: None,
             snapshot: RxSnapshot::default(),
+            held: false,
             slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
@@ -150,12 +153,11 @@ impl AudioState {
         self.snapshot = RxSnapshot::default();
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
-                self.worker = Some(RxWorker::spawn(
-                    reader,
-                    self.slant,
-                    self.vis_restart,
-                    self.sync_start,
-                ));
+                let worker = RxWorker::spawn(reader, self.slant, self.vis_restart, self.sync_start);
+                // A device opened while the station is transmitting is held
+                // exactly like the one it replaces.
+                worker.set_held(self.held);
+                self.worker = Some(worker);
                 self.capture = Some(capture);
                 self.error = None;
             }
@@ -181,6 +183,27 @@ impl AudioState {
 
     pub fn take_history(&mut self) -> Option<HistoryCandidate> {
         self.snapshot.history.take()
+    }
+
+    /// Stops or resumes decoding without closing the device.
+    ///
+    /// Reception is held while the station transmits: its own signal comes
+    /// straight back off the antenna, and what would be decoded from it is the
+    /// picture it is sending. Kept here as well as pushed to the worker,
+    /// because a device opened later has to start out the same way.
+    pub fn set_held(&mut self, held: bool) {
+        if self.held == held {
+            return;
+        }
+        self.held = held;
+        if let Some(worker) = self.worker.as_ref() {
+            worker.set_held(held);
+        }
+    }
+
+    /// Returns whether reception is currently stopped.
+    pub const fn is_held(&self) -> bool {
+        self.held
     }
 
     pub fn set_slant(&mut self, enabled: bool) {
@@ -305,6 +328,7 @@ impl core::fmt::Debug for AudioState {
             .debug_struct("AudioState")
             .field("device", &self.device)
             .field("capturing", &self.is_capturing())
+            .field("held", &self.held)
             .field("output_device", &self.output_device)
             .finish_non_exhaustive()
     }

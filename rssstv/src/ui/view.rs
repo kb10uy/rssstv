@@ -136,6 +136,11 @@ fn state(app: &App) -> String {
             _ => app.i18n.text("state-transmit-not-ready"),
         },
         Tab::Receive => {
+            // Nothing is being listened for while the station transmits, so the
+            // line says so rather than reporting a wait that is not happening.
+            if app.audio.is_held() {
+                return app.i18n.text("state-rx-held");
+            }
             let progress = app.audio.snapshot().progress;
             // A stopped reception leaves a partial image on the canvas, so it
             // has to read differently from having nothing at all.

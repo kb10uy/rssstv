@@ -235,6 +235,22 @@ impl Session {
         })
     }
 
+    /// Closes out whatever is being received and starts the pipeline over.
+    ///
+    /// What a held worker misses is not silence the demodulator can read
+    /// through, so no part of the reception it interrupts may carry across the
+    /// gap. One far enough along is still kept, the same as any other reception
+    /// cut short.
+    fn suspend(&mut self) -> Result<Option<(Frame, Option<HistoryCandidate>)>, AppError> {
+        match self.interrupt()? {
+            Some(closed) => Ok(Some(closed)),
+            None => {
+                self.reset()?;
+                Ok(None)
+            }
+        }
+    }
+
     fn restart_search(&mut self) -> Result<(), AppError> {
         self.demodulator = Demodulator::new(self.sample_rate_hz)?;
         self.demodulator.set_sync_start(self.sync_start);
@@ -395,6 +411,7 @@ pub(super) fn run(
     mut reader: CaptureReader,
     mailbox: &Mailbox,
     stop: &AtomicBool,
+    hold: &AtomicBool,
     slant: &AtomicBool,
     vis_restart: &AtomicBool,
     sync_start: &Mutex<SyncStart>,
@@ -425,8 +442,53 @@ pub(super) fn run(
     let mut display_fraction = 0.0;
     let mut history_deadline = None;
     let mut progress_changed_at = Instant::now();
+    let mut held = false;
 
     while !stop.load(Ordering::Relaxed) {
+        if hold.load(Ordering::Relaxed) {
+            // Everything the device produces while the station is transmitting
+            // is read and thrown away: its own signal comes back off the
+            // antenna, and a picture decoded from it is the one just sent.
+            let discarded = reader.read(&mut pcm);
+            if held {
+                if discarded.count == 0 {
+                    thread::sleep(IDLE_POLL);
+                }
+                continue;
+            }
+            held = true;
+            level = 0.0;
+            let closed = match session.suspend() {
+                Ok(closed) => closed,
+                Err(reason) => {
+                    error = Some(reason);
+                    None
+                }
+            };
+            let (frame, history) = closed
+                .map(|(frame, history)| (Some(frame), history))
+                .unwrap_or_default();
+            last_progress = RxProgress::Idle;
+            progress_changed_at = Instant::now();
+            history_deadline = None;
+            mailbox.publish(RxSnapshot {
+                mode: None,
+                progress: RxProgress::Idle,
+                display_fraction,
+                level,
+                frame,
+                history,
+                callsigns: callsigns.clone(),
+                numbers: numbers.clone(),
+                dropped_samples: reader.dropped_samples(),
+                error: error.take(),
+            });
+            continue;
+        }
+        // A release has nothing to undo: the session was started over as the
+        // hold began, and nothing was fed to it while the hold lasted.
+        held = false;
+
         let reading = reader.read(&mut pcm);
         if reading.count == 0 {
             thread::sleep(IDLE_POLL);

@@ -462,6 +462,49 @@ fn a_transmission_outranks_a_reception(#[case] phase: TxPhase, #[case] expected:
     assert_eq!(app.activity(), expected);
 }
 
+/// The station's own signal comes back off the antenna, so nothing is
+/// listened for while anything is going out. Every ending releases it,
+/// including one the operator did not ask for.
+#[rstest]
+#[case(TxPhase::Priming, true)]
+#[case(TxPhase::Producing, true)]
+#[case(TxPhase::Draining, true)]
+#[case(TxPhase::Complete, false)]
+#[case(TxPhase::Cancelled, false)]
+#[case(TxPhase::Failed, false)]
+fn reception_is_held_for_as_long_as_a_transmission_runs(
+    #[case] phase: TxPhase,
+    #[case] expected: bool,
+) {
+    let mut app = App::headless();
+    app.tx_snapshot = TxSnapshot {
+        phase,
+        ..TxSnapshot::default()
+    };
+
+    app.poll_audio();
+
+    assert_eq!(app.audio.is_held(), expected);
+}
+
+/// A tone keys the rig just as a picture does, and the operator stopping it
+/// is what gives reception back.
+#[test]
+fn a_tune_tone_holds_reception_until_it_is_stopped() {
+    let mut app = App::headless();
+    app.poll_audio();
+    assert!(!app.audio.is_held());
+
+    app.tune_for_test();
+    app.poll_audio();
+    assert!(app.audio.is_held());
+
+    app.stop_tone();
+    app.poll_audio();
+
+    assert!(!app.audio.is_held());
+}
+
 #[test]
 fn switching_tabs_preserves_receive_progress() {
     let mut app = App::headless();

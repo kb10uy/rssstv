@@ -99,6 +99,7 @@ state-waiting = WAITING FOR SIGNAL
 state-receiving = RECEIVING · { $percent }%
 state-complete = COMPLETE
 state-stopped = RX STOPPED
+state-rx-held = RX HELD · TX
 state-transmit-ready = TX READY
 state-transmit-not-ready = TX NOT READY
 state-transmit-preparing = TX PREPARING

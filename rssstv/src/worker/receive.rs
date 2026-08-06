@@ -159,6 +159,7 @@ impl Mailbox {
 /// capture queue is never left with a live consumer.
 pub struct RxWorker {
     stop: Arc<AtomicBool>,
+    held: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
     slant: Arc<AtomicBool>,
@@ -175,29 +176,50 @@ impl RxWorker {
         sync_start: SyncStart,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
+        let held = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::default());
         let join = {
             let stop = Arc::clone(&stop);
+            let held = Arc::clone(&held);
             let slant = Arc::clone(&slant);
             let vis_restart = Arc::clone(&vis_restart);
             let sync_start = Arc::clone(&sync_start);
             let mailbox = Arc::clone(&mailbox);
             thread::Builder::new()
                 .name("rssstv-receive".to_owned())
-                .spawn(move || run(reader, &mailbox, &stop, &slant, &vis_restart, &sync_start))
+                .spawn(move || {
+                    run(
+                        reader,
+                        &mailbox,
+                        &stop,
+                        &held,
+                        &slant,
+                        &vis_restart,
+                        &sync_start,
+                    );
+                })
                 .ok()
         };
         Self {
             stop,
+            held,
             join,
             mailbox,
             slant,
             vis_restart,
             sync_start,
         }
+    }
+
+    /// Stops or resumes decoding without closing the device.
+    ///
+    /// A held worker throws away everything the device produces, so the samples
+    /// that arrive while it is held can never become a reception.
+    pub fn set_held(&self, held: bool) {
+        self.held.store(held, Ordering::Relaxed);
     }
 
     pub fn set_slant(&self, enabled: bool) {
@@ -359,7 +381,7 @@ mod pipeline_tests {
         time::{Duration, Instant},
     };
 
-    use rssstv_audio::synthetic_capture;
+    use rssstv_audio::{CaptureFeed, synthetic_capture};
     use rssstv_fskid::FskId;
     use rssstv_sstv::{
         TransmissionEncoder, TxEncoder,
@@ -451,25 +473,46 @@ mod pipeline_tests {
         let silence = vec![0.0_f32; trailing_silence];
 
         for source in [pcm, silence.as_slice()] {
-            let mut offset = 0;
-            while offset < source.len() {
-                let room = feed.vacant().min(source.len() - offset);
-                if room == 0 {
-                    thread::sleep(Duration::from_millis(1));
-                } else {
-                    offset += feed.push(&source[offset..offset + room]);
-                }
-                collect(&worker, &mut snapshot, &mut frame);
-            }
+            push_all(&mut feed, &worker, source, &mut snapshot, &mut frame);
         }
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+        (snapshot, frame)
+    }
+
+    /// Pushes `source` through the capture queue as fast as the worker takes it.
+    fn push_all(
+        feed: &mut CaptureFeed,
+        worker: &RxWorker,
+        source: &[f32],
+        snapshot: &mut RxSnapshot,
+        frame: &mut Option<Frame>,
+    ) {
+        let mut offset = 0;
+        while offset < source.len() {
+            let room = feed.vacant().min(source.len() - offset);
+            if room == 0 {
+                thread::sleep(Duration::from_millis(1));
+            } else {
+                offset += feed.push(&source[offset..offset + room]);
+            }
+            collect(worker, snapshot, frame);
+        }
+    }
+
+    /// Waits for the worker to take everything the queue still holds.
+    fn drain(
+        feed: &mut CaptureFeed,
+        worker: &RxWorker,
+        snapshot: &mut RxSnapshot,
+        frame: &mut Option<Frame>,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(30);
         while feed.vacant() < (1 << 16) && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(2));
-            collect(&worker, &mut snapshot, &mut frame);
+            collect(worker, snapshot, frame);
         }
         thread::sleep(Duration::from_millis(100));
-        collect(&worker, &mut snapshot, &mut frame);
-        (snapshot, frame)
+        collect(worker, snapshot, frame);
     }
 
     fn collect(worker: &RxWorker, snapshot: &mut RxSnapshot, frame: &mut Option<Frame>) {
@@ -482,6 +525,76 @@ mod pipeline_tests {
             }
             *snapshot = latest;
         }
+    }
+
+    /// A transmitting station hears its own signal come back off the antenna,
+    /// so nothing that arrives while the worker is held may become a reception.
+    /// What arrives after it is released still does: a hold stops the pipeline
+    /// rather than wedging it.
+    #[test]
+    fn a_held_worker_decodes_nothing_until_it_is_released() {
+        let mode = Mode::Robot36;
+        let expected = source_image(mode);
+        let pcm = transmission(mode, expected.clone(), 0.0);
+        let silence = vec![0.0_f32; RATE as usize * 3];
+        let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
+        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled);
+        let mut snapshot = RxSnapshot::default();
+        let mut frame = None;
+
+        worker.set_held(true);
+        push_all(&mut feed, &worker, &pcm, &mut snapshot, &mut frame);
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+
+        assert_eq!(snapshot.mode, None, "{snapshot:?}");
+        assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");
+        assert!(frame.is_none(), "a held worker decoded a picture");
+
+        worker.set_held(false);
+        push_all(&mut feed, &worker, &pcm, &mut snapshot, &mut frame);
+        push_all(&mut feed, &worker, &silence, &mut snapshot, &mut frame);
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+
+        assert_eq!(snapshot.progress, RxProgress::Complete, "{snapshot:?}");
+        let frame = frame.expect("a decoded frame");
+        let error = mean_abs_error(&frame, &expected);
+        assert!(error < 40.0, "the released reception scored {error}");
+    }
+
+    /// A reception far enough along is still worth keeping when a transmission
+    /// cuts it short, the same as one the signal itself cut short, and what was
+    /// decoded of it stays on the canvas.
+    #[test]
+    fn holding_keeps_the_reception_it_interrupts() {
+        let mode = Mode::Robot36;
+        let pcm = transmission(mode, source_image(mode), 0.0);
+        let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
+        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled);
+        let mut snapshot = RxSnapshot::default();
+        let mut frame = None;
+
+        // No trailing audio, so the reception is still running rather than
+        // having been stopped by the signal going away.
+        push_all(
+            &mut feed,
+            &worker,
+            &pcm[..pcm.len() * 3 / 4],
+            &mut snapshot,
+            &mut frame,
+        );
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+        assert!(
+            matches!(snapshot.progress, RxProgress::Decoding { .. }),
+            "{snapshot:?}"
+        );
+
+        worker.set_held(true);
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+
+        assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");
+        assert!(snapshot.display_fraction > 0.65, "{snapshot:?}");
+        let history = snapshot.history.expect("the interrupted reception");
+        assert_eq!(history.mode, mode);
     }
 
     #[test]

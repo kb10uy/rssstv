@@ -235,6 +235,19 @@ from. MMSSTV restarts on a header the same way, and does so by default. Only a
 header restarts a reception; sync spacing is present throughout every picture,
 so matching it again mid-reception would restart continuously.
 
+Reception is held for as long as anything is going out. A transmitting station
+hears its own signal come back off the antenna, and a picture decoded from it is
+the one being sent, so the worker reads the capture queue and throws it away
+while the hold lasts rather than closing the device: the device stays open, the
+selection is unchanged, and the input meter reads nothing. The hold follows the
+transmit phase rather than being switched at either end of a transmission, so a
+tune tone, a picture, and a transmission that failed all release it the same way.
+Entering it closes out whatever was being received, under the same 65-percent
+rule as any other interruption, and starts the pipeline over; what a hold misses
+is not silence the demodulator can read through, so nothing may carry across the
+gap. The state line on the receive tab names the hold, because the tab is
+otherwise indistinguishable from waiting for a signal.
+
 A reception whose signal stops arriving returns to signal search without
 discarding its partial image. The worker watches for progress that has not
 moved for the stall window, captures the decoder image, and starts a fresh

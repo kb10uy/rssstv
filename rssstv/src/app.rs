@@ -835,6 +835,12 @@ impl App {
         }
         self.poll_rig();
         self.poll_transmit();
+        // Reception stops for as long as anything is going out. The station's
+        // own signal comes back off the antenna, and what would be decoded from
+        // it is the picture being sent. Derived from the phase rather than
+        // switched at either end of a transmission, so a tone, a picture, and a
+        // transmission that failed all release it the same way.
+        self.audio.set_held(self.tx_snapshot.phase.is_active());
         self.refresh_timed_composition();
         self.refresh_tuned_composition();
         self.report_activity();

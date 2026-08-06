@@ -88,3 +88,22 @@ and underscores.
 ```text
 cargo run -p decode-wav -- [--packet-size SAMPLES] <INPUT.wav> <OUTPUT_IMAGE>
 ```
+
+## Web demo
+
+The receive path also builds for WebAssembly, and
+<https://kb10uy.github.io/rssstv/> runs it in the browser: drop a recording on
+the page, or point a microphone at a receiver, and the picture is decoded by the
+same Rust the desktop application uses. Its images are identical to the ones
+`decode-wav` produces from the same files.
+
+```text
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+wasm-pack build web-demo --target web --out-dir www/pkg --release
+python -m http.server -d web-demo/www 8080
+```
+
+A server is required: `file://` blocks the module and the microphone needs a
+secure context. See
+[docs/memo/rssstv/web-demo.md](docs/memo/rssstv/web-demo.md).

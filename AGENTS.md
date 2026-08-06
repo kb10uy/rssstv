@@ -114,6 +114,11 @@ This repository uses a Cargo workspace. Run commands from the workspace root.
   cover this: another member enabling the `std` feature hides a core primitive
   used through `std` alone, so the crate can stop being `no_std` without any
   workspace command noticing.
+- Check that the browser demo still builds for its own target using
+  `cargo clippy -p rssstv-web-demo --target wasm32-unknown-unknown`. A workspace
+  build does not cover this either: on the host the JavaScript bindings compile
+  to stubs nothing calls, so the crate can stop building for wasm without any
+  workspace command noticing.
 - Run Clippy with `cargo clippy --workspace --all-targets`.
 - Check formatting with `cargo fmt --all --check`.
 - Apply formatting with `cargo fmt --all` when needed.
@@ -126,6 +131,7 @@ cargo clippy --workspace --all-targets
 cargo test --workspace
 cargo build --workspace
 cargo build -p rssstv-sstv --no-default-features
+cargo clippy -p rssstv-web-demo --target wasm32-unknown-unknown
 ```
 
 Add focused unit tests for DSP and protocol behavior. Prefer deterministic test

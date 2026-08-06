@@ -12,6 +12,7 @@ members = [
   "rssstv-rig",
   "rssstv-sstv",
   "rssstv-template",
+  "web-demo",
 ]
 
 [workspace.package]
@@ -22,6 +23,7 @@ authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
 
 [workspace.dependencies]
 anyhow = "1.0"
+console_error_panic_hook = "0.1"
 directories = "6.0"
 eframe = "0.35"
 embed-resource = "3.0"
@@ -50,6 +52,7 @@ rstest = "0.26"
 thiserror = { version = "2.0", default-features = false }
 toml_edit = "0.25"
 unic-langid = "0.9"
+wasm-bindgen = "0.2"
 windows-sys = "0.61"
 
 # Panics keep unwinding: the receive and transmit workers are separate threads whose failure is reported to the interface,

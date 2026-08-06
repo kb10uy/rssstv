@@ -1,0 +1,30 @@
+[package]
+name = "rssstv-web-demo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# `wasm-opt` here is the copy wasm-pack downloads, which predates the WebAssembly
+# features rustc now emits without being asked. Naming them turns a validation
+# failure on every build into the size pass it is meant to be.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+  "-O",
+  "--enable-bulk-memory",
+  "--enable-mutable-globals",
+  "--enable-nontrapping-float-to-int",
+  "--enable-reference-types",
+  "--enable-sign-ext",
+]
+
+[dependencies]
+console_error_panic_hook.workspace = true
+rssstv-demodulator = { path = "../rssstv-demodulator" }
+rssstv-fskid = { path = "../rssstv-fskid" }
+rssstv-sstv = { path = "../rssstv-sstv", features = ["std"] }
+wasm-bindgen.workspace = true

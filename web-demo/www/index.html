@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RSSSTV — SSTV decoding in the browser</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>RSSSTV web demo</h1>
+      <p>
+        The SSTV receive core of
+        <a href="https://github.com/kb10uy/rssstv">RSSSTV</a> compiled to
+        WebAssembly. Everything below the audio input — demodulation, VIS
+        detection, raster synchronization, slant correction, and FSKID — is the
+        same Rust the desktop application runs, unchanged.
+      </p>
+    </header>
+
+    <main>
+      <section id="sources">
+        <div class="source">
+          <h2>Audio file</h2>
+          <p>
+            Drop a recording anywhere on this page, or pick one. WAV keeps its
+            own sample rate; other formats are resampled by the browser.
+          </p>
+          <input id="file" type="file" accept="audio/*,.wav" />
+        </div>
+
+        <div class="source">
+          <h2>Microphone</h2>
+          <p>
+            Hold a receiver up to the microphone, or feed it from a virtual
+            audio device. Needs HTTPS or localhost.
+          </p>
+          <button id="mic-start" type="button">Start</button>
+          <button id="mic-stop" type="button" disabled>Stop</button>
+          <label>
+            <input id="auto-reset" type="checkbox" checked />
+            Start over after each picture
+          </label>
+        </div>
+      </section>
+
+      <p id="error" hidden></p>
+
+      <section id="output">
+        <div id="picture">
+          <canvas id="canvas" width="320" height="240"></canvas>
+          <button id="download" type="button" disabled>Download PNG</button>
+          <button id="reset" type="button" disabled>Reset</button>
+        </div>
+
+        <div id="readout">
+          <dl>
+            <dt>Mode</dt>
+            <dd id="mode">—</dd>
+            <dt>State</dt>
+            <dd id="state">idle</dd>
+            <dt>Rows</dt>
+            <dd id="rows">—</dd>
+            <dt>Input level</dt>
+            <dd><meter id="level" min="0" max="1" value="0"></meter></dd>
+            <dt>Frequency offset</dt>
+            <dd id="offset">—</dd>
+            <dt>Effective sample rate</dt>
+            <dd id="effective">—</dd>
+            <dt>FSKID</dt>
+            <dd id="callsigns">—</dd>
+          </dl>
+          <ul id="log"></ul>
+        </div>
+      </section>
+
+      <section id="notes">
+        <h2>What decodes</h2>
+        <p>
+          Robot 36 and 72, Scottie 1, 2, and DX, Martin 1 and 2, and PD50, 90,
+          120, 160, 180, 240, and 290. Any other mode is identified from its VIS
+          and then reported as having no decoder, which is what the desktop
+          application does too.
+        </p>
+        <h2>Microphone audio must not be processed</h2>
+        <p>
+          The page asks the browser to turn echo cancellation, noise
+          suppression, and automatic gain control off, because each one attacks
+          something the decoder needs: noise suppression treats a steady tone as
+          stationary noise and attenuates it, gain control reshapes the envelope
+          the sync detector scores, and echo cancellation mis-adapts against a
+          continuous signal with no far end. The browser cannot reach processing
+          the operating system applies to the device, so turn off Windows audio
+          enhancements or macOS voice isolation as well.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        <a href="https://github.com/kb10uy/rssstv">kb10uy/rssstv</a> —
+        LGPL-3.0-or-later. The WebAssembly module on this page is built from
+        that source.
+      </p>
+    </footer>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

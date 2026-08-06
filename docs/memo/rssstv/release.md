@@ -1,11 +1,12 @@
 # Continuous Integration and Releases
 
-Two workflows in `.github/workflows/` cover the repository: `ci.yml` checks
-every change, and `release.yml` builds and publishes what a tag names.
+Three workflows in `.github/workflows/` cover the repository: `ci.yml` checks
+every change, `release.yml` builds and publishes what a tag names, and
+`pages.yml` deploys the browser demo.
 
 ## CI
 
-`ci.yml` runs on pushes to `master` and on pull requests, in two jobs.
+`ci.yml` runs on pushes to `master` and on pull requests, in four jobs.
 
 `check` runs the commands `AGENTS.md` requires before a change is complete:
 `cargo fmt --all --check`, `cargo clippy --workspace --all-targets` with
@@ -37,6 +38,23 @@ learning about it when a release is already being cut.
 `manual` renders `docs/help/` with pandoc, for the same reason: the archives
 carry the manual, so a source or template that cannot be rendered should fail
 on the change that broke it.
+
+`wasm` builds `web-demo` for `wasm32-unknown-unknown` and runs Clippy against
+that target, then builds the page with `wasm-pack`. It is separate from `check`
+for the reason the no-std jobs are: the host build compiles the JavaScript
+bindings to stubs nothing calls, so it proves nothing about the target the demo
+ships to. Building the page rather than only the crate is what keeps a broken
+deploy from reaching `master`.
+
+## Pages
+
+`pages.yml` runs on pushes to `master` and deploys `web-demo/www` to GitHub
+Pages after building the WebAssembly module into it. It needs the repository's
+Pages source set to GitHub Actions, which no workflow can do; until that is set
+in the repository settings the deploy step fails.
+
+The site is served from a project path rather than a domain root, so every path
+in the page is relative. An absolute one would resolve above the site and 404.
 
 ## Releases
 

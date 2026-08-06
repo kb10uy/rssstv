@@ -52,7 +52,7 @@ platform integration, and application behavior.
 | Audio adapters | Platform-specific input and output streams | `rssstv-audio`; capture and playback implemented |
 | Rig transport | How a rig is reached: a `rigctld` socket | `rssstv-rig`; implemented |
 | Rig policy | What the rig is told, and when | `rigcontrol.lua`, hosted by `rssstv` |
-| Integration | Composition of core stages for a particular environment | `decode-wav` and `encode-wav` |
+| Integration | Composition of core stages for a particular environment | `decode-wav`, `encode-wav`, and `web-demo` |
 | Template composition | KDL scene parsing, variables, RGBA overlay rendering, and RGB composition | `rssstv-template` |
 | Application | UI, configuration, history, template editing, logging, PTT, CAT, and orchestration | `rssstv` receive interface; designed in [gui-design.md](gui-design.md) |
 
@@ -337,7 +337,7 @@ types must not appear in reusable core APIs.
 
 ## Current Crate Structure
 
-The workspace currently contains eleven packages:
+The workspace currently contains twelve packages:
 
 | Package | Architectural role | Current status |
 | --- | --- | --- |
@@ -349,6 +349,7 @@ The workspace currently contains eleven packages:
 | `rssstv-template` | Portable application-support layer | KDL parsing and SVG-backed RGBA rendering implemented |
 | `decode-wav` | Offline receive integration | Implemented |
 | `encode-wav` | Template-to-WAV transmit integration | Implemented |
+| `web-demo` | Browser receive integration | Implemented |
 | `rssstv-audio` | Host audio adapters | Bounded capture and playback implemented |
 | `rssstv-rig` | Rig transports | `rigctld` client implemented |
 | `rssstv` | Application composition root | egui interface with live receive and transmit |
@@ -373,6 +374,9 @@ rssstv-fskid ----------+
 rssstv-modulator ------+
 rssstv-sstv -----------+-> encode-wav
 rssstv-template -------+
+rssstv-demodulator ----+
+rssstv-fskid ----------+
+rssstv-sstv -----------+-> web-demo
 
 rssstv-audio ----------+
 rssstv-demodulator ----+

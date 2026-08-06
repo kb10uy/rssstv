@@ -50,5 +50,8 @@ The Rust implementation: what it is meant to be, and what it currently is.
   read. Describes a target design ahead of what is implemented.
 - [rssstv/template-design.md](rssstv/template-design.md): the portable transmit
   overlay format.
+- [rssstv/web-demo.md](rssstv/web-demo.md): the browser build of the receive
+  path, what the page has to do around it, and what the audio APIs do to the
+  samples on the way in.
 - [rssstv/release.md](rssstv/release.md): what CI checks, and how a tag becomes
   a release.

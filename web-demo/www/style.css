@@ -1,0 +1,143 @@
+:root {
+  color-scheme: light dark;
+  --edge: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+body {
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+  max-width: 60rem;
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+body.dragging {
+  outline: 3px dashed currentColor;
+  outline-offset: -0.75rem;
+}
+
+h1 {
+  margin-bottom: 0.25rem;
+  font-size: 1.6rem;
+}
+
+h2 {
+  margin-bottom: 0.25rem;
+  font-size: 1.05rem;
+}
+
+header p,
+#notes p,
+.source p {
+  color: color-mix(in srgb, currentColor 70%, transparent);
+}
+
+#sources {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  margin: 1.5rem 0;
+}
+
+.source {
+  padding: 0.75rem 1rem 1rem;
+  border: 1px solid var(--edge);
+  border-radius: 0.5rem;
+}
+
+.source label {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+}
+
+button {
+  padding: 0.35rem 0.9rem;
+  font: inherit;
+  border: 1px solid var(--edge);
+  border-radius: 0.3rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+#error {
+  padding: 0.6rem 0.9rem;
+  border: 1px solid currentColor;
+  border-radius: 0.3rem;
+  color: #b00020;
+}
+
+@media (prefers-color-scheme: dark) {
+  #error {
+    color: #ff8a80;
+  }
+}
+
+#output {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  align-items: start;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--edge);
+  background: #111;
+  image-rendering: pixelated;
+}
+
+#picture button {
+  margin: 0.75rem 0.5rem 0 0;
+}
+
+dl {
+  display: grid;
+  gap: 0.15rem 1rem;
+  grid-template-columns: max-content 1fr;
+  margin: 0;
+}
+
+dt {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
+
+dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+#log {
+  margin: 1rem 0 0;
+  padding: 0.5rem 0.75rem;
+  max-height: 12rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--edge);
+  border-radius: 0.3rem;
+  font-size: 0.85rem;
+  font-family: ui-monospace, monospace;
+}
+
+#log:empty {
+  display: none;
+}
+
+#notes {
+  margin-top: 2.5rem;
+}
+
+footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--edge);
+  font-size: 0.85rem;
+}

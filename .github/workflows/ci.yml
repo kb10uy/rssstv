@@ -62,6 +62,32 @@ jobs:
           cargo build -p rssstv-modulator
           cargo build -p rssstv-demodulator
 
+  # The browser demo is the one member whose target is not the host, and the
+  # host build says nothing about it: on Linux the JavaScript bindings compile
+  # to stubs that are never called, so a break in what the demo actually ships
+  # only appears when the crate is built for wasm32.
+  wasm:
+    name: WebAssembly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Run Clippy for wasm32
+        run: cargo clippy -p rssstv-web-demo --target wasm32-unknown-unknown -- -D warnings
+
+      # The same command the Pages workflow deploys the result of, so a build
+      # that cannot produce the page fails here rather than on a push to master.
+      - name: Build the browser demo
+        run: wasm-pack build web-demo --target web --out-dir www/pkg --release
+
   licenses:
     name: Licenses
     runs-on: ubuntu-latest

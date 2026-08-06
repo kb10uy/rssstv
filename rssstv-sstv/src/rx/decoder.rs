@@ -276,7 +276,7 @@ impl RxDecoder {
     }
 
     fn process_inner(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, SstvError> {
-        block.validate_header(self.next_sample)?;
+        block.validate_continuity(self.next_sample)?;
         if let Some(event) = self.poll_event() {
             return Ok(RxProcess::new(0, Some(event)));
         }

@@ -35,7 +35,7 @@ impl<'a> DemodulatedBlock<'a> {
         self.sync_strength
     }
 
-    pub(super) fn validate_header(self, expected: Option<u64>) -> Result<(), SstvError> {
+    pub(super) fn validate_continuity(self, expected: Option<u64>) -> Result<(), SstvError> {
         if self.frequency_hz.len() != self.sync_strength.len() {
             return Err(SstvError::DemodulatedLengthMismatch);
         }

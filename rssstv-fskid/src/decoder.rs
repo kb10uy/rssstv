@@ -74,7 +74,7 @@ pub struct FskDecoder {
     state: State,
     frame: Frame,
     elapsed: u64,
-    next_sample: f64,
+    next_decision_sample: f64,
     bit_count: u8,
     symbol: u8,
 }
@@ -87,7 +87,7 @@ impl FskDecoder {
             state: State::Search,
             frame: Frame::Header,
             elapsed: 0,
-            next_sample: 0.0,
+            next_decision_sample: 0.0,
             bit_count: 0,
             symbol: 0,
         }
@@ -134,7 +134,7 @@ impl FskDecoder {
                     if tone == FskTone::Mark {
                         self.state = State::Data;
                         self.elapsed = 0;
-                        self.next_sample = self.sample_rate_hz * SYMBOL_SECONDS;
+                        self.next_decision_sample = self.sample_rate_hz * SYMBOL_SECONDS;
                         self.bit_count = 0;
                         self.symbol = 0;
                         self.frame = Frame::Header;
@@ -149,12 +149,12 @@ impl FskDecoder {
             }
             State::Data => {
                 self.elapsed += 1;
-                if self.elapsed >= self.next_sample as u64 {
+                if self.elapsed >= self.next_decision_sample as u64 {
                     if tone == FskTone::Ambiguous {
                         self.reset();
                         return None;
                     }
-                    self.next_sample += self.sample_rate_hz * SYMBOL_SECONDS;
+                    self.next_decision_sample += self.sample_rate_hz * SYMBOL_SECONDS;
                     self.symbol >>= 1;
                     if tone == FskTone::Mark {
                         self.symbol |= 0x20;
@@ -320,7 +320,7 @@ impl FskDecoder {
         self.state = State::Search;
         self.frame = Frame::Header;
         self.elapsed = 0;
-        self.next_sample = 0.0;
+        self.next_decision_sample = 0.0;
         self.bit_count = 0;
         self.symbol = 0;
     }

@@ -17,7 +17,7 @@ impl RxDecoder {
         if self.decode.state != RxState::Complete {
             return Err(SstvError::RxNotComplete);
         }
-        block.validate_header(self.next_sample)?;
+        block.validate_continuity(self.next_sample)?;
         block.validate_range(0, block.frequency_hz().len())?;
         let Some(staged) = self.staged.as_mut() else {
             return Err(SstvError::StagingDisabled);

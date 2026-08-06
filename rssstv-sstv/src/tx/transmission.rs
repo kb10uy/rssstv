@@ -41,7 +41,7 @@ enum TransmissionStage {
 /// of trailing silence.
 #[derive(Debug)]
 pub struct TransmissionEncoder {
-    image: TxEncoder,
+    encoder: TxEncoder,
     fsk: Option<FskEncoder>,
     stage: TransmissionStage,
     voice_activation: usize,
@@ -52,7 +52,7 @@ impl TransmissionEncoder {
     /// Validates the mode and image and constructs a complete transmission.
     pub fn new(mode: Mode, image: RgbImage, station_id: FskId) -> Result<Self, SstvError> {
         Ok(Self {
-            image: TxEncoder::new(mode, image)?,
+            encoder: TxEncoder::new(mode, image)?,
             fsk: Some(station_id.encoder()),
             stage: TransmissionStage::VoiceActivation,
             voice_activation: 0,
@@ -72,7 +72,7 @@ impl TransmissionEncoder {
         number: FskNumber,
     ) -> Result<Self, SstvError> {
         Ok(Self {
-            image: TxEncoder::new(mode, image)?,
+            encoder: TxEncoder::new(mode, image)?,
             fsk: Some(station_id.encoder_with_number(number)),
             stage: TransmissionStage::VoiceActivation,
             voice_activation: 0,
@@ -87,7 +87,7 @@ impl TransmissionEncoder {
     /// never arrives.
     pub fn without_identifier(mode: Mode, image: RgbImage) -> Result<Self, SstvError> {
         Ok(Self {
-            image: TxEncoder::new(mode, image)?,
+            encoder: TxEncoder::new(mode, image)?,
             fsk: None,
             stage: TransmissionStage::VoiceActivation,
             voice_activation: 0,
@@ -117,7 +117,7 @@ impl TransmissionEncoder {
     /// segments precede the raster and carry no image rows.
     pub fn raster_start(&self) -> SstvDuration {
         let leading = self
-            .image
+            .encoder
             .mode()
             .scan()
             .leading()
@@ -133,8 +133,8 @@ impl TransmissionEncoder {
     /// uniform rate, so an offset into it maps linearly onto the row being
     /// transmitted.
     pub fn raster_duration(&self) -> SstvDuration {
-        let spec = self.image.mode().spec();
-        let scan = self.image.mode().scan();
+        let spec = self.encoder.mode().spec();
+        let scan = self.encoder.mode().scan();
         let units = usize::from(spec.active_rows() / u16::from(spec.rows_per_raster_unit()));
         SstvDuration::from_picos(
             (0..units)
@@ -178,7 +178,7 @@ impl Iterator for TransmissionEncoder {
                     self.stage = TransmissionStage::Image;
                 }
                 TransmissionStage::Image => {
-                    if let Some(tone) = self.image.next() {
+                    if let Some(tone) = self.encoder.next() {
                         self.deadline_ps = VOX_DURATION_PS + tone.until().as_picos();
                         return Some(TimedTone::new(
                             tone.component(),

@@ -13,7 +13,10 @@ use rssstv_sstv::{
     mode::Mode,
 };
 
-use crate::{error::AppError, worker::receive::session::run};
+use crate::{
+    error::AppError,
+    worker::{Waker, receive::session::run},
+};
 
 mod session;
 
@@ -117,6 +120,49 @@ pub struct RxSnapshot {
     pub error: Option<AppError>,
 }
 
+/// The parts of a snapshot the interface actually draws.
+///
+/// A worker publishes on every block of audio it reads, and most of those say
+/// the same thing as the one before: the level moves fractionally and nothing
+/// else changes. Comparing this instead of the whole snapshot is what keeps
+/// the interface asleep between the observations worth showing, so the level
+/// is quantized to what a meter can resolve rather than compared exactly.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Visible {
+    mode: Option<Mode>,
+    progress: RxProgress,
+    frame: bool,
+    history: bool,
+    error: bool,
+    callsigns: usize,
+    numbers: usize,
+    dropped_samples: u64,
+    level: u8,
+    display_fraction: u8,
+}
+
+impl Visible {
+    fn of(snapshot: &RxSnapshot) -> Self {
+        Self {
+            mode: snapshot.mode,
+            progress: snapshot.progress,
+            frame: snapshot.frame.is_some(),
+            history: snapshot.history.is_some(),
+            error: snapshot.error.is_some(),
+            callsigns: snapshot.callsigns.len(),
+            numbers: snapshot.numbers.len(),
+            dropped_samples: snapshot.dropped_samples,
+            level: quantize(snapshot.level),
+            display_fraction: quantize(snapshot.display_fraction),
+        }
+    }
+}
+
+/// Rounds a `0.0..=1.0` reading to the steps a bar can be seen to move in.
+fn quantize(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 128.0) as u8
+}
+
 /// Single-slot handoff holding the newest observation.
 ///
 /// The interface only ever uses the newest snapshot, so the worker overwrites
@@ -124,14 +170,33 @@ pub struct RxSnapshot {
 /// interface that stops polling cannot make the worker accumulate frames.
 #[derive(Debug, Default)]
 pub(super) struct Mailbox {
-    slot: Mutex<Option<RxSnapshot>>,
+    slot: Mutex<Slot>,
+    waker: Waker,
+}
+
+/// The pending snapshot, and what the interface was last woken for.
+#[derive(Debug, Default)]
+struct Slot {
+    pending: Option<RxSnapshot>,
+    shown: Visible,
 }
 
 impl Mailbox {
+    pub(super) fn new(waker: Waker) -> Self {
+        Self {
+            slot: Mutex::new(Slot::default()),
+            waker,
+        }
+    }
+
     /// Replaces the pending snapshot, keeping payloads not yet collected.
+    ///
+    /// The interface is asked for a frame only when the result would look
+    /// different from the one it was last given, so an idle receiver leaves it
+    /// alone entirely.
     pub(super) fn publish(&self, mut snapshot: RxSnapshot) {
         let mut slot = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(previous) = slot.take() {
+        if let Some(previous) = slot.pending.take() {
             if snapshot.frame.is_none() {
                 snapshot.frame = previous.frame;
             }
@@ -142,13 +207,20 @@ impl Mailbox {
                 snapshot.history = previous.history;
             }
         }
-        *slot = Some(snapshot);
+        let visible = Visible::of(&snapshot);
+        slot.pending = Some(snapshot);
+        if visible != slot.shown {
+            slot.shown = visible;
+            drop(slot);
+            self.waker.wake();
+        }
     }
 
     fn take(&self) -> Option<RxSnapshot> {
         self.slot
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .pending
             .take()
     }
 }
@@ -174,13 +246,14 @@ impl RxWorker {
         slant: bool,
         vis_restart: bool,
         sync_start: SyncStart,
+        waker: Waker,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let held = Arc::new(AtomicBool::new(false));
         let slant = Arc::new(AtomicBool::new(slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let sync_start = Arc::new(Mutex::new(sync_start));
-        let mailbox = Arc::new(Mailbox::default());
+        let mailbox = Arc::new(Mailbox::new(waker));
         let join = {
             let stop = Arc::clone(&stop);
             let held = Arc::clone(&held);
@@ -299,7 +372,7 @@ mod tests {
 
     #[test]
     fn overwriting_the_mailbox_preserves_uncollected_payloads() {
-        let mailbox = Mailbox::default();
+        let mailbox = Mailbox::new(Waker::default());
         let frame = Frame {
             width: 1,
             height: 1,
@@ -329,7 +402,7 @@ mod tests {
 
     #[test]
     fn overwriting_the_mailbox_preserves_uncollected_history() {
-        let mailbox = Mailbox::default();
+        let mailbox = Mailbox::new(Waker::default());
         let history = HistoryCandidate {
             mode: Mode::Robot36,
             frame: Frame {
@@ -348,9 +421,47 @@ mod tests {
         assert_eq!(mailbox.take().unwrap().history, Some(history));
     }
 
+    /// A block of audio that decoded nothing and barely moved the meter says
+    /// what the one before it said, so it must not cost a frame.
+    #[test]
+    fn a_negligible_level_change_looks_the_same() {
+        let quiet = RxSnapshot {
+            level: 0.200,
+            ..RxSnapshot::default()
+        };
+        let quieter = RxSnapshot {
+            level: 0.203,
+            ..RxSnapshot::default()
+        };
+        assert_eq!(Visible::of(&quiet), Visible::of(&quieter));
+    }
+
+    #[rstest]
+    #[case(RxSnapshot { level: 0.5, ..RxSnapshot::default() })]
+    #[case(RxSnapshot { progress: RxProgress::Acquiring, ..RxSnapshot::default() })]
+    #[case(RxSnapshot { display_fraction: 0.25, ..RxSnapshot::default() })]
+    #[case(RxSnapshot { mode: Some(Mode::Robot36), ..RxSnapshot::default() })]
+    #[case(RxSnapshot { dropped_samples: 1, ..RxSnapshot::default() })]
+    #[case(RxSnapshot { callsigns: vec!["JA1ABC".to_owned()], ..RxSnapshot::default() })]
+    #[case(RxSnapshot {
+        frame: Some(Frame { width: 1, height: 1, rgba: vec![0; 4] }),
+        ..RxSnapshot::default()
+    })]
+    #[case(RxSnapshot { error: Some(AppError::CaptureRestartFailed), ..RxSnapshot::default() })]
+    fn anything_the_interface_draws_looks_different(#[case] snapshot: RxSnapshot) {
+        assert_ne!(Visible::of(&snapshot), Visible::of(&RxSnapshot::default()));
+    }
+
+    /// Nothing has been observed yet when the interface first draws, so an
+    /// idle worker's first snapshot must not read as a change.
+    #[test]
+    fn an_empty_snapshot_looks_like_what_the_interface_starts_with() {
+        assert_eq!(Visible::of(&RxSnapshot::default()), Visible::default());
+    }
+
     #[test]
     fn a_collected_mailbox_reports_nothing_until_it_is_written_again() {
-        let mailbox = Mailbox::default();
+        let mailbox = Mailbox::new(Waker::default());
         mailbox.publish(RxSnapshot::default());
         assert!(mailbox.take().is_some());
         assert!(mailbox.take().is_none());
@@ -358,7 +469,7 @@ mod tests {
 
     #[test]
     fn newer_payloads_replace_uncollected_ones() {
-        let mailbox = Mailbox::default();
+        let mailbox = Mailbox::new(Waker::default());
         mailbox.publish(RxSnapshot {
             error: Some(AppError::WorkerUnavailable("first")),
             ..RxSnapshot::default()
@@ -467,7 +578,7 @@ mod pipeline_tests {
         sync_start: SyncStart,
     ) -> (RxSnapshot, Option<Frame>) {
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, sync_start);
+        let worker = RxWorker::spawn(reader, true, true, sync_start, Waker::default());
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
         let silence = vec![0.0_f32; trailing_silence];
@@ -538,7 +649,7 @@ mod pipeline_tests {
         let pcm = transmission(mode, expected.clone(), 0.0);
         let silence = vec![0.0_f32; RATE as usize * 3];
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled);
+        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled, Waker::default());
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
 
@@ -569,7 +680,7 @@ mod pipeline_tests {
         let mode = Mode::Robot36;
         let pcm = transmission(mode, source_image(mode), 0.0);
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled);
+        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled, Waker::default());
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
 

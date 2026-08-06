@@ -3,7 +3,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use jiff::{Timestamp, Zoned};
@@ -28,6 +28,7 @@ use crate::{
     },
     ui::raster::{Raster, test_pattern_image},
     worker::{
+        Waker,
         audio::AudioState,
         compose::{ComposeRequest, Composer},
         receive::{Frame, RxProgress},
@@ -40,6 +41,19 @@ use crate::{
 };
 
 const PLAYBACK_QUEUE_SAMPLES: usize = 48_000;
+
+/// How often the interface draws while it is showing something that moves.
+const LIVE_INTERVAL: Duration = Duration::from_millis(33);
+
+/// How often a composition in progress is looked for.
+const COMPOSE_POLL: Duration = Duration::from_millis(100);
+
+/// How often the interface looks at what nothing reports on its own.
+///
+/// A device that stops is left on the capture stream rather than published,
+/// and rig control answers on its own schedule; neither is worth a faster
+/// frame than the operator would notice one at.
+const WATCH_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
@@ -353,6 +367,11 @@ struct Composition {
     /// Set when something changed the composition while a transmission was
     /// running, so the change is made once the transmission ends.
     deferred: bool,
+    /// Set while the worker has been asked for a frame and has not answered.
+    ///
+    /// The composer has no way to ask for a repaint of its own, so this is what
+    /// keeps the interface looking until the frame it asked for arrives.
+    pending: bool,
     /// Whether the composed frame shows the time, and the minute it was
     /// composed in.
     ///
@@ -371,7 +390,7 @@ struct Composition {
 }
 
 impl App {
-    pub fn new(paths: AppPaths) -> Self {
+    pub fn new(paths: AppPaths, waker: Waker) -> Self {
         let config = Config::load(paths.config_file());
         let settings = config.settings();
         let audio = AudioState::new(
@@ -379,6 +398,7 @@ impl App {
             settings.output_device.as_deref(),
             settings.dsp.slant,
             settings.vis_restart,
+            waker,
         );
         let mut app = Self::from_parts(audio, paths, config, &settings, platform::host());
         app.refresh_library();
@@ -478,6 +498,7 @@ impl App {
                 received_at: Zoned::now(),
                 frame: None,
                 deferred: false,
+                pending: false,
                 timed: false,
                 minute: current_minute(),
                 tuned: false,
@@ -801,13 +822,48 @@ impl App {
         Ok(())
     }
 
+    /// How long the interface may sit still before it has to draw again.
+    ///
+    /// A reception asks for its own frames through the receive worker's waker,
+    /// so what is left here is everything that has no producer to ask on its
+    /// behalf: state only the clock changes, a worker read by polling, and a
+    /// device whose failure arrives on the stream rather than in a snapshot.
+    /// `None` leaves the interface asleep until the operator touches it.
+    pub fn repaint_after(&self) -> Option<Duration> {
+        let mut soonest = None;
+        let mut at_most = |interval: Duration| {
+            soonest = Some(soonest.map_or(interval, |current: Duration| current.min(interval)));
+        };
+
+        // A transmission is read from its worker and from the playback queue,
+        // neither of which announces anything, and the row being sent moves
+        // continuously while it runs.
+        if self.tx_snapshot.phase.is_active() || self.tone_until.is_some() {
+            at_most(LIVE_INTERVAL);
+        }
+        if self.composition.pending {
+            at_most(COMPOSE_POLL);
+        }
+        // A composed frame that prints the clock stops being what a
+        // transmission should send as the minute turns.
+        if self.composition.timed {
+            at_most(Duration::from_secs(
+                60 - Timestamp::now().as_second().rem_euclid(60) as u64,
+            ));
+        }
+        // Nothing in a snapshot reports a device that stopped, and a rig is
+        // read by polling, so both are watched for rather than waited on.
+        if self.audio.is_capturing() || self.rig.enabled {
+            at_most(WATCH_INTERVAL);
+        }
+        soonest
+    }
+
     /// Adopts anything the receive worker produced since the last frame.
     pub fn poll_audio(&mut self) {
         self.poll_device_fault();
-        if let Some(frame) = self.audio.poll()
-            && let Some(raster) = Raster::from_frame(frame)
-        {
-            self.rx_raster = raster;
+        if let Some(frame) = self.audio.poll() {
+            self.rx_raster.set_frame(&frame);
         }
         if let Some(candidate) = self.audio.take_history() {
             self.adopt_received_image(&candidate.frame);
@@ -1234,6 +1290,7 @@ impl App {
         };
         self.composition.generation = self.composition.generation.wrapping_add(1);
         self.composition.frame = None;
+        self.composition.pending = true;
         self.tx_error = None;
         self.composition.composer.request(ComposeRequest {
             generation: self.composition.generation,
@@ -1283,11 +1340,12 @@ impl App {
         if let Some(result) = self.composition.composer.latest()
             && result.generation == self.composition.generation
         {
+            self.composition.pending = false;
             self.composition.timed = result.uses_timestamps;
             self.composition.tuned = result.uses_radio;
             match result.frame {
                 Ok(frame) => {
-                    self.tx_raster = Raster::from_image(&frame);
+                    self.tx_raster.set_image(&frame);
                     self.composition.frame = Some(frame);
                     self.tx_error = None;
                 }

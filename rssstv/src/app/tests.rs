@@ -1212,3 +1212,34 @@ fn a_selection_during_a_transmission_takes_effect_when_it_ends() {
     let second = composed(&mut app);
     assert!(center(&second).g > center(&second).r);
 }
+
+/// An interface with nothing running asks for no frames at all.
+///
+/// This is the whole point of the workers asking for their own: a station
+/// sitting idle has nothing to draw, and drawing it anyway is what kept the
+/// machine busy.
+#[test]
+fn an_idle_interface_schedules_no_frames() {
+    let app = App::headless();
+    assert_eq!(app.repaint_after(), None);
+}
+
+/// A transmission is read by polling its worker and the playback queue, so it
+/// has to be looked at rather than waited on.
+#[test]
+fn a_running_tone_schedules_frames() {
+    let mut app = App::headless();
+    app.tune_for_test();
+    assert_eq!(app.repaint_after(), Some(LIVE_INTERVAL));
+}
+
+/// The soonest of the reasons to draw is the one that decides.
+#[test]
+fn the_shortest_interval_wins() {
+    let mut app = App::headless();
+    app.rig.enabled = true;
+    assert_eq!(app.repaint_after(), Some(WATCH_INTERVAL));
+
+    app.tune_for_test();
+    assert_eq!(app.repaint_after(), Some(LIVE_INTERVAL));
+}

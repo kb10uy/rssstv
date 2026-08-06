@@ -202,7 +202,7 @@ impl Interface {
         platform::prepare_window(cc);
         instance.publish_window(cc);
 
-        let app = App::new(paths);
+        let app = App::new(paths, worker::Waker::new(cc.egui_ctx.clone()));
         cc.egui_ctx.set_zoom_factor(app.ui_scale);
         let model = menu::model(&app);
         let menu = match menu::Native::install(cc, &model) {
@@ -233,9 +233,6 @@ impl Drop for Interface {
 
 impl eframe::App for Interface {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // The receive worker runs ahead of the interface, so a repaint is
-        // requested unconditionally: a decoded row must not wait for input.
-        ui.ctx().request_repaint();
         if !self.fitted {
             self.fitted = fit_to_monitor(ui.ctx());
         }
@@ -269,6 +266,14 @@ impl eframe::App for Interface {
         }
 
         self.app.persist();
+        // The receive worker asks for a frame itself when it has decoded
+        // something worth showing, so the interface only schedules the frames
+        // nothing else would produce. Asking for one unconditionally instead
+        // redrew the whole window at the monitor's rate however idle the
+        // station was.
+        if let Some(after) = self.app.repaint_after() {
+            ui.ctx().request_repaint_after(after);
+        }
         if self.quitting {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }

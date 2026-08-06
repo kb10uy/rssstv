@@ -270,9 +270,17 @@ second replaces that path instead of adding a sequence number.
 Progressive image display uses the existing decoder API. The worker tracks
 `RxDecoder::image_revision`, and when it changes, converts `RxDecoder::image`
 into RGBA bytes and publishes an owned frame. The conversion runs on the worker
-so the interface only wraps the buffer, without copying pixels. Publication is
-throttled to at most 30 frames per second; the revision counter makes skipped
-intermediate revisions harmless.
+rather than under the interface lock. Publication is throttled to at most 30
+frames per second; the revision counter makes skipped intermediate revisions
+harmless.
+
+The interface writes those pixels into the raster it is already showing rather
+than building a new one. Both the pixel buffer and the texture the pixels were
+uploaded to are reused: the buffer whenever the texture manager has finished
+with the previous contents, and the texture unconditionally, through
+`TextureHandle::set`. Replacing the raster instead would have the renderer free
+and allocate a texture on every published frame, which for the largest mode is
+two megabytes thirty times a second.
 
 Slant correction is enabled by default. For a reception that starts while it is
 enabled, the worker retains a bounded full-rate frequency/sync stream and
@@ -425,6 +433,23 @@ that stops polling cannot make the worker accumulate megabyte frames.
 The interface invalidates the canvas cache only when the raster, the detected
 mode, or the decoded fraction actually changed, so an idle receiver does not
 retessellate every frame.
+
+Frames are asked for by whoever produced something to show rather than drawn
+at the monitor's rate. The receive worker holds a waker over the egui context
+and requests a repaint from the mailbox, comparing the drawable part of each
+snapshot against the one the interface was last woken for: the mode, progress,
+decoded fraction, dropped-sample count, identifier counts, whether a frame,
+history entry, or error is carried, and the level quantized to what a meter can
+resolve. A station listening to silence therefore leaves the interface asleep.
+
+What has no producer to ask on its behalf is scheduled instead, by the shortest
+of: 33 ms while a transmission or tune tone is running, because the transmit
+worker and the playback queue are both read by polling; 100 ms while a
+composition has been asked for and not answered; the remainder of the minute
+while the composed frame prints the clock; and 500 ms while a capture device is
+open or rig control is enabled, because a device that stops reports on the
+capture stream rather than in a snapshot, and a rig answers on its own
+schedule. With none of those true the interface draws only on input.
 
 A detected mode replaces the operator's selection only while automatic
 detection is on. With it off, the dropdown selection stands.

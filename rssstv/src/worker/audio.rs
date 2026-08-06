@@ -5,7 +5,10 @@ use rssstv_demodulator::SyncStart;
 
 use crate::{
     error::AppError,
-    worker::receive::{HistoryCandidate, RxSnapshot, RxWorker},
+    worker::{
+        Waker,
+        receive::{HistoryCandidate, RxSnapshot, RxWorker},
+    },
 };
 
 /// One second of queue at the preferred capture rate.
@@ -29,6 +32,9 @@ pub struct AudioState {
     slant: bool,
     vis_restart: bool,
     sync_start: SyncStart,
+    /// Handed to every worker opened here, so a decoded row reaches the canvas
+    /// without the interface having to redraw on the chance that one has.
+    waker: Waker,
 }
 
 impl AudioState {
@@ -42,6 +48,7 @@ impl AudioState {
         preferred_output: Option<&str>,
         slant: bool,
         vis_restart: bool,
+        waker: Waker,
     ) -> Self {
         let host = AudioHost::new();
         let (devices, input_error) = match host.input_devices() {
@@ -88,6 +95,7 @@ impl AudioState {
             slant,
             vis_restart,
             sync_start: SyncStart::default(),
+            waker,
         };
         if let Some(device) = device {
             state.open(&device);
@@ -115,6 +123,7 @@ impl AudioState {
             slant: true,
             vis_restart: true,
             sync_start: SyncStart::default(),
+            waker: Waker::default(),
         }
     }
 
@@ -153,7 +162,13 @@ impl AudioState {
         self.snapshot = RxSnapshot::default();
         match self.host.open_capture(device, QUEUE_CAPACITY_SAMPLES) {
             Ok((capture, reader)) => {
-                let worker = RxWorker::spawn(reader, self.slant, self.vis_restart, self.sync_start);
+                let worker = RxWorker::spawn(
+                    reader,
+                    self.slant,
+                    self.vis_restart,
+                    self.sync_start,
+                    self.waker.clone(),
+                );
                 // A device opened while the station is transmitting is held
                 // exactly like the one it replaces.
                 worker.set_held(self.held);
@@ -313,12 +328,6 @@ impl AudioState {
         };
         self.open(&device);
         self.is_capturing()
-    }
-}
-
-impl Default for AudioState {
-    fn default() -> Self {
-        Self::new(None, None, true, true)
     }
 }
 

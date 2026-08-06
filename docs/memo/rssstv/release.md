@@ -62,7 +62,9 @@ directory that has already been built.
 The demo is an assets-only Worker: `web-demo/wrangler.toml` names a directory
 and no `main`, because the page decodes in the browser and there is nothing for
 a Worker script to do. It is still a Worker rather than a Pages project, which
-leaves room to put a script beside the assets later without moving the site.
+leaves room to put a script beside the assets later without moving the site. The
+same file claims `rssstv.kb10uy.dev` as a custom domain, which needs the zone to
+be on Cloudflare and manages the record and the certificate itself.
 
 Every path in the page is relative, which is what lets the same tree be served
 from a local directory and from a Worker subdomain without rewriting.

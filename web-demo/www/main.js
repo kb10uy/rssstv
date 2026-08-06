@@ -34,6 +34,7 @@ const session = {
   painted: -1,
   decoding: false,
   mic: null,
+  wakeLock: null,
   completedAt: null,
   rowsAt: 0,
   rows: 0,
@@ -205,6 +206,44 @@ function tick() {
 }
 
 requestAnimationFrame(tick);
+
+/**
+ * Keeps the screen on while a reception is in progress.
+ *
+ * A picture takes minutes to arrive and the operator has nothing to touch while
+ * it does, so the display would otherwise blank and the capture would be left
+ * running against a locked screen. The browser drops the lock whenever the page
+ * stops being visible, which is why it is taken again on the way back rather
+ * than only once.
+ */
+async function holdWakeLock() {
+  if (!('wakeLock' in navigator) || session.wakeLock !== null) {
+    return;
+  }
+  try {
+    const lock = await navigator.wakeLock.request('screen');
+    lock.addEventListener('release', () => {
+      if (session.wakeLock === lock) {
+        session.wakeLock = null;
+      }
+    });
+    session.wakeLock = lock;
+  } catch (error) {
+    appendLog([`the screen wake lock was refused: ${error?.message ?? error}`]);
+  }
+}
+
+function releaseWakeLock() {
+  const lock = session.wakeLock;
+  session.wakeLock = null;
+  lock?.release().catch(() => {});
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && session.mic !== null) {
+    holdWakeLock();
+  }
+});
 
 /**
  * Reads first-channel samples straight out of a PCM WAV file.
@@ -381,6 +420,7 @@ async function startMicrophone() {
     appendLog([`microphone open at ${context.sampleRate} Hz`]);
     ui.micStart.disabled = true;
     ui.micStop.disabled = false;
+    holdWakeLock();
   } catch (error) {
     for (const track of stream.getTracks()) {
       track.stop();
@@ -395,6 +435,7 @@ function stopMicrophone() {
   }
   const { context, stream, node, source, sink } = session.mic;
   session.mic = null;
+  releaseWakeLock();
   node.port.onmessage = null;
   source.disconnect();
   node.disconnect();

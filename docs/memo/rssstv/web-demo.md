@@ -107,6 +107,13 @@ browser cannot reach the processing the operating system applies to the device,
 so the page also says to turn off Windows audio enhancements and macOS voice
 isolation.
 
+A reception also holds a screen wake lock, because a picture takes minutes to
+arrive with nothing for the operator to touch while it does, and a blanked
+display would leave the capture running behind a locked screen. The browser
+drops the lock whenever the page stops being visible, so it is taken again on
+`visibilitychange` rather than only when capture starts. Browsers without the
+API get no lock and no error.
+
 Capture is an `AudioWorkletProcessor` that gathers 128-frame quanta into 2048
 samples and posts them; the decoding happens on the main thread. Running the
 decoder inside the worklet is possible but not sensible: the global scope has no

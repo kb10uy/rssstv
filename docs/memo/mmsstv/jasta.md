@@ -14,7 +14,12 @@ matcher, because both are MMSSTV formats that a log feature would have to read.
 ## Source Map
 
 - `JASTA.txt`: the 2010 contest rules, English then Japanese. This is the
-  authority the program is measured against.
+  authority the program is measured against. It is not the current rule set:
+  the contest still runs, and by the 47th (2026) edition WARC bands are
+  excluded, a QSO with a station that sent no self-portrait counts, and the log
+  deadline moved to September 10. JASTA has also moved twice since, from
+  `homepage3.nifty.com` through `sstv.image.coocan.jp` to
+  <https://ja2hyd.main.jp/jasta/>. MMJASTA implements the 2010 text.
 - `JASTA/mmjasta.txt`, `JASTA/EMMJASTA.TXT`: the operator manual.
 - `JASTA/Main.cpp:264-314`: `Exec()`, load and filter.
 - `JASTA/Main.cpp:316-329`: `IsValidRST()`, serial-number validation and

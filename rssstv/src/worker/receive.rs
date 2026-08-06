@@ -498,7 +498,7 @@ mod pipeline_tests {
         time::{Duration, Instant},
     };
 
-    use rssstv_audio::{CaptureFeed, synthetic_capture};
+    use rssstv_audio::{CaptureWriter, synthetic_capture};
     use rssstv_fskid::FskId;
     use rssstv_sstv::{
         TransmissionEncoder, TxEncoder,
@@ -598,7 +598,7 @@ mod pipeline_tests {
 
     /// Pushes `source` through the capture queue as fast as the worker takes it.
     fn push_all(
-        feed: &mut CaptureFeed,
+        feed: &mut CaptureWriter,
         worker: &RxWorker,
         source: &[f32],
         snapshot: &mut RxSnapshot,
@@ -610,7 +610,7 @@ mod pipeline_tests {
             if room == 0 {
                 thread::sleep(Duration::from_millis(1));
             } else {
-                offset += feed.push(&source[offset..offset + room]);
+                offset += feed.write(&source[offset..offset + room]);
             }
             collect(worker, snapshot, frame);
         }
@@ -618,7 +618,7 @@ mod pipeline_tests {
 
     /// Waits for the worker to take everything the queue still holds.
     fn drain(
-        feed: &mut CaptureFeed,
+        feed: &mut CaptureWriter,
         worker: &RxWorker,
         snapshot: &mut RxSnapshot,
         frame: &mut Option<Frame>,

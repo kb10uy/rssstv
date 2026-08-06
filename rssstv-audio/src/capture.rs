@@ -186,14 +186,14 @@ impl CaptureReader {
 /// This exists so the receive pipeline can be driven from recorded audio
 /// without hardware, keeping offline runs on exactly the same code path as a
 /// live device.
-pub struct CaptureFeed {
+pub struct CaptureWriter {
     producer: HeapProd<f32>,
     dropped: Arc<AtomicU64>,
 }
 
-impl CaptureFeed {
-    /// Pushes what fits and counts the rest as dropped, like a device overrun.
-    pub fn push(&mut self, samples: &[f32]) -> usize {
+impl CaptureWriter {
+    /// Writes what fits and counts the rest as dropped, like a device overrun.
+    pub fn write(&mut self, samples: &[f32]) -> usize {
         let written = self.producer.push_slice(samples);
         if written < samples.len() {
             self.dropped
@@ -208,10 +208,10 @@ impl CaptureFeed {
     }
 }
 
-impl core::fmt::Debug for CaptureFeed {
+impl core::fmt::Debug for CaptureWriter {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
-            .debug_struct("CaptureFeed")
+            .debug_struct("CaptureWriter")
             .finish_non_exhaustive()
     }
 }
@@ -220,7 +220,7 @@ impl core::fmt::Debug for CaptureFeed {
 pub fn synthetic_capture(
     sample_rate_hz: u32,
     capacity_samples: usize,
-) -> Result<(CaptureFeed, CaptureReader), AudioError> {
+) -> Result<(CaptureWriter, CaptureReader), AudioError> {
     if capacity_samples == 0 {
         return Err(AudioError::EmptyCapacity);
     }
@@ -232,7 +232,7 @@ pub fn synthetic_capture(
     let (producer, consumer) = ringbuf::HeapRb::<f32>::new(capacity_samples).split();
     let dropped = Arc::new(AtomicU64::new(0));
     Ok((
-        CaptureFeed {
+        CaptureWriter {
             producer,
             dropped: Arc::clone(&dropped),
         },

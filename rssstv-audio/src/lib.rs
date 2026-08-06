@@ -11,7 +11,7 @@ mod error;
 mod host;
 mod playback;
 
-pub use capture::{Capture, CaptureFeed, CaptureReader, Reading, synthetic_capture};
+pub use capture::{Capture, CaptureReader, CaptureWriter, Reading, synthetic_capture};
 pub use device::{InputDevice, OutputDevice};
 pub use error::{AudioError, FaultKind, FaultSlot, StreamFault};
 pub use host::AudioHost;

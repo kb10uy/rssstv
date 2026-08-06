@@ -70,12 +70,12 @@ pub enum RxEvent {
 
 /// Result of one streaming process call.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RxProcess {
+pub struct RxProcessResult {
     consumed: usize,
     event: Option<RxEvent>,
 }
 
-impl RxProcess {
+impl RxProcessResult {
     pub(super) const fn new(consumed: usize, event: Option<RxEvent>) -> Self {
         Self { consumed, event }
     }

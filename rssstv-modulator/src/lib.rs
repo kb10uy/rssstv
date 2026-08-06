@@ -113,11 +113,6 @@ where
         Ok(written)
     }
 
-    /// Alias for [`Modulator::process`] emphasizing block-buffer filling.
-    pub fn fill(&mut self, output: &mut [f32]) -> Result<usize, ModulatorError> {
-        self.process(output)
-    }
-
     fn load_next_tone(&mut self) -> Result<bool, ModulatorError> {
         let Some(tone) = self.tones.next() else {
             self.has_tone = false;
@@ -282,6 +277,6 @@ mod tests {
     fn empty_input_is_immediately_exhausted() {
         let mut modulator = Modulator::new(core::iter::empty(), 8_000).unwrap();
         assert_eq!(modulator.process(&mut [1.0; 4]), Ok(0));
-        assert_eq!(modulator.fill(&mut [1.0]), Ok(0));
+        assert_eq!(modulator.process(&mut [1.0]), Ok(0));
     }
 }

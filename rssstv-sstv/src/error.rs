@@ -46,6 +46,12 @@ pub enum SstvError {
     /// Absolute sample arithmetic overflowed.
     #[error("receive sample position overflow")]
     SamplePositionOverflow,
+    /// A sample the decoder needed was no longer retained.
+    #[error("sample {sample} was already discarded")]
+    SampleDiscarded {
+        /// Absolute position of the missing sample.
+        sample: u64,
+    },
     /// No stable recurring raster synchronization was present in the acquisition window.
     #[error("stable raster synchronization was not acquired")]
     RasterNotAcquired,

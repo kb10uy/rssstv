@@ -108,7 +108,7 @@ impl TxEncoder {
         Some(self.emit(component, Frequency::from_hz(hz), duration_ms * PS_PER_MS))
     }
 
-    fn unit_count(&self) -> usize {
+    fn raster_units(&self) -> usize {
         let spec = self.mode.spec();
         spec.active_rows() as usize / spec.rows_per_raster_unit() as usize
     }
@@ -145,7 +145,7 @@ impl Iterator for TxEncoder {
             }
         }
         loop {
-            if self.unit >= self.unit_count() {
+            if self.unit >= self.raster_units() {
                 return None;
             }
             let Some(segment) = scan.unit(self.unit).get(self.segment).copied() else {

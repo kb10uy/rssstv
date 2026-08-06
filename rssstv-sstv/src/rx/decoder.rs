@@ -13,7 +13,7 @@ use super::{
     acquisition::{acquire_full, acquire_startup, startup_window_samples},
     clock::{RasterClock, ceil_sample},
     config::{RxConfig, Staging},
-    event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason},
+    event::{RxEvent, RxOutcome, RxProcessResult, RxState, StopReason},
     input::{DemodulatedBlock, SampleBuffer},
     raster::{PixelSegment, RasterProfile},
     slant::{SlantEstimate, SlantEstimator},
@@ -254,7 +254,10 @@ impl RxDecoder {
     /// returns an event. Once [`RxState::Complete`] is reached, further non-empty
     /// input is rejected. If processing fails after consuming a prefix, the
     /// returned [`RxProcessError`] reports that prefix so it is not resent.
-    pub fn process(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, RxProcessError> {
+    pub fn process(
+        &mut self,
+        block: DemodulatedBlock<'_>,
+    ) -> Result<RxProcessResult, RxProcessError> {
         let expected = self.next_sample;
         self.process_inner(block).map_err(|error| {
             let consumed = if expected.is_none_or(|sample| sample == block.first_sample()) {
@@ -275,17 +278,17 @@ impl RxDecoder {
         })
     }
 
-    fn process_inner(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcess, SstvError> {
+    fn process_inner(&mut self, block: DemodulatedBlock<'_>) -> Result<RxProcessResult, SstvError> {
         block.validate_continuity(self.next_sample)?;
         if let Some(event) = self.poll_event() {
-            return Ok(RxProcess::new(0, Some(event)));
+            return Ok(RxProcessResult::new(0, Some(event)));
         }
         if matches!(
             self.decode.state,
             RxState::Complete | RxState::Stopped { .. }
         ) {
             return if block.frequency_hz().is_empty() {
-                Ok(RxProcess::new(0, None))
+                Ok(RxProcessResult::new(0, None))
             } else {
                 Err(SstvError::RxAlreadyComplete)
             };
@@ -319,7 +322,7 @@ impl RxDecoder {
                             self.decode.state = RxState::Decoding {
                                 completed_rows: self.decode.delivered_rows,
                             };
-                            return Ok(RxProcess::new(
+                            return Ok(RxProcessResult::new(
                                 consumed,
                                 Some(RxEvent::RasterAcquired {
                                     source_epoch: clock.source_epoch(),
@@ -341,7 +344,7 @@ impl RxDecoder {
                                 staged.discard_before(keep_from);
                             }
                             if consumed == block.frequency_hz().len() {
-                                return Ok(RxProcess::new(consumed, None));
+                                return Ok(RxProcessResult::new(consumed, None));
                             }
                             continue;
                         }
@@ -353,7 +356,7 @@ impl RxDecoder {
                 self.append(block, consumed, take)?;
                 consumed += take;
                 if take == 0 {
-                    return Ok(RxProcess::new(consumed, None));
+                    return Ok(RxProcessResult::new(consumed, None));
                 }
                 continue;
             }
@@ -361,11 +364,11 @@ impl RxDecoder {
             if self.can_decode_next()? {
                 if !self.synchronize()? {
                     let event = self.poll_event().expect("stop event queued");
-                    return Ok(RxProcess::new(consumed, Some(event)));
+                    return Ok(RxProcessResult::new(consumed, Some(event)));
                 }
                 if !self.can_decode_next()? {
                     if let Some(event) = self.poll_event() {
-                        return Ok(RxProcess::new(consumed, Some(event)));
+                        return Ok(RxProcessResult::new(consumed, Some(event)));
                     }
                     continue;
                 }
@@ -377,13 +380,13 @@ impl RxDecoder {
                 }
                 self.track_slant()?;
                 if let Some(event) = self.poll_event() {
-                    return Ok(RxProcess::new(consumed, Some(event)));
+                    return Ok(RxProcessResult::new(consumed, Some(event)));
                 }
                 continue;
             }
             let remaining = block.frequency_hz().len() - consumed;
             if remaining == 0 {
-                return Ok(RxProcess::new(consumed, None));
+                return Ok(RxProcessResult::new(consumed, None));
             }
             let required_end = self.required_end()?;
             let available_end = self.input.as_ref().expect("input initialized").end();
@@ -630,7 +633,7 @@ impl RxDecoder {
                     required_sample: sample,
                 }
             } else {
-                SstvError::SamplePositionOverflow
+                SstvError::SampleDiscarded { sample }
             })
     }
 

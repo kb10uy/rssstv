@@ -12,7 +12,7 @@ mod sync;
 
 pub use config::{RxConfig, Staging};
 pub use decoder::{RefinementResult, RxDecoder};
-pub use event::{RxEvent, RxOutcome, RxProcess, RxState, StopReason};
+pub use event::{RxEvent, RxOutcome, RxProcessResult, RxState, StopReason};
 pub use input::DemodulatedBlock;
 pub use slant::{SlantEstimate, SlantEstimator};
 pub use sync::SyncObservation;

@@ -2,7 +2,7 @@
 
 Three workflows in `.github/workflows/` cover the repository: `ci.yml` checks
 every change, `release.yml` builds and publishes what a tag names, and
-`pages.yml` deploys the browser demo.
+`deploy.yml` publishes the browser demo.
 
 ## CI
 
@@ -46,15 +46,26 @@ bindings to stubs nothing calls, so it proves nothing about the target the demo
 ships to. Building the page rather than only the crate is what keeps a broken
 deploy from reaching `master`.
 
-## Pages
+## Deploying the demo
 
-`pages.yml` runs on pushes to `master` and deploys `web-demo/www` to GitHub
-Pages after building the WebAssembly module into it. It needs the repository's
-Pages source set to GitHub Actions, which no workflow can do; until that is set
-in the repository settings the deploy step fails.
+`deploy.yml` runs on pushes to `master`, builds the WebAssembly module into
+`web-demo/www`, and uploads that directory to Cloudflare Workers with
+`wrangler`. It needs two repository secrets, `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`; the token needs permission to edit Workers scripts.
 
-The site is served from a project path rather than a domain root, so every path
-in the page is relative. An absolute one would resolve above the site and 404.
+The build happens here rather than on Cloudflare because Cloudflare's build
+image carries Node, Python, Go, and Ruby and no Rust. Connecting the repository
+to Workers Builds would mean installing a toolchain on every deploy before
+anything of this project is compiled, which is a worse trade than uploading a
+directory that has already been built.
+
+The demo is an assets-only Worker: `web-demo/wrangler.toml` names a directory
+and no `main`, because the page decodes in the browser and there is nothing for
+a Worker script to do. It is still a Worker rather than a Pages project, which
+leaves room to put a script beside the assets later without moving the site.
+
+Every path in the page is relative, which is what lets the same tree be served
+from a local directory and from a Worker subdomain without rewriting.
 
 ## Releases
 

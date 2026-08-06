@@ -91,11 +91,11 @@ cargo run -p decode-wav -- [--packet-size SAMPLES] <INPUT.wav> <OUTPUT_IMAGE>
 
 ## Web demo
 
-The receive path also builds for WebAssembly, and
-<https://kb10uy.github.io/rssstv/> runs it in the browser: drop a recording on
-the page, or point a microphone at a receiver, and the picture is decoded by the
-same Rust the desktop application uses. Its images are identical to the ones
-`decode-wav` produces from the same files.
+The receive path also builds for WebAssembly, and `web-demo` runs it in the
+browser: drop a recording on the page, or point a microphone at a receiver, and
+the picture is decoded by the same Rust the desktop application uses. Its images
+are identical to the ones `decode-wav` produces from the same files. Pushing to
+`master` deploys it to Cloudflare Workers.
 
 ```text
 rustup target add wasm32-unknown-unknown

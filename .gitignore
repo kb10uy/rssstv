@@ -1,3 +1,4 @@
 /target
 /.claude
 /web-demo/www/pkg
+/web-demo/.wrangler

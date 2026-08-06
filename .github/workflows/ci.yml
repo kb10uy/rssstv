@@ -83,7 +83,7 @@ jobs:
       - name: Run Clippy for wasm32
         run: cargo clippy -p rssstv-web-demo --target wasm32-unknown-unknown -- -D warnings
 
-      # The same command the Pages workflow deploys the result of, so a build
+      # The same command the deploy workflow publishes the result of, so a build
       # that cannot produce the page fails here rather than on a push to master.
       - name: Build the browser demo
         run: wasm-pack build web-demo --target web --out-dir www/pkg --release

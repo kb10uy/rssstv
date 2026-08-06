@@ -110,7 +110,6 @@ pub struct RxSnapshot {
     pub mode: Option<Mode>,
     pub progress: RxProgress,
     pub display_fraction: f32,
-    pub level: f32,
     pub frame: Option<Frame>,
     pub history: Option<HistoryCandidate>,
     pub callsigns: Vec<String>,
@@ -123,10 +122,10 @@ pub struct RxSnapshot {
 /// The parts of a snapshot the interface actually draws.
 ///
 /// A worker publishes on every block of audio it reads, and most of those say
-/// the same thing as the one before: the level moves fractionally and nothing
-/// else changes. Comparing this instead of the whole snapshot is what keeps
-/// the interface asleep between the observations worth showing, so the level
-/// is quantized to what a meter can resolve rather than compared exactly.
+/// the same thing as the one before. Comparing this instead of the whole
+/// snapshot is what keeps the interface asleep between the observations worth
+/// showing, so the decoded fraction is quantized to the steps the scan
+/// boundary can be seen to move in rather than compared exactly.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Visible {
     mode: Option<Mode>,
@@ -137,7 +136,6 @@ struct Visible {
     callsigns: usize,
     numbers: usize,
     dropped_samples: u64,
-    level: u8,
     display_fraction: u8,
 }
 
@@ -152,13 +150,12 @@ impl Visible {
             callsigns: snapshot.callsigns.len(),
             numbers: snapshot.numbers.len(),
             dropped_samples: snapshot.dropped_samples,
-            level: quantize(snapshot.level),
             display_fraction: quantize(snapshot.display_fraction),
         }
     }
 }
 
-/// Rounds a `0.0..=1.0` reading to the steps a bar can be seen to move in.
+/// Rounds a `0.0..=1.0` reading to the steps it can be seen to move in.
 fn quantize(value: f32) -> u8 {
     (value.clamp(0.0, 1.0) * 128.0) as u8
 }
@@ -421,23 +418,22 @@ mod tests {
         assert_eq!(mailbox.take().unwrap().history, Some(history));
     }
 
-    /// A block of audio that decoded nothing and barely moved the meter says
-    /// what the one before it said, so it must not cost a frame.
+    /// A block of audio that moved the scan boundary by less than the canvas
+    /// can show says what the one before it said, so it must not cost a frame.
     #[test]
-    fn a_negligible_level_change_looks_the_same() {
-        let quiet = RxSnapshot {
-            level: 0.200,
+    fn a_negligible_change_looks_the_same() {
+        let earlier = RxSnapshot {
+            display_fraction: 0.200,
             ..RxSnapshot::default()
         };
-        let quieter = RxSnapshot {
-            level: 0.203,
+        let later = RxSnapshot {
+            display_fraction: 0.203,
             ..RxSnapshot::default()
         };
-        assert_eq!(Visible::of(&quiet), Visible::of(&quieter));
+        assert_eq!(Visible::of(&earlier), Visible::of(&later));
     }
 
     #[rstest]
-    #[case(RxSnapshot { level: 0.5, ..RxSnapshot::default() })]
     #[case(RxSnapshot { progress: RxProgress::Acquiring, ..RxSnapshot::default() })]
     #[case(RxSnapshot { display_fraction: 0.25, ..RxSnapshot::default() })]
     #[case(RxSnapshot { mode: Some(Mode::Robot36), ..RxSnapshot::default() })]

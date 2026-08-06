@@ -206,10 +206,6 @@ The receive worker owns one `Demodulator` and, after VIS detection, one
 arrives from a live queue instead of a WAV reader, and the worker publishes
 intermediate snapshots instead of only a final result.
 
-The worker computes the input level itself from the raw capture block before
-demodulation. Level metering is a user-interface concern, not a protocol one,
-so `Demodulator` gains no accessor for it.
-
 Capture overrun breaks the contiguity the demodulator requires. `Reading`
 reports the gap, and the worker responds by discarding the demodulator and any
 decoder and starting again, rather than decoding across a discontinuity and
@@ -239,7 +235,7 @@ Reception is held for as long as anything is going out. A transmitting station
 hears its own signal come back off the antenna, and a picture decoded from it is
 the one being sent, so the worker reads the capture queue and throws it away
 while the hold lasts rather than closing the device: the device stays open, the
-selection is unchanged, and the input meter reads nothing. The hold follows the
+selection is unchanged, and the receive indicator goes out. The hold follows the
 transmit phase rather than being switched at either end of a transmission, so a
 tune tone, a picture, and a transmission that failed all release it the same way.
 Entering it closes out whatever was being received, under the same 65-percent
@@ -359,10 +355,13 @@ interval instead of waiting for a fixed fraction of the image.
 | `PhaseAdjusted` | Recorded for diagnostics only |
 | `Stopped` | Session ends with a synchronization-lost status |
 
-The interface shows raw input level as a single meter. Its fill is white when
-no valid reception is active and uses the theme's green success color while
-raster acquisition or decoding is in progress. It does not show a numeric
-dBFS value or synchronization percentage.
+The interface shows whether a reception is running as a single bar, filled
+green while raster acquisition or decoding is in progress and empty otherwise.
+It showed the raw input amplitude until it was found to say nothing the
+operator was reading it for, while being redrawable only as often as a block of
+audio arrives, so it stepped rather than moved. Nothing computes an input level
+now, and `Demodulator` never had an accessor for one. There is no numeric dBFS
+value or synchronization percentage.
 
 ### Transmit Worker
 
@@ -405,7 +404,7 @@ groups.
 App
   tab: Tab                       // Receive | Transmit
   audio: AudioState              // device selection, capture status
-  rx: RxState                    // live session, image handle, level, sync
+  rx: RxState                    // live session, image handle, progress, sync
   tx: TxState                    // selected mode, prepared frame, progress
   library: LibraryState          // template list, stock list
   qso: QsoState                  // DX call, report received, report and serial sent
@@ -439,8 +438,8 @@ at the monitor's rate. The receive worker holds a waker over the egui context
 and requests a repaint from the mailbox, comparing the drawable part of each
 snapshot against the one the interface was last woken for: the mode, progress,
 decoded fraction, dropped-sample count, identifier counts, whether a frame,
-history entry, or error is carried, and the level quantized to what a meter can
-resolve. A station listening to silence therefore leaves the interface asleep.
+history entry, or error is carried. A station listening to silence changes none
+of those and therefore leaves the interface asleep entirely.
 
 What has no producer to ask on its behalf is scheduled instead, by the shortest
 of: 33 ms while a transmission or tune tone is running, because the transmit
@@ -541,13 +540,14 @@ would have named. The window therefore opens straight onto the image, with no
 strip above it.
 
 That first box follows the tab and keeps one shape across
-both: a labelled level bar, the mode, and the controls that act on the signal. Receiving,
-that is the input meter, which fills green while a raster is being acquired or
-decoded, and the DSP toggles. Transmitting, it is the output level and the
+both: a labelled bar, the mode, and the controls that act on the signal. Receiving,
+that bar is the state indicator, which fills green while a raster is being
+acquired or decoded and is empty otherwise, and below it the DSP toggles.
+Transmitting, it is the output level and the
 transmit trigger, whose button fills the height occupied by the DSP heading and
 toggles on the receive tab. The output level is drawn as the same bar rather
 than as a slider, and is dragged to set it; it fills red while a transmission is running,
-for the reason the receive meter fills green. It carries no handle: the fill already
+for the reason the receive indicator fills green. It carries no handle: the fill already
 shows where the level is, and hovering reads it back as a percentage and in
 decibels. The box has a fixed height. Automatic mode detection remains visible
 on the transmit tab but is disabled there, since transmit modes are chosen rather
@@ -561,12 +561,12 @@ down, which is close to where a mixing desk's fader sits at its midpoint. The
 configuration file stores the travel, not the amplitude. The section is titled for whichever
 of the two it is showing.
 
-The level bar, mode panel, and the controls below them share one bordered
+The bar, mode panel, and the controls below them share one bordered
 container. The mode dropdown fills the container width and no tab shows helper
 text below it.
 
 The side panel is a fixed width rather than a draggable one. Everything in it
-is laid out from the width it is given — the level bar, both dropdowns, the
+is laid out from the width it is given — the bar, both dropdowns, the
 frequency readout, and every text field — so a wider panel shows no more than
 the default one does, while the picture beside it is what the rest of the
 window is for. The width is stated as the panel's exact size rather than as its
@@ -613,8 +613,8 @@ The list thumbnails have no overlays and remain plain `image` widgets.
 Two mock behaviors are deliberately reduced relative to the original MMSSTV
 interface, as recorded in the reference breakdown:
 
-- Receive analysis shows one input-level meter whose color indicates whether a
-  valid signal is active. There is no numeric level, synchronization percentage,
+- Receive analysis shows one bar saying whether a valid signal is being
+  decoded. There is no input level, numeric level, synchronization percentage,
   spectrum display, or waterfall.
 - The mode panel defaults to automatic VIS detection, with manual selection
   available from a dropdown rather than a column of per-mode buttons.
@@ -658,8 +658,8 @@ and spawns the receive worker, which demodulates, detects the mode from VIS,
 decodes the raster, and publishes snapshots. The interface adopts the newest
 snapshot on each frame and draws the partially decoded image progressively.
 
-Nothing simulated remains in the receive path. Mode, decoded rows, input level,
-decoded callsigns, and overrun counts all come from the worker. When no
+Nothing simulated remains in the receive path. Mode, decoded rows, decoded
+callsigns, and overrun counts all come from the worker. When no
 reception is in progress, the canvas shows a blank raster sized to the selected
 mode.
 

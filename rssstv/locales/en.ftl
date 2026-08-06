@@ -31,7 +31,7 @@ output-device = Output device
 
 tx-volume = Transmit level { $percent }% ({ $decibels } dB)
 
-section-rx-level = Receive level
+section-rx-state = Receive state
 section-tx-level = Transmit level
 section-mode = Mode
 label-auto-vis = Automatic detection (VIS)

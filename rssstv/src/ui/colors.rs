@@ -18,8 +18,8 @@ pub const SCAN_LINE: Color32 = Color32::from_rgb(148, 196, 252);
 /// Fills the transmit button, which is the one control that puts a signal out.
 pub const TX_BUTTON: Color32 = Color32::from_rgb(140, 40, 40);
 
-/// The receive meter while a picture is arriving.
-pub const RX_LEVEL: Color32 = Color32::from_rgb(80, 200, 120);
+/// The receive indicator while a picture is arriving.
+pub const RX_ACTIVE: Color32 = Color32::from_rgb(80, 200, 120);
 
 /// The transmit meter while a picture is going out.
 pub const TX_LEVEL: Color32 = Color32::from_rgb(200, 60, 60);

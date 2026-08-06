@@ -147,21 +147,22 @@ pub(super) fn frequency_readout(app: &App) -> String {
 
 /// The controls for whichever half of the application is in front.
 ///
-/// The two tabs share a shape: a level across the top, the mode below it, and
+/// The two tabs share a shape: a bar across the top, the mode below it, and
 /// the controls that act on the signal at the bottom. What each one means
-/// differs, so the level is an input meter while receiving and the output level
-/// while transmitting, and the DSP toggles give way to the transmit trigger.
+/// differs, so the bar says whether a picture is arriving while receiving and
+/// sets the output level while transmitting, and the DSP toggles give way to
+/// the transmit trigger.
 pub(super) fn tab_controls(ui: &mut Ui, app: &mut App) {
     ui.set_width(ui.available_width());
     heading(
         ui,
         &app.i18n.text(match app.tab {
-            Tab::Receive => "section-rx-level",
+            Tab::Receive => "section-rx-state",
             Tab::Transmit => "section-tx-level",
         }),
     );
     match app.tab {
-        Tab::Receive => rx_level(ui, app),
+        Tab::Receive => rx_state(ui, app),
         Tab::Transmit => tx_level(ui, app),
     }
     ui.add_space(12.0);
@@ -189,21 +190,23 @@ pub(super) fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) 
     });
 }
 
-pub(super) fn rx_level(ui: &mut Ui, app: &App) {
-    let snapshot = app.audio.snapshot();
-    let color = if snapshot.progress.is_active() {
-        colors::RX_LEVEL
-    } else {
-        Color32::WHITE
-    };
-    ui.add(ProgressBar::new(snapshot.level).fill(color));
+/// Whether a picture is arriving, as the bar the transmit level is set on.
+///
+/// It used to show the input amplitude, which is not what the operator is
+/// looking for here and could only be redrawn as often as a block of audio
+/// arrives, so it stepped rather than moved. What the bar was read for is
+/// whether the signal is being decoded at all, and that is all it says now.
+pub(super) fn rx_state(ui: &mut Ui, app: &App) {
+    let active = app.audio.snapshot().progress.is_active();
+    let filled = if active { 1.0 } else { 0.0 };
+    ui.add(ProgressBar::new(filled).fill(colors::RX_ACTIVE));
 }
 
-/// The transmit level, set by dragging the bar the receive meter fills.
+/// The transmit level, set by dragging the bar the receive indicator fills.
 ///
-/// Drawn as that meter rather than as a slider so the panel keeps one shape
+/// Drawn as that bar rather than as a slider so the panel keeps one shape
 /// across the tabs, and colored while transmitting for the same reason the
-/// receive meter is: the bar says whether the radio is doing anything.
+/// receive indicator is: the bar says whether the radio is doing anything.
 pub(super) fn tx_level(ui: &mut Ui, app: &mut App) {
     let transmitting = app.tx_snapshot.phase.is_active();
     let color = if transmitting {

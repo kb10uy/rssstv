@@ -30,9 +30,6 @@ const IDLE_POLL: Duration = Duration::from_millis(2);
 /// Shortest interval between published image frames.
 const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
-/// Fraction of the previous level retained when the signal falls.
-const RELEASE: f32 = 0.88;
-
 const STAGING_SECONDS: usize = 300;
 
 /// Trailing audio staged between staged-refinement attempts, in milliseconds.
@@ -433,7 +430,6 @@ pub(super) fn run(
         }
     };
     let mut pcm = vec![0.0_f32; READ_SAMPLES];
-    let mut level = 0.0_f32;
     let mut callsigns: Vec<String> = Vec::new();
     let mut numbers: Vec<String> = Vec::new();
     let mut last_frame = Instant::now() - FRAME_INTERVAL;
@@ -457,7 +453,6 @@ pub(super) fn run(
                 continue;
             }
             held = true;
-            level = 0.0;
             let closed = match session.suspend() {
                 Ok(closed) => closed,
                 Err(reason) => {
@@ -475,7 +470,6 @@ pub(super) fn run(
                 mode: None,
                 progress: RxProgress::Idle,
                 display_fraction,
-                level,
                 frame,
                 history,
                 callsigns: callsigns.clone(),
@@ -495,7 +489,6 @@ pub(super) fn run(
             continue;
         }
         let samples = &pcm[..reading.count];
-        level = follow_peak(level, block_peak(samples), RELEASE);
         session.set_sync_start(*sync_start.lock().unwrap_or_else(PoisonError::into_inner));
         session.set_vis_restart(vis_restart.load(Ordering::Relaxed));
 
@@ -602,7 +595,6 @@ pub(super) fn run(
             mode: session.decoder.as_ref().map(RxDecoder::mode),
             progress,
             display_fraction,
-            level,
             frame,
             history,
             callsigns: callsigns.clone(),
@@ -633,50 +625,11 @@ fn retry_step(sample_rate_hz: usize) -> usize {
     (sample_rate_hz * REFINEMENT_RETRY_MS / 1_000).max(1)
 }
 
-fn block_peak(samples: &[f32]) -> f32 {
-    samples
-        .iter()
-        .fold(0.0_f32, |peak, sample| peak.max(sample.abs()))
-}
-
-/// Tracks `peak` instantly upward and decays toward it by `release`.
-fn follow_peak(current: f32, peak: f32, release: f32) -> f32 {
-    if peak >= current {
-        peak.clamp(0.0, 1.0)
-    } else {
-        (current * release).clamp(0.0, 1.0)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
 
     use super::*;
-
-    #[test]
-    fn peak_uses_absolute_amplitude() {
-        assert_eq!(block_peak(&[0.1, -0.8, 0.3]), 0.8);
-        assert_eq!(block_peak(&[]), 0.0);
-    }
-
-    #[test]
-    fn rising_signals_are_followed_immediately() {
-        assert_eq!(follow_peak(0.2, 0.9, RELEASE), 0.9);
-    }
-
-    #[test]
-    fn falling_signals_decay_gradually() {
-        assert_eq!(follow_peak(0.8, 0.0, 0.5), 0.4);
-    }
-
-    #[rstest]
-    #[case(2.0, 0.0)]
-    #[case(0.5, 3.0)]
-    fn meter_values_stay_normalized(#[case] current: f32, #[case] peak: f32) {
-        let level = follow_peak(current, peak, RELEASE);
-        assert!((0.0..=1.0).contains(&level), "{level} is out of range");
-    }
 
     #[rstest]
     #[case(false)]

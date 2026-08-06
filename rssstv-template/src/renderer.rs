@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::PathBuf,
+    path::{Component, Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 
@@ -62,11 +62,22 @@ impl AssetProvider for EmptyAssetProvider {
     }
 }
 
+/// Whether a reference stays inside the directory it is resolved against.
+///
+/// Only plain relative steps qualify. A root, a drive prefix, or a parent
+/// step names a file outside the directory the template was carried in, and
+/// a template is not trusted that far.
+pub(crate) fn reference_is_confined(reference: &str) -> bool {
+    Path::new(reference)
+        .components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}
+
 /// An asset provider that reads references from one directory.
 ///
 /// A reference is joined to the directory as it was written, so a template
 /// carried alongside its images resolves them without being told where it
-/// lives.
+/// lives. A reference that would leave the directory is refused.
 #[derive(Clone, Debug)]
 pub struct FileAssetProvider {
     base: PathBuf,
@@ -81,6 +92,11 @@ impl FileAssetProvider {
 
 impl AssetProvider for FileAssetProvider {
     fn load(&self, reference: &str) -> Result<Option<EncodedAsset>, AssetError> {
+        if !reference_is_confined(reference) {
+            return Err(AssetError::new(format!(
+                "asset reference `{reference}` reaches outside the asset directory"
+            )));
+        }
         let path = self.base.join(reference);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(EncodedAsset::new(bytes))),
@@ -205,6 +221,18 @@ mod tests {
     use crate::VariableValue;
 
     use super::*;
+
+    #[test]
+    fn a_file_provider_refuses_references_that_leave_its_directory() {
+        let provider = FileAssetProvider::new(std::env::temp_dir());
+        for reference in ["../secret.png", "/etc/secret.png", "a/../../secret.png"] {
+            assert!(
+                provider.load(reference).is_err(),
+                "`{reference}` should have been refused"
+            );
+        }
+        assert!(matches!(provider.load("missing-asset.png"), Ok(None)));
+    }
 
     #[test]
     fn emits_italic_svg_text() {

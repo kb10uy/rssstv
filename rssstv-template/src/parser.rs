@@ -77,6 +77,11 @@ fn parse_layer(node: &KdlNode) -> Result<Layer, TemplateError> {
 
 fn parse_image(node: &KdlNode) -> Result<ImageLayer, TemplateError> {
     let reference = one_string_argument(node)?.to_owned();
+    if !crate::renderer::reference_is_confined(&reference) {
+        return schema(format!(
+            "image reference `{reference}` reaches outside the template directory"
+        ));
+    }
     let children = required_children(node)?;
     validate_child_names(children, &["position", "size", "clip"])?;
     let position = parse_position(
@@ -817,6 +822,21 @@ ellipse {
         assert!(
             error.to_string().contains(message),
             "expected `{message}` in `{error}`"
+        );
+    }
+
+    #[rstest]
+    #[case("../secret.png")]
+    #[case("/etc/secret.png")]
+    #[case("photos/../../secret.png")]
+    fn rejects_image_references_that_leave_the_template_directory(#[case] reference: &str) {
+        let error = Template::parse(&format!(
+            "image \"{reference}\" {{\nposition x=(fw)0 y=(fh)0\nsize width=(fw)1 height=(fh)1\n}}"
+        ))
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("outside the template directory"),
+            "expected a confinement error, got `{error}`"
         );
     }
 

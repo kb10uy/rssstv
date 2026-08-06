@@ -420,7 +420,10 @@ first launch rather than failing until a reception arrives.
 
 Image assets are resolved relative to the template first, then from the
 application's shared `assets` directory; an `assets/` prefix is stripped for
-the shared lookup.
+the shared lookup. A reference is a relative path into those directories: one
+that starts from a root or a drive, or that steps outside through `..`, is
+rejected when the template is parsed, so a shared template cannot read files
+outside the directories it was given.
 
 ## Ported MMSSTV Templates
 

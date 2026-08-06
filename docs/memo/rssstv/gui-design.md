@@ -16,8 +16,10 @@ The interface uses [egui](https://github.com/emilk/egui) 0.35 through eframe.
 Its immediate-mode model keeps widget state in the application model while the
 receive, composition, and transmit workers remain explicitly owned. Windows
 and macOS use `muda` for the native menu bar; Linux renders the same menu model
-inside the window. System fonts are discovered through `fontdb`, with egui's
-bundled fonts retained as fallback.
+inside the window, and a machine whose native bar fails to install falls back
+to the in-window rendering so every menu action stays reachable. System fonts
+are discovered through `fontdb`, with egui's bundled fonts retained as
+fallback.
 
 The model is rebuilt from application state every frame and the native menu is
 brought in line with it, so labels and check marks follow the interface without

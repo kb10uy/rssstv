@@ -250,7 +250,8 @@ impl eframe::App for Interface {
                 self.quitting |= menu::apply(&mut self.app, action);
             }
         }
-        if let Some(action) = view::view(ui, &mut self.app, &model) {
+        let in_window_menu = menu::is_in_window() || self.menu.is_none();
+        if let Some(action) = view::view(ui, &mut self.app, &model, in_window_menu) {
             self.quitting |= menu::apply(&mut self.app, action);
         }
 

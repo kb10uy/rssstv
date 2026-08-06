@@ -24,7 +24,7 @@ use super::panels::decibels;
 fn render(app: &mut App) -> Harness<'_> {
     let mut harness = Harness::new_ui(|ui| {
         let model = menu::model(app);
-        view(ui, app, &model);
+        view(ui, app, &model, menu::is_in_window());
     });
     harness.run();
     harness
@@ -407,7 +407,7 @@ fn clicking_a_row_label_selects_that_row() {
     {
         let mut harness = Harness::new_ui(|ui| {
             let model = menu::model(&app);
-            view(ui, &mut app, &model);
+            view(ui, &mut app, &model, menu::is_in_window());
         });
         harness.run();
         harness.get_by_label("shack.png").click();
@@ -432,7 +432,7 @@ fn a_transmission_locks_the_library_lists() {
     {
         let mut harness = Harness::new_ui(|ui| {
             let model = menu::model(&app);
-            view(ui, &mut app, &model);
+            view(ui, &mut app, &model, menu::is_in_window());
         });
         harness.run();
         harness.get_by_label("shack.png").click();
@@ -488,7 +488,7 @@ fn the_station_dialog_closes_from_its_own_button() {
     {
         let mut harness = Harness::new_ui(|ui| {
             let model = menu::model(&app);
-            view(ui, &mut app, &model);
+            view(ui, &mut app, &model, menu::is_in_window());
         });
         harness.run();
         harness.get_by_label(&title);
@@ -520,7 +520,7 @@ fn the_tx_button_refuses_a_transmission_it_cannot_start() {
     {
         let mut harness = Harness::new_ui(|ui| {
             let model = menu::model(&app);
-            view(ui, &mut app, &model);
+            view(ui, &mut app, &model, menu::is_in_window());
         });
         harness.run();
         harness.get_by_label("TX").click();
@@ -597,7 +597,7 @@ fn the_side_panel_returns_to_its_width_after_a_narrow_window() {
         .with_size(egui::vec2(900.0, 700.0))
         .build_ui(|ui| {
             let model = menu::model(&app);
-            view(ui, &mut app, &model);
+            view(ui, &mut app, &model, menu::is_in_window());
         });
 
     harness.run();

@@ -39,7 +39,17 @@ const SMALL: f32 = 12.0;
 const LABEL: f32 = 11.0;
 
 /// Draws the whole interface, returning the menu action the operator chose.
-pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Action> {
+///
+/// `in_window_menu` says whether the bar has to be drawn as widgets: on the
+/// platforms without a native menu bar always, and elsewhere as the fallback
+/// when installing the native one failed, so a machine that refuses it still
+/// has every menu action reachable.
+pub fn view(
+    ui: &mut Ui,
+    app: &mut App,
+    model: &[menu::Menu],
+    in_window_menu: bool,
+) -> Option<menu::Action> {
     // Labels are inert throughout. Several of them sit inside rows that sense
     // the click themselves, and a selectable label takes the text cursor and
     // swallows the press; none of this text is worth dragging a selection
@@ -48,7 +58,7 @@ pub fn view(ui: &mut Ui, app: &mut App, model: &[menu::Menu]) -> Option<menu::Ac
     ui.style_mut().interaction.selectable_labels = false;
 
     let mut action = None;
-    if menu::is_in_window() {
+    if in_window_menu {
         Panel::top(Id::new("menu-bar")).show(ui, |ui| {
             action = menu::bar(ui, model);
         });

@@ -65,6 +65,14 @@ impl Afc {
         if sync_strength >= SYNC_THRESHOLD {
             self.active = true;
             self.run_samples += 1;
+            // A run longer than a sync pulse is something else, a carrier or
+            // steady interference, and is discarded whole when it ends. Its
+            // measurements stop being kept the moment it is too long, so a
+            // tone that never ends cannot grow the buffer without bound.
+            if self.run_samples as f64 / self.sample_rate_hz > *RUN_SECONDS.end() {
+                self.measurements.clear();
+                return false;
+            }
             let expected = f64::from(SYNC_HZ) + self.offset_hz;
             if let Some(value) =
                 measurement.filter(|value| (value - expected).abs() <= MEASUREMENT_WINDOW_HZ)
@@ -93,7 +101,6 @@ impl Afc {
             self.measurements.clear();
             return false;
         }
-        self.measurements.sort_by(f64::total_cmp);
         let measured = self.measurements.iter().sum::<f64>() / self.measurements.len() as f64;
         self.measurements.clear();
         let offset = measured - f64::from(SYNC_HZ);
@@ -121,6 +128,26 @@ impl Afc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A station tuning up sends the sync frequency for as long as it likes,
+    /// and the receiver has to survive that on a fixed amount of memory.
+    #[test]
+    fn a_persistent_tone_does_not_grow_the_measurement_buffer() {
+        let rate = 8_000.0;
+        let mut afc = Afc::new(rate);
+        afc.enable();
+        for _ in 0..(rate * 10.0) as usize {
+            afc.process(0.9, Some(1_210.0));
+        }
+        let bound = 2 * ((rate * RUN_SECONDS.end()) as usize + 1);
+        assert!(
+            afc.measurements.capacity() <= bound,
+            "the buffer grew to {} measurements",
+            afc.measurements.capacity()
+        );
+        assert!(!afc.finish_run(), "an overlong run must not update the offset");
+        assert_eq!(afc.offset_hz(), 0.0);
+    }
 
     #[test]
     fn tracks_repeated_offset_sync_pulses() {

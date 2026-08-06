@@ -598,11 +598,17 @@ fn boolean(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<boo
 }
 
 /// Reads a number, accepting the integer a hand-edited file may hold.
+///
+/// TOML also spells `nan` and `inf`, which no setting here can act on: `nan`
+/// slips through every clamp and panics the first `Duration` built from it.
+/// They read as absent, so the default stands in like it does for any other
+/// unusable value.
 fn float(document: &DocumentMut, table: Option<&str>, key: &str) -> Option<f32> {
     let item = get(document, table, key)?;
     item.as_float()
         .or_else(|| item.as_integer().map(|value| value as f64))
         .map(|value| value as f32)
+        .filter(|value| value.is_finite())
 }
 
 /// Assigns `item` under `key`, or removes the key when there is no value.
@@ -735,6 +741,23 @@ mod tests {
         assert!(config.error().is_none());
 
         assert_eq!(Config::load(&config_path(&root)).settings(), settings);
+    }
+
+    /// TOML allows `nan`, which passes every range clamp unchanged and would
+    /// panic the first `Duration::from_secs_f32` built from it.
+    #[rstest]
+    #[case("[rig]\nlead-in = nan\n")]
+    #[case("[rig]\ntail = -inf\n")]
+    #[case("[rig]\npoll = nan\n")]
+    #[case("[transmit]\nvolume = nan\n")]
+    #[case("ui-scale = inf\n")]
+    fn a_non_finite_number_reads_as_the_default(#[case] contents: &str) {
+        let root = TempDir::new();
+        fs::write(config_path(&root), contents).unwrap();
+
+        let settings = Config::load(&config_path(&root)).settings();
+        let defaults = Settings::default();
+        assert_eq!(settings, defaults);
     }
 
     #[test]

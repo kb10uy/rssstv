@@ -20,7 +20,7 @@ use rssstv_template::{
     VariableValue, Variables, composite,
 };
 
-use crate::worker::rig::Reading;
+use crate::{error::AppError, worker::rig::Reading};
 
 #[derive(Clone, Debug)]
 pub struct ComposeRequest {
@@ -88,15 +88,28 @@ impl Composer {
         let thread = thread::Builder::new()
             .name("rssstv-compose".to_owned())
             .spawn(move || compose_loop(worker_control, worker_result))
-            .expect("the composition thread should start");
+            .ok();
         Self {
             control,
             result,
-            thread: Some(thread),
+            thread,
         }
     }
 
     pub fn request(&self, request: ComposeRequest) {
+        // A request no worker will ever pick up is answered here, so the
+        // interface hears a failure instead of waiting for a frame forever.
+        if self.thread.is_none() {
+            if let Ok(mut result) = self.result.lock() {
+                *result = Some(ComposeResult {
+                    generation: request.generation,
+                    frame: Err(AppError::WorkerUnavailable("composition").to_string()),
+                    uses_timestamps: false,
+                    uses_radio: false,
+                });
+            }
+            return;
+        }
         if let Ok(mut pending) = self.control.request.lock() {
             *pending = Some(request);
             self.control.wake.notify_one();

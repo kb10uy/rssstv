@@ -273,6 +273,15 @@ impl RxWorker {
                 })
                 .ok()
         };
+        // A worker that could not start would otherwise look like a live
+        // reception that never hears anything, so the failure is published
+        // where every other receive failure is shown.
+        if join.is_none() {
+            mailbox.publish(RxSnapshot {
+                error: Some(AppError::WorkerUnavailable("reception")),
+                ..RxSnapshot::default()
+            });
+        }
         Self {
             stop,
             held,

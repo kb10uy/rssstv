@@ -123,14 +123,22 @@ fn load_background(path: &Path, mode: Mode) -> Result<RgbImage> {
         &decoded,
         u32::from(mode.spec().width()),
         u32::from(mode.spec().height()),
-    );
+    )
+    .with_context(|| format!("failed to prepare background image {}", path.display()))?;
     let size = ImageSize::new(prepared.width() as usize, prepared.height() as usize)?;
     Ok(RgbImage::from_rgb_bytes(size, prepared.as_raw())?)
 }
 
-fn cover_image(source: &image::RgbImage, target_width: u32, target_height: u32) -> image::RgbImage {
+fn cover_image(
+    source: &image::RgbImage,
+    target_width: u32,
+    target_height: u32,
+) -> Result<image::RgbImage> {
     let source_width = source.width();
     let source_height = source.height();
+    if source_width == 0 || source_height == 0 {
+        bail!("the image has no pixels");
+    }
     let (resized_width, resized_height) = if u64::from(target_width) * u64::from(source_height)
         >= u64::from(target_height) * u64::from(source_width)
     {
@@ -140,7 +148,7 @@ fn cover_image(source: &image::RgbImage, target_width: u32, target_height: u32) 
                 (u64::from(source_height) * u64::from(target_width))
                     .div_ceil(u64::from(source_width)),
             )
-            .expect("resized image height fits u32"),
+            .context("the image is too tall to cover the picture")?,
         )
     } else {
         (
@@ -148,7 +156,7 @@ fn cover_image(source: &image::RgbImage, target_width: u32, target_height: u32) 
                 (u64::from(source_width) * u64::from(target_height))
                     .div_ceil(u64::from(source_height)),
             )
-            .expect("resized image width fits u32"),
+            .context("the image is too wide to cover the picture")?,
             target_height,
         )
     };
@@ -156,7 +164,7 @@ fn cover_image(source: &image::RgbImage, target_width: u32, target_height: u32) 
         image::imageops::resize(source, resized_width, resized_height, FilterType::Lanczos3);
     let left = (resized_width - target_width) / 2;
     let top = (resized_height - target_height) / 2;
-    image::imageops::crop_imm(&resized, left, top, target_width, target_height).to_image()
+    Ok(image::imageops::crop_imm(&resized, left, top, target_width, target_height).to_image())
 }
 
 fn render_frame(
@@ -218,10 +226,19 @@ mod tests {
     #[test]
     fn cover_resize_crops_from_the_center() {
         let source = image::RgbImage::from_fn(4, 2, |x, _| image::Rgb([x as u8, 0, 0]));
-        let result = cover_image(&source, 2, 2);
+        let result = cover_image(&source, 2, 2).unwrap();
         assert_eq!(result.dimensions(), (2, 2));
         assert!(result[(0, 0)][0] > 0);
         assert!(result[(1, 0)][0] < 3);
+    }
+
+    /// A legitimate file with an extreme aspect ratio asks for a resized
+    /// height beyond `u32`, which has to come back as an error rather than a
+    /// panic.
+    #[test]
+    fn an_extreme_aspect_ratio_is_refused() {
+        let source = image::RgbImage::new(1, 14_000_000);
+        assert!(cover_image(&source, 320, 256).is_err());
     }
 
     #[test]

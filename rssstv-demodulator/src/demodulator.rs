@@ -73,7 +73,7 @@ impl Demodulator {
             return Err(DemodulatorError::SampleRateTooLow(sample_rate_hz));
         }
         Ok(Self {
-            front_end: FrontEnd::new(f64::from(sample_rate_hz))?,
+            front_end: FrontEnd::new(sample_rate_hz)?,
             sample_rate_hz,
             next_sample: 0,
             mode: None,

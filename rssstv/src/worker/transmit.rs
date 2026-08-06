@@ -216,11 +216,20 @@ impl TxWorker {
         let thread = thread::Builder::new()
             .name(name.to_owned())
             .spawn(move || body(worker_snapshot, worker_cancel))
-            .expect("the transmit thread should start");
+            .ok();
+        if thread.is_none()
+            && let Ok(mut current) = snapshot.lock()
+        {
+            *current = TxSnapshot {
+                phase: TxPhase::Failed,
+                error: Some(AppError::WorkerUnavailable("transmit")),
+                ..TxSnapshot::default()
+            };
+        }
         Self {
             snapshot,
             cancel,
-            thread: Some(thread),
+            thread,
         }
     }
 

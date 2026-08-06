@@ -1,3 +1,5 @@
+use core::num::NonZeroU32;
+
 use crate::{
     FskId, FskNumber, FskTone,
     id::{MAX_ID_LEN, MAX_NUMBER_LEN},
@@ -78,11 +80,10 @@ pub struct FskDecoder {
 }
 
 impl FskDecoder {
-    /// Creates a decoder for a positive physical sample rate.
-    pub fn new(sample_rate_hz: u32) -> Self {
-        assert!(sample_rate_hz > 0, "FSKID sample rate must be positive");
+    /// Creates a decoder for a physical sample rate.
+    pub fn new(sample_rate_hz: NonZeroU32) -> Self {
         Self {
-            sample_rate_hz: f64::from(sample_rate_hz),
+            sample_rate_hz: f64::from(sample_rate_hz.get()),
             state: State::Search,
             frame: Frame::Header,
             elapsed: 0,
@@ -352,7 +353,7 @@ mod tests {
     /// Decodes every record in one symbol vector, keeping the first of each
     /// kind, because a callsign may be followed by a contest number.
     fn decode(symbols: &[u8], rate: u32) -> (Option<FskId>, Option<FskNumber>) {
-        let mut decoder = FskDecoder::new(rate);
+        let mut decoder = FskDecoder::new(NonZeroU32::new(rate).unwrap());
         let mut written = 0;
         let mut deadline = 0.0;
         feed_tone(
@@ -475,7 +476,7 @@ mod tests {
 
     #[test]
     fn rejects_short_guard() {
-        let mut decoder = FskDecoder::new(8_000);
+        let mut decoder = FskDecoder::new(NonZeroU32::new(8_000).unwrap());
         for _ in 0..399 {
             decoder.process(FskTone::Space);
         }

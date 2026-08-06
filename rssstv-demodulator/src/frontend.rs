@@ -1,7 +1,9 @@
+use core::num::NonZeroU32;
 use rssstv_dsp::{
     filter::{Fir, FirDesign, FirKind, IirFilter, IirLowPassDesign, IirResponse, Resonator},
     frequency::ZeroCrossingFrequency,
 };
+
 use rssstv_fskid::{FskDecoder, FskRecord, FskTone};
 use rssstv_sstv::mode::Mode;
 
@@ -54,7 +56,11 @@ pub(crate) struct FrontEnd {
 }
 
 impl FrontEnd {
-    pub(crate) fn new(sample_rate_hz: f64) -> Result<Self, DemodulatorError> {
+    pub(crate) fn new(sample_rate: u32) -> Result<Self, DemodulatorError> {
+        let fsk = FskDecoder::new(
+            NonZeroU32::new(sample_rate).ok_or(DemodulatorError::SampleRateTooLow(sample_rate))?,
+        );
+        let sample_rate_hz = f64::from(sample_rate);
         let mut order = (24.0 * sample_rate_hz / 11_025.0).round() as usize;
         order = order.max(12);
         if !order.is_multiple_of(2) {
@@ -85,7 +91,7 @@ impl FrontEnd {
             vis: VisDecoder::new(sample_rate_hz),
             sync_intervals: SyncIntervalDetector::new(sample_rate_hz),
             sample_rate_hz,
-            fsk: FskDecoder::new(sample_rate_hz as u32),
+            fsk,
             afc: Afc::new(sample_rate_hz),
         })
     }

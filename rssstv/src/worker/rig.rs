@@ -121,11 +121,20 @@ impl RigWorker {
         let thread = thread::Builder::new()
             .name("rssstv-rig".to_owned())
             .spawn(move || rig_loop(plan, &incoming, &worker_snapshot))
-            .expect("the rig control thread should start");
+            .ok();
+        if thread.is_none()
+            && let Ok(mut current) = snapshot.lock()
+        {
+            *current = RigSnapshot {
+                state: RigState::Failed,
+                error: Some(AppError::WorkerUnavailable("rig control")),
+                reading: None,
+            };
+        }
         Self {
             snapshot,
             requests: Some(requests),
-            thread: Some(thread),
+            thread,
         }
     }
 

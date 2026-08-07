@@ -1,12 +1,5 @@
 name = "rssstv"
 compatibility_date = "2026-08-06"
 
-[[routes]]
-pattern = "rssstv.kb10uy.dev"
-custom_domain = true
-
-# There is no Worker script. The page decodes in the browser, so the whole
-# deployment is the static bundle and `main` is left out, which an assets-only
-# Worker allows. The module is built into `www/pkg` before this runs.
 [assets]
 directory = "./www"

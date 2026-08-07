@@ -49,6 +49,7 @@ pub(super) struct RasterProfile {
     pub(super) period_ps: u64,
     pub(super) sync_center_ps: u64,
     pub(super) sync_duration_ps: u64,
+    pub(super) leading_ps: u64,
     pixels: PixelSegments,
     selector_ps: Option<(u64, u64)>,
 }
@@ -98,6 +99,11 @@ impl RasterProfile {
             period_ps: mode.spec().period().as_picos(),
             sync_center_ps: scan.sync_center(0)?.as_picos(),
             sync_duration_ps,
+            leading_ps: scan
+                .leading()
+                .iter()
+                .map(|segment| segment.duration().as_picos())
+                .sum(),
             pixels,
             selector_ps,
         })

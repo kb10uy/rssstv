@@ -12,7 +12,7 @@ use crate::{
 use super::{
     acquisition::{acquire_full, acquire_startup, startup_window_samples},
     clock::{RasterClock, ceil_sample},
-    config::{RxConfig, Staging},
+    config::{RasterStart, RxConfig, Staging},
     event::{RxEvent, RxOutcome, RxProcessResult, RxState, StopReason},
     input::{DemodulatedBlock, SampleBuffer},
     raster::{PixelSegment, RasterProfile},
@@ -307,6 +307,21 @@ impl RxDecoder {
         let mut consumed = 0;
         loop {
             if self.decode.clock.is_none() {
+                if self.config.raster_start == RasterStart::AfterHeader {
+                    let clock = self.clock_at_input_start()?;
+                    self.decode.clock = Some(clock);
+                    self.skip_units_before_input(clock)?;
+                    self.decode.state = RxState::Decoding {
+                        completed_rows: self.decode.delivered_rows,
+                    };
+                    return Ok(RxProcessResult::new(
+                        consumed,
+                        Some(RxEvent::RasterAcquired {
+                            source_epoch: clock.source_epoch(),
+                            effective_sample_rate_hz: clock.effective_sample_rate_hz(),
+                        }),
+                    ));
+                }
                 let input = self.input.as_ref().expect("input initialized");
                 let target = startup_window_samples(self.profile, self.sample_rate_hz);
                 if input.len() as u64 >= target {
@@ -485,6 +500,22 @@ impl RxDecoder {
         let first = edge(start_ps)?;
         let last = edge(end_ps)?;
         Ok((first, last.max(first.saturating_add(1))))
+    }
+
+    /// Places the raster where the header said it starts.
+    ///
+    /// The first input sample is where mode detection ended, which is the end
+    /// of the header, and a mode that sends leading segments before its first
+    /// raster unit starts that much later. Detection is timed on the
+    /// synchronization envelope, whose lag makes this phase a few milliseconds
+    /// late; the samples that lag covers were dropped with the header, so the
+    /// raster cannot reach back for them and live synchronization corrects the
+    /// phase instead.
+    fn clock_at_input_start(&self) -> Result<RasterClock, SstvError> {
+        let first = self.input.as_ref().expect("input initialized").first();
+        let rate = f64::from(self.sample_rate_hz);
+        let epoch = first as f64 + rate * self.profile.leading_ps as f64 / 1.0e12;
+        RasterClock::from_estimate(epoch, rate)
     }
 
     /// Starts the raster at the first unit whose picture the input still holds.

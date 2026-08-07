@@ -5,7 +5,7 @@ use rssstv_dsp::{
 };
 
 use rssstv_fskid::{FskDecoder, FskRecord, FskTone, FskTxTone};
-use rssstv_sstv::{mode::Mode, signal::SYNC_HZ};
+use rssstv_sstv::{mode::Mode, rx::RasterStart, signal::SYNC_HZ};
 
 use crate::{
     DemodulatorError,
@@ -38,11 +38,25 @@ const FSK_MINIMUM_CONTRAST: f64 = 0.125;
 
 /// What identified the mode of a reception.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Detection {
+pub enum Detection {
     /// A conventional VIS header, which names the mode outright.
     Header,
     /// The spacing of the raster's own sync pulses, with no header to read.
     SyncSpacing,
+}
+
+impl Detection {
+    /// Returns how the raster decoder should establish its clock.
+    ///
+    /// A header ends where the raster begins, so decoding starts at once; a
+    /// sync-spacing match happens somewhere inside the picture, so the phase
+    /// has to be acquired from buffered pulses first.
+    pub const fn raster_start(self) -> RasterStart {
+        match self {
+            Self::Header => RasterStart::AfterHeader,
+            Self::SyncSpacing => RasterStart::Acquire,
+        }
+    }
 }
 
 pub(crate) struct FrontEndOutput {

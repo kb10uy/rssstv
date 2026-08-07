@@ -486,6 +486,103 @@ fn first_row_is_decoded_from_the_startup_buffer(#[case] mode: Mode) {
     assert_eq!(first_row, Some(0));
 }
 
+#[rstest]
+#[case(Mode::Martin2, 0)]
+#[case(Mode::Scottie2, 90)]
+#[case(Mode::Robot36, 0)]
+#[case(Mode::Pd50, 0)]
+fn a_header_start_decodes_before_any_sync_pulse_is_buffered(
+    #[case] mode: Mode,
+    #[case] leading: u64,
+) {
+    let (frequency, sync) = sampled_body(mode, 0);
+    let absolute_start = 40_000_u64;
+    let mut decoder = RxDecoder::with_config(
+        mode,
+        SAMPLE_RATE,
+        RxConfig {
+            raster_start: RasterStart::AfterHeader,
+            ..RxConfig::default()
+        },
+    )
+    .unwrap();
+    let result = decoder
+        .process(DemodulatedBlock::new(
+            absolute_start,
+            &frequency[..16],
+            &sync[..16],
+        ))
+        .unwrap();
+    assert_eq!(
+        result.event(),
+        Some(RxEvent::RasterAcquired {
+            source_epoch: absolute_start + leading,
+            effective_sample_rate_hz: f64::from(SAMPLE_RATE),
+        })
+    );
+    let startup = startup_window_samples(decoder.profile, SAMPLE_RATE) as usize;
+    let mut offset = result.consumed();
+    let mut first_row = None;
+    while first_row.is_none() && offset < frequency.len() {
+        let result = decoder
+            .process(DemodulatedBlock::new(
+                absolute_start + offset as u64,
+                &frequency[offset..],
+                &sync[offset..],
+            ))
+            .unwrap();
+        offset += result.consumed();
+        if let Some(RxEvent::RowDecoded { row }) = result.event() {
+            assert_eq!(row, 0);
+            first_row = Some(offset);
+        }
+        assert!(result.consumed() != 0 || result.event().is_some());
+    }
+    assert!(
+        first_row.is_some_and(|offset| offset < startup),
+        "row 0 arrived at {first_row:?} against a startup window of {startup}"
+    );
+}
+
+#[test]
+fn live_synchronization_corrects_a_late_header_start() {
+    let (frequency, sync) = sampled_body(Mode::Martin2, 0);
+    let displacement = 40_usize;
+    let absolute_start = 40_000_u64;
+    let mut decoder = RxDecoder::with_config(
+        Mode::Martin2,
+        SAMPLE_RATE,
+        RxConfig {
+            raster_start: RasterStart::AfterHeader,
+            live_sync: true,
+            ..RxConfig::default()
+        },
+    )
+    .unwrap();
+    let mut offset = displacement;
+    let mut adjusted = false;
+    while decoder.state() != RxState::Complete {
+        let result = decoder
+            .process(DemodulatedBlock::new(
+                absolute_start + offset as u64,
+                &frequency[offset..],
+                &sync[offset..],
+            ))
+            .unwrap();
+        offset += result.consumed();
+        if matches!(result.event(), Some(RxEvent::PhaseAdjusted { .. })) {
+            adjusted = true;
+        }
+        assert!(result.consumed() != 0 || result.event().is_some());
+    }
+    assert!(adjusted);
+    let epoch = decoder.source_epoch().unwrap();
+    assert!(
+        epoch.abs_diff(absolute_start) <= 4,
+        "epoch settled at {epoch} instead of {absolute_start}"
+    );
+}
+
 fn drive_configured(
     mode: Mode,
     frequency: &[f32],
@@ -1015,6 +1112,7 @@ fn mistimed_body(mode: Mode, image: RgbImage, offset_ppm: f64) -> (Vec<f32>, Vec
 
 fn config(live_slant: bool, samples: usize) -> RxConfig {
     RxConfig {
+        raster_start: RasterStart::Acquire,
         live_sync: true,
         live_slant,
         auto_stop: false,

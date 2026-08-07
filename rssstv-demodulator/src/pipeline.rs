@@ -9,13 +9,13 @@
 use rssstv_sstv::{
     RxDecoder, SstvError,
     mode::Mode,
-    rx::{RxConfig, RxEvent, RxOutcome, RxState, Staging},
+    rx::{RasterStart, RxConfig, RxEvent, RxOutcome, RxState, Staging},
 };
 
 use rssstv_fskid::FskId;
 use thiserror::Error;
 
-use crate::{DemodulatedChunk, Demodulator, DemodulatorError, sync_detector_delay};
+use crate::{DemodulatedChunk, Demodulator, DemodulatorError, Detection, sync_detector_delay};
 
 /// What a [`ReceivePipeline`] is told to do beyond the defaults.
 #[derive(Clone, Copy, Debug)]
@@ -117,6 +117,9 @@ impl ReceivePipeline {
                     mode,
                     self.demodulator.sample_rate_hz(),
                     RxConfig {
+                        raster_start: chunk
+                            .detection()
+                            .map_or(RasterStart::Acquire, Detection::raster_start),
                         live_sync: true,
                         live_slant: self.options.live_slant,
                         auto_stop: false,

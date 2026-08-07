@@ -5,12 +5,15 @@
 
 use core::f64::consts::TAU;
 
-use rssstv_demodulator::{Demodulator, DemodulatorError, demodulate, sync_detector_delay};
+use rssstv_demodulator::{
+    Demodulator, DemodulatorError, PipelineOptions, ReceivePipeline, demodulate,
+    sync_detector_delay,
+};
 use rssstv_sstv::{
     RxDecoder, TxEncoder,
     image::{ImageSize, Rgb8, RgbImage},
     mode::Mode,
-    rx::{DemodulatedBlock, RxConfig},
+    rx::{DemodulatedBlock, RxConfig, RxEvent},
     time::SstvDuration,
 };
 use rstest::rstest;
@@ -201,6 +204,77 @@ fn raster_epoch_error_ms(mode: Mode, rate: u32) -> f64 {
         error -= period;
     }
     error * 1_000.0 / f64::from(rate)
+}
+
+/// A reception that read its header knows the raster phase already, so the
+/// first row has to appear about one line period after the header rather than
+/// after the several periods the headerless startup buffer spans.
+#[rstest]
+#[case(Mode::Martin2, 8_000)]
+#[case(Mode::Scottie2, 8_000)]
+#[case(Mode::Robot36, 48_000)]
+fn a_header_reception_decodes_its_first_row_without_buffering_periods(
+    #[case] mode: Mode,
+    #[case] rate: u32,
+) {
+    let size = ImageSize::new(mode.spec().width() as usize, mode.spec().height() as usize).unwrap();
+    let image = RgbImage::new(size, Rgb8::new(128, 128, 128));
+    let leading_ps = mode
+        .scan()
+        .leading()
+        .iter()
+        .map(|segment| segment.duration().as_picos())
+        .sum::<u64>();
+    let header_ps = 910_000_000_000 + leading_ps;
+    let stop_ps = header_ps + mode.spec().period().as_picos() * 8;
+    let stop_sample = SstvDuration::from_picos(stop_ps).to_samples(rate);
+    let mut samples = Vec::new();
+    let mut phase = 0.0_f64;
+    let mut written = 0_u64;
+    for timed in TxEncoder::new(mode, image).unwrap() {
+        let deadline = timed.until().to_samples(rate);
+        while written < deadline && written < stop_sample {
+            samples.push((phase.sin() * 0.8) as f32);
+            phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
+                .rem_euclid(TAU);
+            written += 1;
+        }
+        if written >= stop_sample {
+            break;
+        }
+    }
+
+    let mut pipeline = ReceivePipeline::new(
+        rate,
+        PipelineOptions {
+            live_slant: false,
+            staging_max_samples: samples.len() * 2,
+        },
+    )
+    .unwrap();
+    let mut fed = 0_usize;
+    let mut first_row_end = None;
+    for packet in samples.chunks(256) {
+        let packet_end = fed + packet.len();
+        pipeline
+            .process(packet, |event| {
+                if matches!(event, RxEvent::RowDecoded { row: 0 }) && first_row_end.is_none() {
+                    first_row_end = Some(packet_end);
+                }
+            })
+            .unwrap();
+        fed = packet_end;
+        if first_row_end.is_some() {
+            break;
+        }
+    }
+    let header_end = SstvDuration::from_picos(header_ps).to_samples(rate) as usize;
+    let period =
+        SstvDuration::from_picos(mode.spec().period().as_picos()).to_samples(rate) as usize;
+    assert!(
+        first_row_end.is_some_and(|end| end < header_end + 2 * period),
+        "{mode:?} @{rate}: row 0 arrived by sample {first_row_end:?}, header ends at {header_end}, period {period}"
+    );
 }
 
 #[test]

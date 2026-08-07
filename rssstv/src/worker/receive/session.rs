@@ -9,11 +9,13 @@ use std::{
 
 use jiff::Zoned;
 use rssstv_audio::CaptureReader;
-use rssstv_demodulator::{DemodulatedChunk, Demodulator, SyncStart, sync_detector_delay};
+use rssstv_demodulator::{
+    DemodulatedChunk, Demodulator, Detection, SyncStart, sync_detector_delay,
+};
 use rssstv_sstv::{
     RxDecoder, SstvError,
     mode::Mode,
-    rx::{DemodulatedBlock, RxConfig, RxEvent, RxState, Staging, StopReason},
+    rx::{DemodulatedBlock, RasterStart, RxConfig, RxEvent, RxState, Staging, StopReason},
     time::SstvDuration,
 };
 
@@ -59,8 +61,14 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 const FSK_HISTORY_WAIT: Duration = Duration::from_secs(4);
 
-fn live_rx_config(mode: Mode, sample_rate_hz: u32, live_slant: bool) -> RxConfig {
+fn live_rx_config(
+    mode: Mode,
+    sample_rate_hz: u32,
+    live_slant: bool,
+    raster_start: RasterStart,
+) -> RxConfig {
     RxConfig {
+        raster_start,
         live_sync: true,
         live_slant,
         auto_stop: true,
@@ -313,7 +321,14 @@ impl Session {
             self.decoder = Some(RxDecoder::with_config(
                 mode,
                 self.sample_rate_hz,
-                live_rx_config(mode, self.sample_rate_hz, live_slant),
+                live_rx_config(
+                    mode,
+                    self.sample_rate_hz,
+                    live_slant,
+                    chunk
+                        .detection()
+                        .map_or(RasterStart::Acquire, Detection::raster_start),
+                ),
             )?);
             self.published_revision = None;
             self.awaiting_signal = false;
@@ -653,7 +668,9 @@ mod tests {
     #[case(false)]
     #[case(true)]
     fn live_receptions_enable_automatic_stop(#[case] live_slant: bool) {
-        assert!(live_rx_config(Mode::Robot36, 8_000, live_slant).auto_stop);
+        assert!(
+            live_rx_config(Mode::Robot36, 8_000, live_slant, RasterStart::AfterHeader).auto_stop
+        );
     }
 
     /// Refinement collects trailing audio after the picture is complete, so the

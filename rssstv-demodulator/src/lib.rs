@@ -19,6 +19,7 @@ use rssstv_sstv::{
 
 pub use demodulator::{DemodulatedAudio, DemodulatedChunk, Demodulator, demodulate};
 pub use error::DemodulatorError;
+pub use frontend::Detection;
 pub use pipeline::{PipelineError, PipelineOptions, PipelineOutcome, ReceivePipeline};
 pub use sync::SyncStart;
 

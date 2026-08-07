@@ -345,11 +345,13 @@ state does not conceal the partial frame. The worker-side stall timeout remains
 as the fallback for a signal that stops producing decodable progress without
 giving AutoStop further lines to score.
 
-Raster phase acquisition collects four recurring synchronization pulses, as
-MMSSTV does, buffering at most five periods when the first post-VIS pulse is
-incomplete. It then decodes from the retained first period. The interface
-therefore starts publishing at the first row after the short acquisition
-interval instead of waiting for a fixed fraction of the image.
+A reception started by a header decodes at once: the header ends where the
+raster begins, so the decoder starts on that phase and the first row is
+published about one line period after the VIS, as MMSSTV does. Only a reception
+started from sync spacing acquires its phase first, collecting four recurring
+synchronization pulses over a buffer of at most five periods before decoding
+from the retained first period. Either way the interface starts publishing at
+the first row instead of waiting for a fixed fraction of the image.
 
 `RxEvent` values are mapped to interface state as follows:
 

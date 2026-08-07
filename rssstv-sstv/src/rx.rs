@@ -11,7 +11,7 @@ mod raster;
 mod slant;
 mod sync;
 
-pub use config::{RxConfig, Staging};
+pub use config::{RasterStart, RxConfig, Staging};
 pub use decoder::{RefinementResult, RxDecoder};
 pub use event::{RxEvent, RxOutcome, RxProcessResult, RxState, StopReason};
 pub use input::DemodulatedBlock;

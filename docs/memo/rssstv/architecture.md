@@ -202,10 +202,19 @@ and reports typed events and errors. Its responsibilities include:
   no pulse was missed. Nothing in such a signal says which row the reception
   started on, so the picture decodes correctly but vertically rolled, as it does
   in MMSSTV.
-- Initial raster phase acquisition from four recurring synchronization pulses,
-  buffering at most five periods when the first post-VIS pulse is incomplete.
-  The phase is averaged over those pulses, leaving out the first one because the
-  buffer can begin part way through it.
+- Starting a header-identified reception at once. A VIS header ends where the
+  raster begins, so `RasterStart::AfterHeader` seeds the clock at the first
+  input sample — plus the leading segments a mode sends before its first raster
+  unit — and the first row decodes about one line period later, as in MMSSTV.
+  Detection is timed on the synchronization envelope, so the seeded phase is
+  late by that envelope's lag; the samples the lag covers were dropped with the
+  header, so the raster starts there and live phase correction takes the error
+  out.
+- Initial raster phase acquisition from four recurring synchronization pulses
+  for a reception that has no header to start from, buffering at most five
+  periods when the first pulse is incomplete. The phase is averaged over those
+  pulses, leaving out the first one because the buffer can begin part way
+  through it.
 - Skipping the leading raster units whose picture arrived before mode detection
   finished. Those rows stay blank and count as delivered, which is what the
   operator sees in MMSSTV too, instead of failing a reception over samples that
@@ -221,9 +230,10 @@ and reports typed events and errors. Its responsibilities include:
   terminal state and keep the rows decoded so far.
 - Optional bounded staging and deterministic whole-image reconstruction.
 
-Acquisition fixes the raster phase only. A reception starts on the configured
+Both starts fix the raster phase only. A reception begins on the configured
 physical sample rate, as MMSSTV starts on its calibrated `SSTVSET.m_SampFreq`,
-because the startup window is too short to estimate a rate that beats it.
+because neither a header nor the startup window says anything about the rate
+that beats the calibrated figure.
 
 Raster rate correction has two stages, as in MMSSTV. `RxConfig::live_slant`
 refits the rate during decoding and redraws the rows already decoded from

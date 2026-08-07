@@ -1,5 +1,25 @@
 use crate::time::SstvDuration;
 
+/// Where the raster clock comes from when decoding starts.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RasterStart {
+    /// Buffers synchronization pulses and fits the raster phase from them
+    /// before any row is decoded.
+    ///
+    /// This is the only way in for a reception identified by its sync spacing,
+    /// whose input begins somewhere inside the picture.
+    #[default]
+    Acquire,
+    /// Starts the raster at the first input sample and decodes at once.
+    ///
+    /// A VIS header ends where the raster begins, so a decoder fed from the
+    /// detection point onward already knows the phase and need not wait to see
+    /// any synchronization pulse, which is how MMSSTV starts. Detection is
+    /// timed on the synchronization envelope, so the assumed phase is late by
+    /// that envelope's lag; live synchronization then takes the error out.
+    AfterHeader,
+}
+
 /// Retention policy for demodulated samples used by staged refinement.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Staging {
@@ -25,6 +45,8 @@ pub enum Staging {
 /// rate is changed only by live slant tracking and by staged refinement.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RxConfig {
+    /// Chooses how the raster clock is first established.
+    pub raster_start: RasterStart,
     /// Enables stable live raster epoch corrections without altering input samples.
     pub live_sync: bool,
     /// Refits the raster rate during decoding and redraws earlier rows.
@@ -49,6 +71,7 @@ pub struct RxConfig {
 impl Default for RxConfig {
     fn default() -> Self {
         Self {
+            raster_start: RasterStart::default(),
             live_sync: false,
             live_slant: false,
             auto_stop: false,

@@ -11,7 +11,7 @@ use crate::{
 /// Owned output produced from one incremental PCM input packet.
 #[derive(Clone, Debug)]
 pub struct DemodulatedChunk {
-    detected_mode: Option<Mode>,
+    detected: Option<(Mode, Detection)>,
     first_sample: u64,
     frequency_hz: Vec<f32>,
     sync_strength: Vec<f32>,
@@ -27,7 +27,19 @@ impl DemodulatedChunk {
     /// reception is reported the same way, and the packet's output samples then
     /// begin after that header rather than at the packet's first sample.
     pub const fn detected_mode(&self) -> Option<Mode> {
-        self.detected_mode
+        match self.detected {
+            Some((mode, _)) => Some(mode),
+            None => None,
+        }
+    }
+
+    /// Returns what identified the mode reported by
+    /// [`DemodulatedChunk::detected_mode`].
+    pub const fn detection(&self) -> Option<Detection> {
+        match self.detected {
+            Some((_, detection)) => Some(detection),
+            None => None,
+        }
     }
 
     /// Returns the absolute position of the first output sample.
@@ -112,7 +124,7 @@ impl Demodulator {
             }
         }
 
-        let mut detected_mode = None;
+        let mut detected = None;
         let mut first_sample = self.next_sample;
         let mut frequency_hz = Vec::with_capacity(if self.mode.is_some() {
             samples.len()
@@ -134,7 +146,7 @@ impl Demodulator {
                 && (self.mode.is_none() || self.restarts_on(detection))
             {
                 self.mode = Some(mode);
-                detected_mode = Some(mode);
+                detected = Some((mode, detection));
                 // Anything demodulated earlier in this packet belongs to the
                 // reception the header just replaced. It is dropped rather
                 // than handed on, so the caller's new decoder is not fed the
@@ -156,7 +168,7 @@ impl Demodulator {
         debug_assert_eq!(self.next_sample, end_sample);
 
         Ok(DemodulatedChunk {
-            detected_mode,
+            detected,
             first_sample: if frequency_hz.is_empty() {
                 self.next_sample
             } else {

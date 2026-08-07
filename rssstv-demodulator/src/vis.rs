@@ -54,7 +54,8 @@ pub(crate) struct VisDecoder {
     run: usize,
     dropout: usize,
     leader_evidence: usize,
-    cell_sums: [[f64; 3]; 10],
+    /// Accumulated 1080, 1200, 1320, and 1900 Hz envelope per cell.
+    cell_sums: [[f64; 4]; 10],
 }
 
 impl VisDecoder {
@@ -66,7 +67,7 @@ impl VisDecoder {
             run: 0,
             dropout: 0,
             leader_evidence: 0,
-            cell_sums: [[0.0; 3]; 10],
+            cell_sums: [[0.0; 4]; 10],
         }
     }
 
@@ -98,7 +99,7 @@ impl VisDecoder {
                 self.track_start_run(sync_strength);
                 let trigger = (self.sample_rate_hz * START_TRIGGER_SECONDS) as usize;
                 if self.run == trigger && self.armed() {
-                    self.cell_sums = [[0.0; 3]; 10];
+                    self.cell_sums = [[0.0; 4]; 10];
                     self.state = VisState::Cells {
                         sample: trigger,
                         cell: 0,
@@ -111,9 +112,9 @@ impl VisDecoder {
             VisState::Cells { sample, cell } => {
                 let cell_samples = (self.sample_rate_hz * CELL_SECONDS).round() as usize;
                 if sample >= cell_samples / 4 && sample < cell_samples * 3 / 4 {
-                    self.cell_sums[cell][0] += envelope[0];
-                    self.cell_sums[cell][1] += envelope[1];
-                    self.cell_sums[cell][2] += envelope[2];
+                    for (sum, value) in self.cell_sums[cell].iter_mut().zip(envelope) {
+                        *sum += value;
+                    }
                 }
                 let next_sample = sample + 1;
                 if next_sample < cell_samples {
@@ -121,6 +122,16 @@ impl VisDecoder {
                         sample: next_sample,
                         cell,
                     };
+                    return None;
+                }
+                if !self.cell_is_legible(cell) {
+                    // The header was not one. Searching resumes from here
+                    // rather than at the end of the ten cells, so a picture
+                    // that armed the decoder costs one cell of deafness
+                    // instead of three hundred milliseconds of it.
+                    self.state = VisState::Search;
+                    self.run = 0;
+                    self.dropout = 0;
                     return None;
                 }
                 if cell < 9 {
@@ -162,12 +173,32 @@ impl VisDecoder {
         }
     }
 
+    /// Reports whether a completed cell names the tone the header calls for.
+    ///
+    /// Arming on a start bit alone is cheap, so it is the cells rather than the
+    /// trigger that keep a picture from being read as a header. MMSSTV throws a
+    /// header away the moment a cell stops looking like one: a bit whose two
+    /// detectors are too close to separate, or one the 1900 Hz leader detector
+    /// beats outright, ends the attempt. That is what its own 20 ms
+    /// synchronization pulses run into, which is why a picture arms its decoder
+    /// on every line without ever producing a mode.
+    ///
+    /// A cell is held to the dominance the trigger itself asked for, rather
+    /// than to the original's absolute levels: these envelopes are normalized
+    /// by the front end's peak follower and carry no comparable scale.
+    fn cell_is_legible(&self, cell: usize) -> bool {
+        let sums = self.cell_sums[cell];
+        let (dominant, competing) = if cell == 0 || cell == 9 {
+            // Framing: sync tone against everything that is not sync tone.
+            (sums[1], sums[0].max(sums[2]).max(sums[3]))
+        } else {
+            // A bit: whichever bit tone won, against the other and the leader.
+            (sums[0].max(sums[2]), sums[0].min(sums[2]).max(sums[3]))
+        };
+        dominant / (dominant + competing).max(f64::MIN_POSITIVE) >= START_STRENGTH
+    }
+
     fn finish_cells(&self) -> Option<Mode> {
-        if self.cell_sums[0][1] <= self.cell_sums[0][0].max(self.cell_sums[0][2])
-            || self.cell_sums[9][1] <= self.cell_sums[9][0].max(self.cell_sums[9][2])
-        {
-            return None;
-        }
         let mut raw = 0_u8;
         for bit in 0..8 {
             let sums = self.cell_sums[bit + 1];
@@ -294,6 +325,23 @@ mod tests {
         feed(&mut decoder, 1_900.0, 0.3);
         feed(&mut decoder, 1_200.0, 0.010);
         feed(&mut decoder, 1_900.0, 0.3);
+        assert_eq!(feed_vis_bits(&mut decoder, 0xac), Some(Mode::Martin1));
+    }
+
+    /// A start bit is cheap to imitate, so an armed decoder that reads ten
+    /// cells no matter what they hold will eventually spell a valid code out
+    /// of a picture. Each cell is checked as it completes instead: a leader
+    /// tone that beats both bit detectors, and a tone sitting between them
+    /// that names neither, both end the attempt where they occur.
+    #[rstest]
+    #[case(1_900.0)]
+    #[case(1_200.0)]
+    fn a_cell_that_holds_no_bit_ends_the_attempt(#[case] frequency_hz: f64) {
+        let mut decoder = VisDecoder::new(RATE);
+        assert_eq!(feed(&mut decoder, 1_200.0, 0.030), None);
+        assert_eq!(feed(&mut decoder, frequency_hz, 0.040), None);
+        // Searching resumed at the failed cell rather than at the end of the
+        // ten, so the header that follows is read from its own start bit.
         assert_eq!(feed_vis_bits(&mut decoder, 0xac), Some(Mode::Martin1));
     }
 

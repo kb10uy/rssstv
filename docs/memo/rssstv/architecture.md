@@ -449,12 +449,24 @@ Hilbert frequency discrimination.
 
 Conventional VIS decoding arms on the start bit, as MMSSTV does: fifteen
 milliseconds of sync-tone dominance — longer than the break between the
-leaders, and rid of the picture's own shorter pulses — opens the ten
-30-millisecond bit cells, and the frame is accepted on its start and stop bits
-and the parity-inclusive code table. The leaders are not required, which is
-what reads a header through noise and catches a transmission joined
-mid-leader; a start bit alone arming the decoder is also why every candidate
-frame must survive the table. `set_vis_detection` opts into
+leaders — opens the ten 30-millisecond bit cells, and the frame is accepted on
+the parity-inclusive code table. The leaders are not required, which is what
+reads a header through noise and catches a transmission joined mid-leader.
+
+Because the trigger is that cheap, it is the cells that decide, and each is
+checked as it completes rather than at the end of the ten. A framing cell has
+to be sync-dominant and a bit cell has to name one of its two tones, both to
+the same margin the trigger itself asked for, and both against the 1900 Hz
+leader detector as well — which is what separates a header from a picture,
+whose image tones sit far closer to 1900 Hz than to either bit frequency. This
+follows MMSSTV, which abandons a header the moment a cell fails to look like a
+bit. It matters most for the modes with 20-millisecond synchronization pulses:
+those are longer than the trigger, so every line of one arms the decoder, and
+only the cells stop the picture from eventually spelling a valid code and
+restarting a live reception on itself. Abandoning at the failed cell rather
+than at the tenth also keeps the decoder deaf for one cell instead of three
+hundred milliseconds, so a real header arriving right after a false arm is
+still read. `set_vis_detection` opts into
 `VisDetection::Strict`, which admits a start bit only when leader tone
 accumulated recently — an integrating gate rather than a per-sample chain, so
 a noisy leader still counts — for an operator who would rather miss a header

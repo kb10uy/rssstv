@@ -341,7 +341,7 @@ fn detects_a_header_through_noise() {
         state = state
             .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1);
-        ((state >> 33) as f32 / 2_147_483_648.0 - 0.5) * 0.8
+        ((state >> 33) as f32 / 2_147_483_648.0 - 0.5) * 2.0
     };
     let mut samples = vis_signal(Mode::Martin1, rate, 0.0);
     for sample in &mut samples {
@@ -400,6 +400,84 @@ fn a_second_header_is_ignored_by_default() {
     }
 
     assert_eq!(detected, [Mode::Robot36]);
+}
+
+/// A picture is not a header, however noisy the band is.
+///
+/// A receiver that restarts on headers throws away whatever it is decoding
+/// when one arrives, so a header read out of the picture's own signal costs
+/// the operator the picture — and lands it in whatever mode the noise spelled.
+/// The modes with 20 ms synchronization pulses hold 1200 Hz for longer than
+/// the start-bit trigger outright, and a fading signal's shorter pulses reach
+/// it on their envelope decay, so a picture arms the VIS decoder over and
+/// over. Only the bit cells stand between that and a mode.
+#[rstest]
+#[case(Mode::Pd50)]
+#[case(Mode::Pd120)]
+#[case(Mode::Scottie1)]
+fn a_picture_does_not_restart_the_reception(#[case] mode: Mode) {
+    let rate = 8_000;
+    let size = ImageSize::new(mode.spec().width() as usize, mode.spec().height() as usize).unwrap();
+    let mut image = RgbImage::new(size, Rgb8::new(0, 0, 0));
+    for row in 0..size.height() {
+        for x in 0..size.width() {
+            let luminance = (x * 255 / size.width()) as u8;
+            *image.row_mut(row).unwrap().get_mut(x).unwrap() = Rgb8::new(
+                luminance,
+                (row * 255 / size.height()) as u8,
+                255 - luminance / 2,
+            );
+        }
+    }
+    // Noise the picture survives but the VIS detectors have to read through:
+    // its amplitude is above the carrier's, and only the receive band-pass
+    // keeps what reaches them usable. The carrier fades under it, because a
+    // fade is when the level follower has the least signal to normalize and
+    // the most noise reaching the detectors.
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let mut noise = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        ((state >> 33) as f32 / 2_147_483_648.0 - 0.5) * 2.0
+    };
+    let mut samples = Vec::new();
+    let mut phase = 0.0_f64;
+    let mut written = 0_u64;
+    let limit = u64::from(rate) * 40;
+    for timed in TxEncoder::new(mode, image).unwrap() {
+        let deadline = timed.until().to_samples(rate).min(limit);
+        while written < deadline {
+            let fade = 0.55 + 0.45 * (TAU * written as f64 / f64::from(rate) / 3.7).sin();
+            samples.push((phase.sin() * 0.8 * fade) as f32 + noise());
+            phase = (phase + TAU * f64::from(timed.frequency().as_hz()) / f64::from(rate))
+                .rem_euclid(TAU);
+            written += 1;
+        }
+        if written >= limit {
+            break;
+        }
+    }
+
+    let mut demodulator = Demodulator::new(rate).unwrap();
+    demodulator.set_header_restart(true);
+    let mut detected = Vec::new();
+    for packet in samples.chunks(4_096) {
+        let output = demodulator.process(packet).unwrap();
+        if let Some(detected_mode) = output.detected_mode() {
+            detected.push((
+                detected_mode,
+                output.first_sample() as f64 / f64::from(rate),
+            ));
+        }
+    }
+
+    assert_eq!(
+        detected.iter().map(|(mode, _)| *mode).collect::<Vec<_>>(),
+        [mode],
+        "{mode:?}: the picture was read as another header at {:?}",
+        detected.iter().skip(1).collect::<Vec<_>>(),
+    );
 }
 
 #[test]

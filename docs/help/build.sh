@@ -6,7 +6,7 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 out="${1:-$here/../../target/help}"
 
-pages=(index receive transmit rig files troubleshooting)
+pages=(index receive transmit template rig rigscript files troubleshooting)
 
 rm -rf "$out"
 mkdir -p "$out"

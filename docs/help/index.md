@@ -85,6 +85,8 @@ Linux でタスクスイッチャーやドックにアイコンを出すには�
 
 - [受信](receive.md) — デバイスの選択から、画像が残るまで。
 - [送信](transmit.md) — 送信画像の作りかたと送出。
+- [テンプレート](template.md) — テンプレートファイルの書きかた。
 - [リグコントロール](rig.md) — `rigctld` 経由の PTT とバンド操作。
+- [リグスクリプト](rigscript.md) — `rigcontrol.lua` と `bands.toml` の書きかた。
 - [ファイルの場所](files.md) — 設定・画像・テンプレートの置き場所。
 - [困ったとき](troubleshooting.md) — よくある症状と対処。

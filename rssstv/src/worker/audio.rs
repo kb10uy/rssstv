@@ -43,6 +43,8 @@ pub struct AudioState {
     /// Handed to every worker opened here, so a decoded row reaches the canvas
     /// without the interface having to redraw on the chance that one has.
     waker: Waker,
+    #[cfg(test)]
+    resets: usize,
 }
 
 impl AudioState {
@@ -107,6 +109,8 @@ impl AudioState {
             vis_strict,
             sync_start: SyncStart::default(),
             waker,
+            #[cfg(test)]
+            resets: 0,
         };
         if let Some(device) = device {
             state.open(&device);
@@ -137,6 +141,8 @@ impl AudioState {
             vis_strict: false,
             sync_start: SyncStart::default(),
             waker: Waker::default(),
+            #[cfg(test)]
+            resets: 0,
         }
     }
 
@@ -239,6 +245,30 @@ impl AudioState {
     /// Returns whether reception is currently stopped.
     pub const fn is_muted_for_transmit(&self) -> bool {
         self.muted_for_transmit
+    }
+
+    /// Abandons the reception in progress and searches again.
+    ///
+    /// Nothing is remembered here, unlike the settings above: the request acts
+    /// on the reception a worker is holding, and there is no such thing to act
+    /// on without one.
+    pub fn reset_reception(&mut self) {
+        #[cfg(test)]
+        {
+            self.resets += 1;
+        }
+        if let Some(worker) = self.worker.as_ref() {
+            worker.request_reset();
+        }
+    }
+
+    /// How many resets the interface has asked for.
+    ///
+    /// A request with no worker behind it leaves no trace anywhere else, so
+    /// this is what lets a test see that a click reached this far.
+    #[cfg(test)]
+    pub const fn resets(&self) -> usize {
+        self.resets
     }
 
     pub fn set_live_slant(&mut self, enabled: bool) {

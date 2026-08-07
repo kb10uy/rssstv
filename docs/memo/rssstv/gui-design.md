@@ -237,7 +237,8 @@ Reception is held for as long as anything is going out. A transmitting station
 hears its own signal come back off the antenna, and a picture decoded from it is
 the one being sent, so the worker reads the capture queue and throws it away
 while the hold lasts rather than closing the device: the device stays open, the
-selection is unchanged, and the receive indicator goes out. The hold follows the
+selection is unchanged, and the receive indicator returns to its idle colour.
+The hold follows the
 transmit phase rather than being switched at either end of a transmission, so a
 tune tone, a picture, and a transmission that failed all release it the same way.
 Entering it closes out whatever was being received, under the same 65-percent
@@ -362,13 +363,33 @@ the first row instead of waiting for a fixed fraction of the image.
 | `PhaseAdjusted` | Recorded for diagnostics only |
 | `Stopped` | Session ends with a synchronization-lost status |
 
-The interface shows whether a reception is running as a single bar, filled
-green while raster acquisition or decoding is in progress and empty otherwise.
-It showed the raw input amplitude until it was found to say nothing the
-operator was reading it for, while being redrawable only as often as a block of
-audio arrives, so it stepped rather than moved. Nothing computes an input level
-now, and `Demodulator` never had an accessor for one. There is no numeric dBFS
-value or synchronization percentage.
+The interface shows whether a reception is running as a bar that is always full
+and says what it says in colour alone: green while raster acquisition or
+decoding is in progress, and a flat grey otherwise. It carried a fill that
+emptied when nothing was arriving, which reads as a reading that fell rather
+than as a state that changed. Before that it showed the raw input amplitude,
+which was found to say nothing the operator was reading it for while being
+redrawable only as often as a block of audio arrives, so it stepped rather than
+moved. Nothing computes an input level now, and `Demodulator` never had an
+accessor for one. There is no numeric dBFS value or synchronization percentage.
+
+Clicking the bar ends the reception. Reception ends on its own when
+synchronization is lost or when nothing has progressed for twenty seconds, both
+of which take time the operator can see going to waste on a picture that started
+in the wrong mode or on a signal that was never a picture; clicking makes that
+decision by hand. The bar carries the click rather than a button beside it
+because the row is one widget tall on both tabs and has to stay that way, and
+because the bar is where the operator sees that a reception has gone wrong. The
+transmit level is worked the same way on the same row. A bar carries no sign
+that it can be clicked, so the pointer changes over it and the hover text says
+what the click does. What was decoded is kept on the same terms as any other
+reception cut short.
+
+The click is a request set on the receive worker rather than an action taken in
+the interface, because the protocol state belongs to the worker thread; the
+worker closes the reception out on its next pass through the audio loop, which
+it makes whether or not audio is arriving. A request with no worker behind it
+does nothing.
 
 ### Transmit Worker
 
@@ -473,7 +494,7 @@ marked shared are built once and reused across tabs.
 | Input device selector | Shared | `pick_list` over enumerated capture devices |
 | Main image view | Per tab | `canvas`; see below |
 | State line | Shared | Mode, size, and what the tab is doing, under the image |
-| Level bar | Per tab | Signal-colored `progress_bar`, draggable while transmitting |
+| Level bar | Per tab | Signal-colored `progress_bar`; clicked to reset the reception while receiving, dragged to set the level while transmitting |
 | Mode panel | Shared | `toggler` for automatic detection plus `pick_list` |
 | Radio panel | Shared | Connect and its state, then a band `pick_list`, the frequency, and two step buttons |
 | DSP panel | Receive | Three toggle buttons |
@@ -548,8 +569,9 @@ strip above it.
 
 That first box follows the tab and keeps one shape across
 both: a labelled bar, the mode, and the controls that act on the signal. Receiving,
-that bar is the state indicator, which fills green while a raster is being
-acquired or decoded and is empty otherwise, and below it the DSP toggles.
+that bar is the state indicator, always full and green while a raster is being
+acquired or decoded and grey otherwise, clicked to end the reception, and below
+it the DSP toggles.
 Transmitting, it is the output level and the
 transmit trigger, whose button fills the height occupied by the DSP heading and
 toggles on the receive tab. The output level is drawn as the same bar rather

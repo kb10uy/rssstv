@@ -639,6 +639,17 @@ impl App {
         self.audio.set_vis_strict(enabled);
     }
 
+    /// Abandons the reception in progress and starts the search over.
+    ///
+    /// The receiver reaches the same place on its own once synchronization is
+    /// lost or nothing has progressed for twenty seconds. This is for the
+    /// operator who can already see that the picture arriving is not one:
+    /// started on a mode it should not have been, or on a signal that was
+    /// never a picture at all.
+    pub fn reset_reception(&mut self) {
+        self.audio.reset_reception();
+    }
+
     pub fn toggle_dsp(&mut self, dsp: Dsp) {
         self.dsp.toggle(dsp);
         if dsp == Dsp::Slant {

@@ -21,6 +21,13 @@ pub const TX_BUTTON: Color32 = Color32::from_rgb(140, 40, 40);
 /// The receive indicator while a picture is arriving.
 pub const RX_ACTIVE: Color32 = Color32::from_rgb(80, 200, 120);
 
+/// The receive indicator while nothing is being decoded.
+///
+/// The indicator is always full and says what it says with colour alone, so
+/// this is what "nothing is arriving" looks like: present, and plainly not the
+/// colour beside it that means something is.
+pub const RX_IDLE: Color32 = Color32::from_rgb(64, 64, 70);
+
 /// The transmit meter while a picture is going out.
 pub const TX_LEVEL: Color32 = Color32::from_rgb(200, 60, 60);
 

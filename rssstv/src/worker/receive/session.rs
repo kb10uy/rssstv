@@ -469,6 +469,8 @@ impl Session {
 
 /// The settings the interface may change while the worker runs.
 pub(super) struct SharedOptions<'a> {
+    /// Set by the interface to abandon the reception in progress.
+    pub(super) reset: &'a AtomicBool,
     pub(super) live_slant: &'a AtomicBool,
     pub(super) vis_restart: &'a AtomicBool,
     pub(super) vis_strict: &'a AtomicBool,
@@ -483,6 +485,7 @@ pub(super) fn run(
     options: SharedOptions<'_>,
 ) {
     let SharedOptions {
+        reset,
         live_slant,
         vis_restart,
         vis_strict,
@@ -536,28 +539,47 @@ pub(super) fn run(
                     None
                 }
             };
-            let (frame, history) = closed
-                .map(|(frame, history)| (Some(frame), history))
-                .unwrap_or_default();
             last_progress = RxProgress::Idle;
             progress_changed_at = Instant::now();
             history_deadline = None;
-            mailbox.publish(RxSnapshot {
-                mode: None,
-                progress: RxProgress::Idle,
+            mailbox.publish(closed_snapshot(
+                closed,
                 display_fraction,
-                frame,
-                history,
-                callsigns: callsigns.clone(),
-                numbers: numbers.clone(),
-                dropped_samples: reader.dropped_samples(),
-                error: error.take(),
-            });
+                &callsigns,
+                &numbers,
+                reader.dropped_samples(),
+                error.take(),
+            ));
             continue;
         }
         // A release has nothing to undo: the session was started over as the
         // mute began, and nothing was fed to it while the mute lasted.
         muted = false;
+
+        // The operator asking for a reset is the same decision the receiver
+        // makes for itself when synchronization is lost, made without the
+        // wait: the reception is closed out where it stands, kept on the same
+        // terms as any other cut short, and the search starts over.
+        if reset.swap(false, Ordering::Relaxed) {
+            let closed = match session.suspend() {
+                Ok(closed) => closed,
+                Err(reason) => {
+                    error = Some(reason);
+                    None
+                }
+            };
+            last_progress = RxProgress::Idle;
+            progress_changed_at = Instant::now();
+            history_deadline = None;
+            mailbox.publish(closed_snapshot(
+                closed,
+                display_fraction,
+                &callsigns,
+                &numbers,
+                reader.dropped_samples(),
+                error.take(),
+            ));
+        }
 
         let reading = reader.read(&mut pcm);
         if reading.count == 0 {
@@ -686,6 +708,35 @@ pub(super) fn run(
                 error = Some(reason);
             }
         }
+    }
+}
+
+/// The snapshot published when a reception is closed out by hand.
+///
+/// Both the transmit mute and an operator's reset end whatever was being
+/// decoded and leave nothing running, so both say the same thing: no mode, no
+/// progress, and whatever the abandoned reception left worth keeping.
+fn closed_snapshot(
+    closed: Option<(Frame, Option<HistoryCandidate>)>,
+    display_fraction: f32,
+    callsigns: &[String],
+    numbers: &[String],
+    dropped_samples: u64,
+    error: Option<AppError>,
+) -> RxSnapshot {
+    let (frame, history) = closed
+        .map(|(frame, history)| (Some(frame), history))
+        .unwrap_or_default();
+    RxSnapshot {
+        mode: None,
+        progress: RxProgress::Idle,
+        display_fraction,
+        frame,
+        history,
+        callsigns: callsigns.to_vec(),
+        numbers: numbers.to_vec(),
+        dropped_samples,
+        error,
     }
 }
 

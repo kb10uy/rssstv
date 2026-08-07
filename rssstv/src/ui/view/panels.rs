@@ -190,16 +190,38 @@ pub(super) fn section(ui: &mut Ui, title: &str, contents: impl FnOnce(&mut Ui)) 
     });
 }
 
-/// Whether a picture is arriving, as the bar the transmit level is set on.
+/// Whether a picture is arriving, and the way out of one that is not.
 ///
-/// It used to show the input amplitude, which is not what the operator is
+/// The bar used to show the input amplitude, which is not what the operator is
 /// looking for here and could only be redrawn as often as a block of audio
-/// arrives, so it stepped rather than moved. What the bar was read for is
-/// whether the signal is being decoded at all, and that is all it says now.
-pub(super) fn rx_state(ui: &mut Ui, app: &App) {
+/// arrives, so it stepped rather than moved. What it was read for is whether
+/// the signal is being decoded at all, so it stays full and says that in
+/// colour: a bar that empties reads as a reading that fell rather than as a
+/// state that changed.
+///
+/// Clicking it ends the reception. The bar is where the operator sees that one
+/// has gone wrong, so it is also where they get to say so, and the row is one
+/// widget tall on both tabs and has to stay that way. The transmit level is
+/// worked the same way on the same row for the same reason.
+pub(super) fn rx_state(ui: &mut Ui, app: &mut App) {
     let active = app.audio.snapshot().progress.is_active();
-    let filled = if active { 1.0 } else { 0.0 };
-    ui.add(ProgressBar::new(filled).fill(colors::RX_ACTIVE));
+    let fill = if active {
+        colors::RX_ACTIVE
+    } else {
+        colors::RX_IDLE
+    };
+    let hint = app.i18n.text("rx-reset-hint");
+    let bar = ui.add(ProgressBar::new(1.0).fill(fill));
+    // A bar carries no sign that it can be clicked, so the pointer and the
+    // hover text are the whole of the invitation.
+    let clicked = bar
+        .interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hint)
+        .clicked();
+    if clicked {
+        app.reset_reception();
+    }
 }
 
 /// The transmit level, set by dragging the bar the receive indicator fills.

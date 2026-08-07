@@ -68,6 +68,7 @@ action-send-fskid = Send FSKID
 action-contest-mode = Contest mode (send number)
 action-vis-restart = Restart on a new VIS header
 action-vis-strict = Strict VIS detection (require leader)
+rx-reset-hint = Click to end this reception and search for a signal again.
 action-transmit = TX
 action-stop-transmit = Stop TX
 action-tone = Send a { $frequency } Hz tone

@@ -232,6 +232,7 @@ impl Mailbox {
 pub struct RxWorker {
     stop: Arc<AtomicBool>,
     muted_for_transmit: Arc<AtomicBool>,
+    reset: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
     mailbox: Arc<Mailbox>,
     live_slant: Arc<AtomicBool>,
@@ -252,6 +253,7 @@ impl RxWorker {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let muted_for_transmit = Arc::new(AtomicBool::new(false));
+        let reset = Arc::new(AtomicBool::new(false));
         let live_slant = Arc::new(AtomicBool::new(live_slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
         let vis_strict = Arc::new(AtomicBool::new(vis_strict));
@@ -260,6 +262,7 @@ impl RxWorker {
         let join = {
             let stop = Arc::clone(&stop);
             let muted_for_transmit = Arc::clone(&muted_for_transmit);
+            let reset = Arc::clone(&reset);
             let live_slant = Arc::clone(&live_slant);
             let vis_restart = Arc::clone(&vis_restart);
             let vis_strict = Arc::clone(&vis_strict);
@@ -274,6 +277,7 @@ impl RxWorker {
                         &stop,
                         &muted_for_transmit,
                         SharedOptions {
+                            reset: &reset,
                             live_slant: &live_slant,
                             vis_restart: &vis_restart,
                             vis_strict: &vis_strict,
@@ -295,6 +299,7 @@ impl RxWorker {
         Self {
             stop,
             muted_for_transmit,
+            reset,
             join,
             mailbox,
             live_slant,
@@ -311,6 +316,21 @@ impl RxWorker {
     /// reception.
     pub fn set_muted_for_transmit(&self, muted: bool) {
         self.muted_for_transmit.store(muted, Ordering::Relaxed);
+    }
+
+    /// Closes out whatever is being received and searches again.
+    ///
+    /// The receiver gives up on a reception by itself when synchronization is
+    /// lost or nothing progresses for a while, both of which take time the
+    /// operator can see going to waste. This is that decision made by hand: a
+    /// picture started on the wrong mode, or on a signal that turned out to be
+    /// something else, does not have to be waited out.
+    ///
+    /// Requested rather than performed here, because the protocol state
+    /// belongs to the worker thread. It is acted on with the next block of
+    /// audio, and one is arriving continuously while a device is open.
+    pub fn request_reset(&self) {
+        self.reset.store(true, Ordering::Relaxed);
     }
 
     pub fn set_live_slant(&self, enabled: bool) {
@@ -796,6 +816,69 @@ mod pipeline_tests {
         );
         let history = snapshot.history.expect("the abandoned reception is kept");
         assert_eq!(history.mode, mode);
+    }
+
+    /// The operator does not have to wait the receiver out.
+    ///
+    /// Automatic stop needs synchronization to fail, and the stall timeout
+    /// needs twenty seconds of nothing, so a reception that is visibly wrong
+    /// can hold the receiver for a long time. A reset ends it where it stands,
+    /// keeps what was decoded on the same terms as any other reception cut
+    /// short, and leaves the search running for the next signal.
+    #[test]
+    fn a_reset_ends_the_reception_and_leaves_the_search_running() {
+        let mode = Mode::Robot36;
+        let expected = source_image(mode);
+        let pcm = transmission(mode, expected.clone(), 0.0);
+        let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
+        let worker = RxWorker::spawn(
+            reader,
+            true,
+            true,
+            false,
+            SyncStart::Disabled,
+            Waker::default(),
+        );
+        let mut snapshot = RxSnapshot::default();
+        let mut frame = None;
+
+        // No trailing audio, so the reception is still running rather than
+        // having been stopped by the signal going away.
+        push_all(
+            &mut feed,
+            &worker,
+            &pcm[..pcm.len() * 3 / 4],
+            &mut snapshot,
+            &mut frame,
+        );
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+        assert!(
+            matches!(snapshot.progress, RxProgress::Decoding { .. }),
+            "{snapshot:?}"
+        );
+
+        worker.request_reset();
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+
+        assert_eq!(snapshot.progress, RxProgress::Idle, "{snapshot:?}");
+        assert_eq!(snapshot.mode, None, "{snapshot:?}");
+        let history = snapshot
+            .history
+            .take()
+            .expect("the reception the reset ended");
+        assert_eq!(history.mode, mode);
+
+        // The next transmission is received whole, so the reset left a search
+        // behind it rather than a stopped worker.
+        push_all(&mut feed, &worker, &pcm, &mut snapshot, &mut frame);
+        let silence = vec![0.0_f32; RATE as usize * 3];
+        push_all(&mut feed, &worker, &silence, &mut snapshot, &mut frame);
+        drain(&mut feed, &worker, &mut snapshot, &mut frame);
+
+        assert_eq!(snapshot.progress, RxProgress::Complete, "{snapshot:?}");
+        let frame = frame.expect("a decoded frame");
+        let error = mean_abs_error(&frame, &expected);
+        assert!(error < 40.0, "the reception after the reset scored {error}");
     }
 
     fn decode_at(mode: Mode, expected: &RgbImage, offset_ppm: f64) -> (RxSnapshot, f64) {

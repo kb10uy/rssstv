@@ -207,6 +207,70 @@ fn the_serial_number_is_inert_outside_contest_mode() {
     }
 }
 
+/// The indicator keeps the whole row to itself, because the row is one
+/// widget tall on both tabs and nothing may be added beside it that would
+/// make it taller.
+#[test]
+fn the_receive_indicator_spans_its_row() {
+    let mut app = App::headless();
+    app.tab = Tab::Receive;
+    // The DSP row spans the frame's full content width; nothing else in the
+    // tab reports that width.
+    let dsp_labels = Dsp::ALL.map(|dsp| app.i18n.text(dsp.label_key()));
+
+    let harness = render(&mut app);
+    let bar = harness
+        .get_by_role(egui::accesskit::Role::ProgressIndicator)
+        .rect();
+    let left = harness.get_by_label(&dsp_labels[0]).rect().left();
+    let right = harness
+        .get_by_label(dsp_labels.last().unwrap())
+        .rect()
+        .right();
+
+    assert!(
+        (bar.left() - left).abs() < 1.0 && (bar.right() - right).abs() < 1.0,
+        "the indicator spans {}..{} rather than the content's {left}..{right}",
+        bar.left(),
+        bar.right()
+    );
+}
+
+/// A bar carries no sign that it can be clicked, so the hover text is the
+/// whole of the invitation and has to be there to be read.
+#[test]
+fn hovering_the_receive_indicator_offers_the_reset() {
+    let mut app = App::headless();
+    app.tab = Tab::Receive;
+    let hint = app.i18n.text("rx-reset-hint");
+
+    let mut harness = render(&mut app);
+    assert!(harness.query_by_label(&hint).is_none());
+    harness
+        .get_by_role(egui::accesskit::Role::ProgressIndicator)
+        .hover();
+    harness.run();
+
+    harness.get_by_label(&hint);
+}
+
+#[test]
+fn clicking_the_receive_indicator_asks_for_a_reset() {
+    let mut app = App::headless();
+    app.tab = Tab::Receive;
+    assert_eq!(app.audio.resets(), 0);
+
+    {
+        let mut harness = render(&mut app);
+        harness
+            .get_by_role(egui::accesskit::Role::ProgressIndicator)
+            .click();
+        harness.run();
+    }
+
+    assert_eq!(app.audio.resets(), 1);
+}
+
 #[test]
 fn the_tab_control_panel_keeps_its_height_between_tabs() {
     let mut tops = Vec::new();

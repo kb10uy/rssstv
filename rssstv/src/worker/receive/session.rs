@@ -10,7 +10,7 @@ use std::{
 use jiff::Zoned;
 use rssstv_audio::CaptureReader;
 use rssstv_demodulator::{
-    DemodulatedChunk, Demodulator, Detection, SyncStart, sync_detector_delay,
+    DemodulatedChunk, Demodulator, Detection, SyncStart, VisDetection, sync_detector_delay,
 };
 use rssstv_sstv::{
     RxDecoder, SstvError,
@@ -60,6 +60,14 @@ const STAGING_MARGIN_SECONDS: usize = REFINEMENT_TAIL_SECONDS + 10;
 const STALL_TIMEOUT: Duration = Duration::from_secs(20);
 
 const FSK_HISTORY_WAIT: Duration = Duration::from_secs(4);
+
+const fn vis_detection(strict: bool) -> VisDetection {
+    if strict {
+        VisDetection::Strict
+    } else {
+        VisDetection::Loose
+    }
+}
 
 fn live_rx_config(
     mode: Mode,
@@ -129,6 +137,8 @@ struct Session {
     sync_start: SyncStart,
     /// Whether a VIS header may start a reception over, for the same reason.
     vis_restart: bool,
+    /// Whether a VIS detection requires leader tone, for the same reason.
+    vis_strict: bool,
     refinement: Refinement,
     /// Staged length at which the next refinement attempt is worthwhile.
     refine_next_len: usize,
@@ -146,10 +156,12 @@ impl Session {
         sample_rate_hz: u32,
         sync_start: SyncStart,
         vis_restart: bool,
+        vis_strict: bool,
     ) -> Result<Self, AppError> {
         let mut demodulator = Demodulator::new(sample_rate_hz)?;
         demodulator.set_sync_start(sync_start);
         demodulator.set_header_restart(vis_restart);
+        demodulator.set_vis_detection(vis_detection(vis_strict));
         Ok(Self {
             demodulator,
             decoder: None,
@@ -158,6 +170,7 @@ impl Session {
             awaiting_signal: true,
             sync_start,
             vis_restart,
+            vis_strict,
             refinement: Refinement::NotApplicable,
             refine_next_len: 0,
             refine_limit_len: 0,
@@ -186,12 +199,27 @@ impl Session {
         self.demodulator.set_header_restart(enabled);
     }
 
+    /// Chooses whether a VIS detection requires leader tone, for this
+    /// reception and later ones.
+    fn set_vis_strict(&mut self, enabled: bool) {
+        if self.vis_strict == enabled {
+            return;
+        }
+        self.vis_strict = enabled;
+        self.demodulator.set_vis_detection(vis_detection(enabled));
+    }
+
     /// Discards all protocol state.
     ///
     /// Capture overrun breaks the contiguity the demodulator requires, so the
     /// pipeline restarts rather than decoding across the gap.
     fn reset(&mut self) -> Result<(), AppError> {
-        *self = Self::new(self.sample_rate_hz, self.sync_start, self.vis_restart)?;
+        *self = Self::new(
+            self.sample_rate_hz,
+            self.sync_start,
+            self.vis_restart,
+            self.vis_strict,
+        )?;
         Ok(())
     }
 
@@ -282,6 +310,8 @@ impl Session {
         self.demodulator = Demodulator::new(self.sample_rate_hz)?;
         self.demodulator.set_sync_start(self.sync_start);
         self.demodulator.set_header_restart(self.vis_restart);
+        self.demodulator
+            .set_vis_detection(vis_detection(self.vis_strict));
         self.awaiting_signal = true;
         Ok(())
     }
@@ -437,21 +467,34 @@ impl Session {
     }
 }
 
+/// The settings the interface may change while the worker runs.
+pub(super) struct SharedOptions<'a> {
+    pub(super) live_slant: &'a AtomicBool,
+    pub(super) vis_restart: &'a AtomicBool,
+    pub(super) vis_strict: &'a AtomicBool,
+    pub(super) sync_start: &'a Mutex<SyncStart>,
+}
+
 pub(super) fn run(
     mut reader: CaptureReader,
     mailbox: &Mailbox,
     stop: &AtomicBool,
     mute: &AtomicBool,
-    live_slant: &AtomicBool,
-    vis_restart: &AtomicBool,
-    sync_start: &Mutex<SyncStart>,
+    options: SharedOptions<'_>,
 ) {
+    let SharedOptions {
+        live_slant,
+        vis_restart,
+        vis_strict,
+        sync_start,
+    } = options;
     let sample_rate_hz = reader.sample_rate_hz();
     let initial_sync_start = *sync_start.lock().unwrap_or_else(PoisonError::into_inner);
     let mut session = match Session::new(
         sample_rate_hz,
         initial_sync_start,
         vis_restart.load(Ordering::Relaxed),
+        vis_strict.load(Ordering::Relaxed),
     ) {
         Ok(session) => session,
         Err(error) => {
@@ -524,6 +567,7 @@ pub(super) fn run(
         let samples = &pcm[..reading.count];
         session.set_sync_start(*sync_start.lock().unwrap_or_else(PoisonError::into_inner));
         session.set_vis_restart(vis_restart.load(Ordering::Relaxed));
+        session.set_vis_strict(vis_strict.load(Ordering::Relaxed));
 
         if reading.is_discontinuous() && session.reset().is_err() {
             error = Some(AppError::CaptureRestartFailed);

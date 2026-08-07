@@ -445,7 +445,20 @@ does so, because sync spacing is present throughout every picture. The existing
 offline behavior. The
 front end performs band-pass filtering, level normalization, VIS/FSK tone
 detection, conventional VIS decoding, zero-crossing AFC measurement, and
-Hilbert frequency discrimination. Its synchronization envelope is causal, with
+Hilbert frequency discrimination.
+
+Conventional VIS decoding arms on the start bit, as MMSSTV does: fifteen
+milliseconds of sync-tone dominance — longer than the break between the
+leaders, and rid of the picture's own shorter pulses — opens the ten
+30-millisecond bit cells, and the frame is accepted on its start and stop bits
+and the parity-inclusive code table. The leaders are not required, which is
+what reads a header through noise and catches a transmission joined
+mid-leader; a start bit alone arming the decoder is also why every candidate
+frame must survive the table. `set_vis_detection` opts into
+`VisDetection::Strict`, which admits a start bit only when leader tone
+accumulated recently — an integrating gate rather than a per-sample chain, so
+a noisy leader still counts — for an operator who would rather miss a header
+than start on a false one. Its synchronization envelope is causal, with
 its calibrated delay relative to the frequency output carried as metadata rather
 than implemented by shifting the sample array. It requires at least a 6000 Hz
 sample rate. The Hilbert transformer spans 100 Hz to 100 Hz below Nyquist, as

@@ -22,6 +22,7 @@ pub use error::DemodulatorError;
 pub use frontend::Detection;
 pub use pipeline::{PipelineError, PipelineOptions, PipelineOutcome, ReceivePipeline};
 pub use sync::SyncStart;
+pub use vis::VisDetection;
 
 const SYNC_DETECTOR_DELAY_PS: u64 = 6_000_000_000;
 

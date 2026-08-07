@@ -67,6 +67,7 @@ history-format-jpeg = JPEG
 action-send-fskid = FSKID を送出
 action-contest-mode = コンテストモード（ナンバーを送出）
 action-vis-restart = 受信中も VIS を検出して再スタート
+action-vis-strict = VIS 判定を厳格にする（リーダーを要求）
 action-transmit = TX
 action-stop-transmit = TX停止
 action-tone = { $frequency } Hz のトーンを送信

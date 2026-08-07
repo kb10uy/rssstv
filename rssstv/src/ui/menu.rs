@@ -35,6 +35,7 @@ pub enum Action {
     ToggleSendFskid,
     ToggleContestMode,
     ToggleVisRestart,
+    ToggleVisStrict,
     WriteRigScript,
     WriteBandPlan,
     ToggleAutoHistory,
@@ -146,11 +147,18 @@ pub fn model(app: &App) -> Vec<Menu> {
                 },
                 Item::Submenu {
                     label: text("menu-receive"),
-                    items: vec![Item::Check {
-                        label: text("action-vis-restart"),
-                        checked: app.vis_restart,
-                        action: Action::ToggleVisRestart,
-                    }],
+                    items: vec![
+                        Item::Check {
+                            label: text("action-vis-restart"),
+                            checked: app.vis_restart,
+                            action: Action::ToggleVisRestart,
+                        },
+                        Item::Check {
+                            label: text("action-vis-strict"),
+                            checked: app.vis_strict,
+                            action: Action::ToggleVisStrict,
+                        },
+                    ],
                 },
                 Item::Submenu {
                     label: text("menu-history"),
@@ -290,6 +298,7 @@ pub fn apply(app: &mut App, action: Action) -> bool {
         Action::ToggleSendFskid => app.send_fskid = !app.send_fskid,
         Action::ToggleContestMode => app.contest_mode = !app.contest_mode,
         Action::ToggleVisRestart => app.set_vis_restart(!app.vis_restart),
+        Action::ToggleVisStrict => app.set_vis_strict(!app.vis_strict),
         Action::WriteRigScript => app.write_rig_script(),
         Action::WriteBandPlan => app.write_band_plan(),
         Action::ToggleAutoHistory => app.auto_history = !app.auto_history,

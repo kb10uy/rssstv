@@ -38,6 +38,7 @@ pub struct AudioState {
     muted_for_transmit: bool,
     live_slant: bool,
     vis_restart: bool,
+    vis_strict: bool,
     sync_start: SyncStart,
     /// Handed to every worker opened here, so a decoded row reaches the canvas
     /// without the interface having to redraw on the chance that one has.
@@ -55,6 +56,7 @@ impl AudioState {
         preferred_output: Option<&str>,
         live_slant: bool,
         vis_restart: bool,
+        vis_strict: bool,
         waker: Waker,
     ) -> Self {
         let host = AudioHost::new();
@@ -102,6 +104,7 @@ impl AudioState {
             muted_for_transmit: false,
             live_slant,
             vis_restart,
+            vis_strict,
             sync_start: SyncStart::default(),
             waker,
         };
@@ -131,6 +134,7 @@ impl AudioState {
             muted_for_transmit: false,
             live_slant: true,
             vis_restart: true,
+            vis_strict: false,
             sync_start: SyncStart::default(),
             waker: Waker::default(),
         }
@@ -181,6 +185,7 @@ impl AudioState {
                     reader,
                     self.live_slant,
                     self.vis_restart,
+                    self.vis_strict,
                     self.sync_start,
                     self.waker.clone(),
                 );
@@ -254,6 +259,17 @@ impl AudioState {
         }
     }
 
+    /// Chooses whether a VIS detection requires the leader tone as well.
+    pub fn set_vis_strict(&mut self, enabled: bool) {
+        if self.vis_strict == enabled {
+            return;
+        }
+        self.vis_strict = enabled;
+        if let Some(worker) = self.worker.as_ref() {
+            worker.set_vis_strict(enabled);
+        }
+    }
+
     /// Chooses whether a reception may start without a VIS header.
     ///
     /// Kept here as well as pushed to the worker, because a device opened
@@ -281,6 +297,11 @@ impl AudioState {
     #[cfg(test)]
     pub const fn vis_restart(&self) -> bool {
         self.vis_restart
+    }
+
+    #[cfg(test)]
+    pub const fn vis_strict(&self) -> bool {
+        self.vis_strict
     }
 
     /// Returns the physical capture rate, if a device is open.

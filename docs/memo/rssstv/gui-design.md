@@ -537,9 +537,9 @@ missing-variable error against a template that never asked for it.
 
 Settings that are chosen once and then left alone live in the menu rather than
 beside the image: whether a transmission ends with the station identifier,
-whether a VIS header may start a reception over, whether receptions are kept,
-and in what format. Each is a check entry under Settings, grouped by what it
-affects.
+whether a VIS header may start a reception over, whether a VIS detection
+requires the header's leader tone as well, whether receptions are kept, and in
+what format. Each is a check entry under Settings, grouped by what it affects.
 
 The tab selector sits on top of the side panel's first box rather than in a bar
 of its own, and that box carries no title: the tab it selects is what the title

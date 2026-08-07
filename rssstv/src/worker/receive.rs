@@ -15,7 +15,10 @@ use rssstv_sstv::{
 
 use crate::{
     error::AppError,
-    worker::{Waker, receive::session::run},
+    worker::{
+        Waker,
+        receive::session::{SharedOptions, run},
+    },
 };
 
 mod session;
@@ -233,6 +236,7 @@ pub struct RxWorker {
     mailbox: Arc<Mailbox>,
     live_slant: Arc<AtomicBool>,
     vis_restart: Arc<AtomicBool>,
+    vis_strict: Arc<AtomicBool>,
     sync_start: Arc<Mutex<SyncStart>>,
 }
 
@@ -242,6 +246,7 @@ impl RxWorker {
         reader: CaptureReader,
         live_slant: bool,
         vis_restart: bool,
+        vis_strict: bool,
         sync_start: SyncStart,
         waker: Waker,
     ) -> Self {
@@ -249,6 +254,7 @@ impl RxWorker {
         let muted_for_transmit = Arc::new(AtomicBool::new(false));
         let live_slant = Arc::new(AtomicBool::new(live_slant));
         let vis_restart = Arc::new(AtomicBool::new(vis_restart));
+        let vis_strict = Arc::new(AtomicBool::new(vis_strict));
         let sync_start = Arc::new(Mutex::new(sync_start));
         let mailbox = Arc::new(Mailbox::new(waker));
         let join = {
@@ -256,6 +262,7 @@ impl RxWorker {
             let muted_for_transmit = Arc::clone(&muted_for_transmit);
             let live_slant = Arc::clone(&live_slant);
             let vis_restart = Arc::clone(&vis_restart);
+            let vis_strict = Arc::clone(&vis_strict);
             let sync_start = Arc::clone(&sync_start);
             let mailbox = Arc::clone(&mailbox);
             thread::Builder::new()
@@ -266,9 +273,12 @@ impl RxWorker {
                         &mailbox,
                         &stop,
                         &muted_for_transmit,
-                        &live_slant,
-                        &vis_restart,
-                        &sync_start,
+                        SharedOptions {
+                            live_slant: &live_slant,
+                            vis_restart: &vis_restart,
+                            vis_strict: &vis_strict,
+                            sync_start: &sync_start,
+                        },
                     );
                 })
                 .ok()
@@ -289,6 +299,7 @@ impl RxWorker {
             mailbox,
             live_slant,
             vis_restart,
+            vis_strict,
             sync_start,
         }
     }
@@ -308,6 +319,10 @@ impl RxWorker {
 
     pub fn set_vis_restart(&self, enabled: bool) {
         self.vis_restart.store(enabled, Ordering::Relaxed);
+    }
+
+    pub fn set_vis_strict(&self, enabled: bool) {
+        self.vis_strict.store(enabled, Ordering::Relaxed);
     }
 
     pub fn set_sync_start(&self, scope: SyncStart) {
@@ -584,7 +599,7 @@ mod pipeline_tests {
         sync_start: SyncStart,
     ) -> (RxSnapshot, Option<Frame>) {
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, sync_start, Waker::default());
+        let worker = RxWorker::spawn(reader, true, true, false, sync_start, Waker::default());
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
         let silence = vec![0.0_f32; trailing_silence];
@@ -655,7 +670,14 @@ mod pipeline_tests {
         let pcm = transmission(mode, expected.clone(), 0.0);
         let silence = vec![0.0_f32; RATE as usize * 3];
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled, Waker::default());
+        let worker = RxWorker::spawn(
+            reader,
+            true,
+            true,
+            false,
+            SyncStart::Disabled,
+            Waker::default(),
+        );
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
 
@@ -686,7 +708,14 @@ mod pipeline_tests {
         let mode = Mode::Robot36;
         let pcm = transmission(mode, source_image(mode), 0.0);
         let (mut feed, reader) = synthetic_capture(RATE, 1 << 16).unwrap();
-        let worker = RxWorker::spawn(reader, true, true, SyncStart::Disabled, Waker::default());
+        let worker = RxWorker::spawn(
+            reader,
+            true,
+            true,
+            false,
+            SyncStart::Disabled,
+            Waker::default(),
+        );
         let mut snapshot = RxSnapshot::default();
         let mut frame = None;
 

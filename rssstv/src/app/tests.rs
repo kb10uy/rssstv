@@ -697,6 +697,19 @@ fn the_vis_restart_setting_reaches_the_receive_worker() {
     assert!(!app.audio.vis_restart());
 }
 
+/// Loose detection is the default, and turning strictness on has to reach
+/// the receive worker rather than only the menu mark.
+#[test]
+fn the_vis_strict_setting_reaches_the_receive_worker() {
+    let mut app = App::headless();
+    assert!(!app.vis_strict);
+    assert!(!app.audio.vis_strict());
+
+    app.set_vis_strict(true);
+
+    assert!(app.audio.vis_strict());
+}
+
 /// The setting decides whether the identifier is sent, not whether the
 /// station needs a callsign: a transmission is made by a station either
 /// way, and nothing else names it.

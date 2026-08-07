@@ -6,6 +6,7 @@ use crate::{
     frontend::{Detection, FrontEnd},
     sync::SyncStart,
     sync_detector_delay,
+    vis::VisDetection,
 };
 
 /// Owned output produced from one incremental PCM input packet.
@@ -214,6 +215,15 @@ impl Demodulator {
 
     const fn restarts_on(&self, detection: Detection) -> bool {
         self.header_restart && matches!(detection, Detection::Header)
+    }
+
+    /// Chooses how much header framing a VIS detection requires.
+    ///
+    /// Defaults to [`VisDetection::Loose`], which arms on the start bit alone
+    /// as MMSSTV does. [`VisDetection::Strict`] additionally requires recent
+    /// leader tone, trading sensitivity for resistance to false headers.
+    pub fn set_vis_detection(&mut self, detection: VisDetection) {
+        self.front_end.set_vis_detection(detection);
     }
 
     /// Chooses whether a reception may start without a VIS header, and in

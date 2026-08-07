@@ -284,6 +284,73 @@ fn detects_parity_inclusive_vis() {
     assert_eq!(output.mode(), Mode::Scottie2);
 }
 
+fn vis_bits_signal(mode: Mode, rate: u32) -> Vec<f32> {
+    let mut samples = Vec::new();
+    let mut phase = 0.0_f64;
+    tone(&mut samples, rate, 1_500.0, 0.2, &mut phase);
+    tone(&mut samples, rate, 1_200.0, 0.03, &mut phase);
+    let raw = mode.spec().raw_vis().unwrap();
+    for bit in 0..8 {
+        let frequency = if raw & (1 << bit) == 0 {
+            1_300.0
+        } else {
+            1_100.0
+        };
+        tone(&mut samples, rate, frequency, 0.03, &mut phase);
+    }
+    tone(&mut samples, rate, 1_200.0, 0.03, &mut phase);
+    tone(&mut samples, rate, 1_900.0, 0.1, &mut phase);
+    samples
+}
+
+/// A header caught from its start bit alone, with both leaders missed, is
+/// what MMSSTV reads and what the default loose detection has to read too.
+#[test]
+fn detects_a_header_whose_leaders_were_missed() {
+    let samples = vis_bits_signal(Mode::Robot36, 8_000);
+    let output = demodulate(&samples, 8_000).unwrap();
+    assert_eq!(output.mode(), Mode::Robot36);
+}
+
+#[test]
+fn strict_detection_requires_the_leaders() {
+    let rate = 8_000;
+    let mut with_leaders = Demodulator::new(rate).unwrap();
+    with_leaders.set_vis_detection(rssstv_demodulator::VisDetection::Strict);
+    with_leaders
+        .process(&vis_signal(Mode::Scottie2, rate, 0.0))
+        .unwrap();
+    assert_eq!(with_leaders.mode(), Some(Mode::Scottie2));
+
+    let mut without_leaders = Demodulator::new(rate).unwrap();
+    without_leaders.set_vis_detection(rssstv_demodulator::VisDetection::Strict);
+    without_leaders
+        .process(&vis_bits_signal(Mode::Scottie2, rate))
+        .unwrap();
+    assert_eq!(without_leaders.mode(), None);
+}
+
+/// The old detector demanded strict tone dominance on every sample of both
+/// leaders, so channel noise that flipped a single sample lost the header.
+/// Detection now has to survive noise a header remains legible through.
+#[test]
+fn detects_a_header_through_noise() {
+    let rate = 8_000;
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    let mut noise = || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        ((state >> 33) as f32 / 2_147_483_648.0 - 0.5) * 0.8
+    };
+    let mut samples = vis_signal(Mode::Martin1, rate, 0.0);
+    for sample in &mut samples {
+        *sample = (*sample + noise()).clamp(-1.0, 1.0);
+    }
+    let output = demodulate(&samples, rate).unwrap();
+    assert_eq!(output.mode(), Mode::Martin1);
+}
+
 /// A station that starts over sends a second header while the picture it
 /// abandoned is still being decoded. Reading it is the only way the new
 /// mode is known outright, so the front end has to keep listening for one.

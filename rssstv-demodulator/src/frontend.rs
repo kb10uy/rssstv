@@ -12,7 +12,7 @@ use crate::{
     afc::Afc,
     hilbert::HilbertDiscriminator,
     sync::{SyncIntervalDetector, SyncStart},
-    vis::VisDecoder,
+    vis::{VisDecoder, VisDetection},
 };
 
 /// Where MMSSTV centers its VIS bit detectors.
@@ -143,7 +143,7 @@ impl FrontEnd {
         // inference drawn from the raster's timing.
         let mode = self
             .vis
-            .process(envelopes)
+            .process(envelopes, sync_strength)
             .map(|mode| (mode, Detection::Header))
             .or_else(|| {
                 self.sync_intervals
@@ -183,6 +183,10 @@ impl FrontEnd {
 
     pub(crate) fn set_sync_start(&mut self, scope: SyncStart) {
         self.sync_intervals.set_scope(scope);
+    }
+
+    pub(crate) fn set_vis_detection(&mut self, detection: VisDetection) {
+        self.vis.set_detection(detection);
     }
 
     pub(crate) const fn offset_hz(&self) -> f64 {

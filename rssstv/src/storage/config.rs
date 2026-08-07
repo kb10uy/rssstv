@@ -109,6 +109,8 @@ pub struct Settings {
     pub auto_mode: bool,
     pub dsp: DspFlags,
     pub vis_restart: bool,
+    /// Whether a VIS detection requires the header's leader tone as well.
+    pub vis_strict: bool,
     pub send_fskid: bool,
     /// Whether the QSO panel's serial number is worked and sent.
     pub contest_mode: bool,
@@ -190,6 +192,9 @@ impl Default for Settings {
             auto_mode: true,
             dsp: DspFlags::default(),
             vis_restart: true,
+            // Loose detection is MMSSTV's behavior and what weak-signal
+            // reception wants; strictness is the opt-in.
+            vis_strict: false,
             send_fskid: true,
             // A station that is not in a contest has no number to give, and
             // one that is says so once.
@@ -292,6 +297,8 @@ impl Config {
             },
             vis_restart: boolean(&self.document, Some("receive"), "vis-restart")
                 .unwrap_or(defaults.vis_restart),
+            vis_strict: boolean(&self.document, Some("receive"), "vis-strict")
+                .unwrap_or(defaults.vis_strict),
             send_fskid: boolean(&self.document, Some("transmit"), "fskid")
                 .unwrap_or(defaults.send_fskid),
             contest_mode: boolean(&self.document, Some("transmit"), "contest")
@@ -411,6 +418,12 @@ impl Config {
             Some("receive"),
             "vis-restart",
             Some(value(settings.vis_restart)),
+        );
+        set(
+            document,
+            Some("receive"),
+            "vis-strict",
+            Some(value(settings.vis_strict)),
         );
         set(
             document,
@@ -710,6 +723,7 @@ mod tests {
             tx_mode: Mode::Martin1,
             auto_mode: false,
             vis_restart: false,
+            vis_strict: true,
             send_fskid: false,
             contest_mode: true,
             tx_volume: 0.5,

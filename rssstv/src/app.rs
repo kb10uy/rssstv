@@ -162,6 +162,8 @@ pub struct App {
     pub dsp: DspFlags,
     /// Whether a VIS header may start a reception over.
     pub vis_restart: bool,
+    /// Whether a VIS detection requires the header's leader tone as well.
+    pub vis_strict: bool,
     /// Whether a transmission ends with the station identifier.
     pub send_fskid: bool,
     /// Whether the serial number is worked and sent with that identifier.
@@ -363,6 +365,7 @@ impl App {
             settings.output_device.as_deref(),
             settings.dsp.live_slant,
             settings.vis_restart,
+            settings.vis_strict,
             waker,
         );
         let mut app = Self::from_parts(audio, paths, config, &settings, platform::host());
@@ -416,6 +419,7 @@ impl App {
             tx_modes: modes(|mode| mode.spec().encode_support()),
             dsp: settings.dsp,
             vis_restart: settings.vis_restart,
+            vis_strict: settings.vis_strict,
             send_fskid: settings.send_fskid,
             contest_mode: settings.contest_mode,
             tx_volume: settings.tx_volume,
@@ -525,6 +529,7 @@ impl App {
             auto_mode: self.auto_mode,
             dsp: self.dsp,
             vis_restart: self.vis_restart,
+            vis_strict: self.vis_strict,
             send_fskid: self.send_fskid,
             contest_mode: self.contest_mode,
             tx_volume: self.tx_volume,
@@ -623,6 +628,15 @@ impl App {
     pub fn set_vis_restart(&mut self, enabled: bool) {
         self.vis_restart = enabled;
         self.audio.set_vis_restart(enabled);
+    }
+
+    /// Chooses whether a VIS detection requires the leader tone as well.
+    ///
+    /// Pushed to the receive worker at once rather than on the next frame, so
+    /// the change applies to the signal search in progress.
+    pub fn set_vis_strict(&mut self, enabled: bool) {
+        self.vis_strict = enabled;
+        self.audio.set_vis_strict(enabled);
     }
 
     pub fn toggle_dsp(&mut self, dsp: Dsp) {
@@ -958,6 +972,7 @@ impl App {
         self.adopt_decoded_number();
         self.audio.set_sync_start(self.sync_start());
         self.audio.set_vis_restart(self.vis_restart);
+        self.audio.set_vis_strict(self.vis_strict);
         self.tx_gain.set_travel(self.tx_volume);
         // A detected mode only takes over the selection while automatic
         // detection is on; otherwise it would undo the operator's choice.

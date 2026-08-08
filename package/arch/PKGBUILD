@@ -1,5 +1,3 @@
-# Builds from the working tree this file sits in, not from a source tarball:
-# run `makepkg` inside package/arch/. Not suitable for the AUR as is.
 pkgname=rssstv
 pkgver=0.2.0
 pkgrel=1
@@ -14,7 +12,6 @@ optdepends=('xdg-utils: open the manual and the image folders'
             'noto-fonts: interface font'
             'noto-fonts-cjk: interface font for Japanese'
             'ttf-dejavu: interface fallback font')
-# The release profile already strips; a debug split would find nothing.
 options=('!debug')
 source=()
 
@@ -34,10 +31,8 @@ build() {
 package() {
   local repo="$startdir/../.."
   install -Dm755 "$repo/target/release/rssstv" "$pkgdir/usr/bin/rssstv"
-  install -Dm644 "$repo/rssstv/assets/rssstv.desktop" \
-    "$pkgdir/usr/share/applications/rssstv.desktop"
-  install -Dm644 "$repo/rssstv/assets/icon.png" \
-    "$pkgdir/usr/share/icons/hicolor/512x512/apps/rssstv.png"
+  install -Dm644 "$repo/rssstv/assets/rssstv.desktop" "$pkgdir/usr/share/applications/rssstv.desktop"
+  install -Dm644 "$repo/rssstv/assets/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/rssstv.png"
   install -dm755 "$pkgdir/usr/share/doc/rssstv/help"
   install -m644 "$srcdir"/help/* "$pkgdir/usr/share/doc/rssstv/help/"
 }

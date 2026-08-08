@@ -1,18 +1,5 @@
-# The MSVC CRT is linked statically so that the executables depend on nothing
-# outside Windows itself. A dynamic build imports `VCRUNTIME140.dll`, which
-# belongs to the Visual C++ redistributable rather than to the operating
-# system, and an archive has no step that could install it. A machine without
-# it fails in the loader, before this program runs and could say so.
-#
-# The vendored Lua follows along: `cc` reads the target features and switches
-# the C sources to `/MT`, so both halves agree on one CRT.
-#
-# The cost is that CRT fixes arrive by rebuilding rather than through Windows
-# Update. What reads untrusted input here is Rust rather than C: the receive
-# audio, WAV files, images, and templates are all parsed on this side of the
-# boundary, and the C that remains is Lua running the operator's own script.
-#
-# `RUSTFLAGS` in the environment replaces these flags instead of adding to
-# them, which would quietly restore the dynamic dependency.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]

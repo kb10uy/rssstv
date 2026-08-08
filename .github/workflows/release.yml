@@ -101,26 +101,24 @@ jobs:
         with:
           tool: cargo-about
 
-      - name: Build the release executables
+      - name: Build the release executable
         run: >
           cargo build --release --locked --target ${{ matrix.target }}
-          -p rssstv -p encode-wav -p decode-wav
+          -p rssstv
 
       # A dependency on the Visual C++ redistributable is the one thing an
       # archive cannot repair on the operator's machine, so the invariant is
       # checked rather than trusted: `RUSTFLAGS` in the environment replaces
       # the flag in `.cargo/config.toml` without a word about it.
-      - name: Check that the Windows executables need no C runtime DLL
+      - name: Check that the Windows executable needs no C runtime DLL
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          foreach ($executable in "rssstv", "encode-wav", "decode-wav") {
-            $path = "target/${{ matrix.target }}/release/$executable.exe"
-            $bytes = [System.IO.File]::ReadAllBytes($path)
-            $text = [System.Text.Encoding]::ASCII.GetString($bytes)
-            if ($text -match "VCRUNTIME140|api-ms-win-crt-") {
-              throw "$executable.exe links the C runtime dynamically"
-            }
+          $path = "target/${{ matrix.target }}/release/rssstv.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+          if ($text -match "VCRUNTIME140|api-ms-win-crt-") {
+            throw "rssstv.exe links the C runtime dynamically"
           }
 
       # Generated on the platform being packaged rather than once for all
@@ -143,14 +141,11 @@ jobs:
           name="rssstv-$TAG-$TARGET"
           root="staging/$name"
           mkdir -p "$root"
-          for executable in rssstv encode-wav decode-wav; do
-            source="target/$TARGET/release/$executable"
-            if [ -f "$source.exe" ]; then
-              cp "$source.exe" "$root/"
-            else
-              cp "$source" "$root/"
-            fi
-          done
+          if [ -f "target/$TARGET/release/rssstv.exe" ]; then
+            cp "target/$TARGET/release/rssstv.exe" "$root/"
+          else
+            cp "target/$TARGET/release/rssstv" "$root/"
+          fi
           cp LICENSE README.md licenses.html "$root/"
           cp -r manual "$root/help"
           cp -r templates "$root/"
@@ -206,10 +201,9 @@ jobs:
         run: |
           sha256sum rssstv-* > SHA256SUMS
           cat > notes.md <<'NOTES'
-          Each archive holds the `rssstv` application, the `encode-wav` and
-          `decode-wav` tools, this project's license, the licenses of its
-          dependencies as `licenses.html`, the manual under `help/`, and the
-          MMSSTV templates ported to the KDL format.
+          Each download holds the `rssstv` application, this project's
+          license, the licenses of its dependencies as `licenses.html`, the
+          manual, and the MMSSTV templates ported to the KDL format.
 
           | Platform | Archive |
           | --- | --- |

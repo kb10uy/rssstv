@@ -1767,19 +1767,15 @@ fn current_minute() -> i64 {
 ///
 /// Looked for beside the executable first, which is where a release archive
 /// puts it, so two extracted versions on one machine each answer with their
-/// own copy. A distribution package installs the binary into a shared
-/// directory instead, so the platform's package location is the fallback.
-/// `None` when neither is there, which is every build run from the source
-/// tree.
+/// own copy. An installed copy puts the binary where nothing sits beside it,
+/// so the platform's installed location is the fallback. `None` when neither
+/// is there, which is every build run from the source tree.
 fn manual_path() -> Option<PathBuf> {
     let beside = std::env::current_exe()
         .ok()
         .and_then(|executable| Some(executable.parent()?.join("help").join("index.html")))
         .filter(|manual| manual.is_file());
-    beside.or_else(|| {
-        let fallback = PathBuf::from(platform::MANUAL_FALLBACK?);
-        fallback.is_file().then_some(fallback)
-    })
+    beside.or_else(|| platform::manual_fallback().filter(|manual| manual.is_file()))
 }
 
 fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {

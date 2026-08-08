@@ -133,6 +133,7 @@ jobs:
           path: manual
 
       - name: Stage the archive contents
+        if: runner.os != 'macOS'
         shell: bash
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -161,8 +162,22 @@ jobs:
           cp rssstv/assets/rssstv.desktop rssstv/assets/icon.png \
             "staging/$ARCHIVE_NAME/assets/"
 
+      # macOS gets a bundle in a disk image rather than an archive of bare
+      # files: the bundle is what carries the icon and the microphone
+      # permission text, and the image is what installs by drag and drop.
+      - name: Build the application bundle and disk image
+        if: runner.os == 'macOS'
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="rssstv-$TAG-$TARGET"
+          bash package/build-app.sh \
+            "target/$TARGET/release/rssstv" manual licenses.html "$name.dmg"
+          echo "ARCHIVE_NAME=$name" >> "$GITHUB_ENV"
+
       - name: Create the tar archive
-        if: runner.os != 'Windows'
+        if: runner.os == 'Linux'
         run: tar -czf "$ARCHIVE_NAME.tar.gz" -C staging "$ARCHIVE_NAME"
 
       - name: Create the zip archive
@@ -205,17 +220,19 @@ jobs:
           license, the licenses of its dependencies as `licenses.html`, the
           manual, and the MMSSTV templates ported to the KDL format.
 
-          | Platform | Archive |
+          | Platform | Download |
           | --- | --- |
           | Windows x86_64 | `rssstv-TAG-x86_64-pc-windows-msvc.zip` |
           | Linux x86_64 | `rssstv-TAG-x86_64-unknown-linux-gnu.tar.gz` |
-          | macOS Apple Silicon | `rssstv-TAG-aarch64-apple-darwin.tar.gz` |
+          | macOS Apple Silicon | `rssstv-TAG-aarch64-apple-darwin.dmg` |
 
-          The executables are not code signed. macOS marks a downloaded archive
-          as quarantined, so clear the attribute before the first run:
+          The macOS disk image installs by dragging `RSSSTV.app` into
+          `Applications`. The bundle is ad-hoc signed rather than notarized,
+          so open the first launch from the context menu, or clear the
+          quarantine attribute:
 
           ```text
-          xattr -dr com.apple.quarantine rssstv
+          xattr -dr com.apple.quarantine /Applications/RSSSTV.app
           ```
 
           The Linux archive carries `assets/rssstv.desktop` and

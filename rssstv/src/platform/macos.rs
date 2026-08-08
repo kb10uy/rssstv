@@ -1,12 +1,24 @@
 //! macOS integration.
 
+use std::path::PathBuf;
+
 use egui::IconData;
 
 pub const UI_FONTS: [&str; 2] = ["Hiragino Sans", "Helvetica Neue"];
 
 pub const FILE_MANAGER: Option<&str> = Some("open");
 
-pub const MANUAL_FALLBACK: Option<&str> = None;
+/// The bundle keeps the manual under `Contents/Resources`, a sibling of the
+/// `Contents/MacOS` directory the executable runs from.
+pub fn manual_fallback() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    Some(
+        executable
+            .parent()?
+            .parent()?
+            .join("Resources/help/index.html"),
+    )
+}
 
 pub const APP_DIRECTORY: &str = "RSSSTV";
 

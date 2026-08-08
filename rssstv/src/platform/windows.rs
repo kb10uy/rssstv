@@ -2,7 +2,9 @@
 
 use std::{
     ffi::c_void,
-    mem, ptr,
+    mem,
+    path::PathBuf,
+    ptr,
     sync::atomic::{AtomicI64, Ordering},
 };
 
@@ -45,7 +47,11 @@ pub const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
 
 pub const FILE_MANAGER: Option<&str> = Some("explorer.exe");
 
-pub const MANUAL_FALLBACK: Option<&str> = None;
+/// The Windows archive is extracted wherever the operator keeps it, so the
+/// manual is always beside the executable or absent.
+pub fn manual_fallback() -> Option<PathBuf> {
+    None
+}
 
 pub const APP_DIRECTORY: &str = "RSSSTV";
 

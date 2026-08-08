@@ -1,6 +1,7 @@
-# Linux packages
+# Packages
 
-Packages for the `rssstv` desktop application. Both install:
+Packages for the `rssstv` desktop application. The two Linux packages
+install:
 
 - `/usr/bin/rssstv`
 - `/usr/share/applications/rssstv.desktop`
@@ -47,3 +48,18 @@ dependencies resolve:
 ```bash
 sudo apt install ./target/debian/rssstv_*.deb
 ```
+
+## macOS
+
+The release workflow stages `RSSSTV.app` — icon, `Info.plist` with the
+microphone permission text, the manual under `Contents/Resources/help` — and
+wraps it in a drag-and-drop disk image with `build-app.sh`. It runs on a Mac
+too, given a built binary, a rendered manual, and a dependency license page:
+
+```bash
+bash package/build-app.sh target/release/rssstv target/help licenses.html RSSSTV.dmg
+```
+
+The bundle is ad-hoc signed, not notarized, so a downloaded image is
+quarantined: open the first launch from the context menu, or
+`xattr -dr com.apple.quarantine /Applications/RSSSTV.app`.

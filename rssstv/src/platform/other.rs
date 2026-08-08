@@ -3,6 +3,8 @@
 //! Linux is the platform this is written for; anything else the project has
 //! not been tried on lands here too and gets the same neutral answers.
 
+use std::path::PathBuf;
+
 use egui::IconData;
 
 pub const UI_FONTS: [&str; 3] = ["Noto Sans CJK JP", "Noto Sans", "DejaVu Sans"];
@@ -18,11 +20,9 @@ pub const FILE_MANAGER: Option<&str> = if cfg!(target_os = "linux") {
 
 /// Only Linux has distribution packages that install the manual; another
 /// platform reaching here has no package and therefore no fallback.
-pub const MANUAL_FALLBACK: Option<&str> = if cfg!(target_os = "linux") {
-    Some("/usr/share/doc/rssstv/help/index.html")
-} else {
-    None
-};
+pub fn manual_fallback() -> Option<PathBuf> {
+    cfg!(target_os = "linux").then(|| PathBuf::from("/usr/share/doc/rssstv/help/index.html"))
+}
 
 /// Linux keeps its per-application directories lowercase, under a base
 /// directory that is already hidden. The platforms that show these to the

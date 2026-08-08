@@ -42,13 +42,14 @@ pub use imp::UI_FONTS;
 /// hidden on Linux and shown to the operator elsewhere.
 pub use imp::APP_DIRECTORY;
 
-/// Where a distribution package installs the manual's first page, when one
-/// does.
+/// Where an installed copy keeps the manual's first page, when the platform
+/// has one.
 ///
-/// A release archive carries the manual beside the executable, but a package
-/// installs the binary into a shared directory where nothing sits beside it,
-/// so those packages put the pages here instead.
-pub use imp::MANUAL_FALLBACK;
+/// A release archive carries the manual beside the executable, but an
+/// installed copy puts the binary where nothing sits beside it: a Linux
+/// package keeps the pages under `/usr/share/doc`, and the macOS bundle keeps
+/// them in its own `Resources` directory.
+pub use imp::manual_fallback;
 
 /// Prepares the process before any window exists.
 ///

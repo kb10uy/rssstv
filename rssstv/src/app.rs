@@ -1763,17 +1763,23 @@ fn current_minute() -> i64 {
     Timestamp::now().as_second().div_euclid(60)
 }
 
-/// The manual's first page, where a release archive puts it.
+/// The manual's first page.
 ///
-/// Found beside the executable rather than under the application's own
-/// directories: the manual belongs to the copy that was extracted, so two
-/// versions on one machine each answer with their own, and nothing has to
-/// install it anywhere. `None` when it is not there, which is every build run
-/// from the source tree.
+/// Looked for beside the executable first, which is where a release archive
+/// puts it, so two extracted versions on one machine each answer with their
+/// own copy. A distribution package installs the binary into a shared
+/// directory instead, so the platform's package location is the fallback.
+/// `None` when neither is there, which is every build run from the source
+/// tree.
 fn manual_path() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let manual = executable.parent()?.join("help").join("index.html");
-    manual.is_file().then_some(manual)
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|executable| Some(executable.parent()?.join("help").join("index.html")))
+        .filter(|manual| manual.is_file());
+    beside.or_else(|| {
+        let fallback = PathBuf::from(platform::MANUAL_FALLBACK?);
+        fallback.is_file().then_some(fallback)
+    })
 }
 
 fn modes(support: fn(Mode) -> Support) -> Vec<Mode> {

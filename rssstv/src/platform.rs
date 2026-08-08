@@ -42,6 +42,14 @@ pub use imp::UI_FONTS;
 /// hidden on Linux and shown to the operator elsewhere.
 pub use imp::APP_DIRECTORY;
 
+/// Where a distribution package installs the manual's first page, when one
+/// does.
+///
+/// A release archive carries the manual beside the executable, but a package
+/// installs the binary into a shared directory where nothing sits beside it,
+/// so those packages put the pages here instead.
+pub use imp::MANUAL_FALLBACK;
+
 /// Prepares the process before any window exists.
 ///
 /// Called once at startup, before the event loop is built, for work that has

@@ -1,0 +1,43 @@
+# Builds from the working tree this file sits in, not from a source tarball:
+# run `makepkg` inside package/arch/. Not suitable for the AUR as is.
+pkgname=rssstv
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="SSTV for amateur radio"
+arch=('x86_64' 'aarch64')
+url="https://github.com/kb10uy/rssstv"
+license=('LGPL-3.0-or-later')
+depends=('glibc' 'gcc-libs' 'alsa-lib' 'libxkbcommon' 'libxkbcommon-x11'
+         'libgl' 'wayland' 'libx11' 'hicolor-icon-theme')
+makedepends=('cargo' 'mold' 'pandoc')
+optdepends=('xdg-utils: open the manual and the image folders'
+            'noto-fonts: interface font'
+            'noto-fonts-cjk: interface font for Japanese'
+            'ttf-dejavu: interface fallback font')
+# The release profile already strips; a debug split would find nothing.
+options=('!debug')
+source=()
+
+pkgver() {
+  sed -n 's/^version = "\(.*\)"$/\1/p' "$startdir/../../Cargo.toml" | head -n 1
+}
+
+build() {
+  cd "$startdir/../.."
+  # makepkg exports RUSTFLAGS, which would silently replace the mold linker
+  # flag in .cargo/config.toml; the config file is the one source of truth.
+  unset RUSTFLAGS
+  cargo build --release --locked -p rssstv
+  RSSSTV_VERSION="v$pkgver" bash docs/help/build.sh "$srcdir/help"
+}
+
+package() {
+  local repo="$startdir/../.."
+  install -Dm755 "$repo/target/release/rssstv" "$pkgdir/usr/bin/rssstv"
+  install -Dm644 "$repo/rssstv/assets/rssstv.desktop" \
+    "$pkgdir/usr/share/applications/rssstv.desktop"
+  install -Dm644 "$repo/rssstv/assets/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/512x512/apps/rssstv.png"
+  install -dm755 "$pkgdir/usr/share/doc/rssstv/help"
+  install -m644 "$srcdir"/help/* "$pkgdir/usr/share/doc/rssstv/help/"
+}

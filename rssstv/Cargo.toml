@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 directories.workspace = true
@@ -59,3 +60,30 @@ embed-resource.workspace = true
 egui_kittest.workspace = true
 hound.workspace = true
 rstest.workspace = true
+
+# `cargo deb -p rssstv` builds the Debian package from this. The manual under
+# target/help has to be rendered first; package/build-deb.sh does both in
+# order. Asset sources are relative to this directory, except target/release/
+# paths, which cargo-deb resolves against the workspace target directory.
+[package.metadata.deb]
+name = "rssstv"
+section = "hamradio"
+priority = "optional"
+license-file = ["../LICENSE", "0"]
+extended-description = """\
+Slow-scan television for amateur radio: receives and decodes SSTV \
+transmissions from a capture device, and composes and transmits pictures \
+from KDL templates, with optional rig control through Hamlib's rigctld. \
+The operator's manual is installed under /usr/share/doc/rssstv/help."""
+# $auto covers what the binary links (glibc, ALSA, gcc-s); the graphics and
+# keyboard libraries are dlopen'd at runtime, which dpkg-shlibdeps cannot see,
+# so they are named explicitly.
+depends = ["$auto", "libxkbcommon0", "libxkbcommon-x11-0", "libegl1", "libgl1"]
+recommends = ["xdg-utils", "fonts-noto-cjk"]
+suggests = ["fonts-dejavu-core"]
+assets = [
+    ["target/release/rssstv", "usr/bin/", "755"],
+    ["assets/rssstv.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/512x512/apps/rssstv.png", "644"],
+    ["../target/help/*", "usr/share/doc/rssstv/help/", "644"],
+]

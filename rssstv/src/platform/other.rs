@@ -16,6 +16,14 @@ pub const FILE_MANAGER: Option<&str> = if cfg!(target_os = "linux") {
     None
 };
 
+/// Only Linux has distribution packages that install the manual; another
+/// platform reaching here has no package and therefore no fallback.
+pub const MANUAL_FALLBACK: Option<&str> = if cfg!(target_os = "linux") {
+    Some("/usr/share/doc/rssstv/help/index.html")
+} else {
+    None
+};
+
 /// Linux keeps its per-application directories lowercase, under a base
 /// directory that is already hidden. The platforms that show these to the
 /// operator name them the way the application is named.

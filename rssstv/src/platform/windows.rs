@@ -45,6 +45,8 @@ pub const UI_FONTS: [&str; 3] = ["Yu Gothic UI", "Meiryo UI", "Segoe UI"];
 
 pub const FILE_MANAGER: Option<&str> = Some("explorer.exe");
 
+pub const MANUAL_FALLBACK: Option<&str> = None;
+
 pub const APP_DIRECTORY: &str = "RSSSTV";
 
 /// Identifies the application to the shell.

@@ -6,6 +6,8 @@ pub const UI_FONTS: [&str; 2] = ["Hiragino Sans", "Helvetica Neue"];
 
 pub const FILE_MANAGER: Option<&str> = Some("open");
 
+pub const MANUAL_FALLBACK: Option<&str> = None;
+
 pub const APP_DIRECTORY: &str = "RSSSTV";
 
 /// The window is themed by AppKit from the system appearance, and the menu

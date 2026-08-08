@@ -57,7 +57,9 @@ update-desktop-database ~/.local/share/applications
 
 The entry's `Exec=rssstv` expects the executable on `PATH`, which
 `cargo install --path rssstv` arranges; point it at the build directory
-instead if you are running from `cargo run`.
+instead if you are running from `cargo run`. Distribution packages that
+install all of this — binary, entry, icon, and manual — are described in
+[package/](package/README.md), for Arch Linux and Debian/Ubuntu.
 
 [templates/](templates) holds the five templates MMSSTV ships, ported to the
 KDL format. Copy the ones you want into the application's templates directory;

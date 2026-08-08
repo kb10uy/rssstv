@@ -20,6 +20,7 @@ version = "0.2.0"
 edition = "2024"
 license = "LGPL-3.0-or-later"
 authors = ["Yū KOBAYASHI <kb10uy@kb10uy.org>"]
+repository = "https://github.com/kb10uy/rssstv"
 
 [workspace.dependencies]
 anyhow = "1.0"

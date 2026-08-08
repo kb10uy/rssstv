@@ -1,8 +1,6 @@
 # Linux packages
 
-Builds distribution packages for the `rssstv` desktop application from the
-checked-out working tree — whatever is in it, not a released tag. Both
-packages install:
+Packages for the `rssstv` desktop application. Both install:
 
 - `/usr/bin/rssstv`
 - `/usr/share/applications/rssstv.desktop`
@@ -15,27 +13,25 @@ MMSSTV templates in [templates/](../templates) — copy those into
 `~/.local/share/rssstv/templates` yourself. Installing them under
 `/usr/share/rssstv/templates` is a possible follow-up.
 
-Both builds link with mold on purpose: `.cargo/config.toml` names it for every
-Linux build of this tree, so it is a build dependency here too.
-
 ## Arch Linux
 
-`makedepends` covers the toolchain (cargo, mold, pandoc). Build and install:
+`rssstv-bin` repackages the released x86_64 archive from GitHub Releases —
+nothing is compiled. Bumping it to a new release means updating `pkgver` and
+`sha256sums` (the hash is in the release's `SHA256SUMS`). Build and install:
 
 ```bash
 cd package/arch && makepkg -si
 ```
 
-The PKGBUILD has no `source=()`; it compiles the repository it sits in, and
-`pkgver()` re-reads the workspace version so the package always matches the
-tree. `RUSTFLAGS` from makepkg.conf is unset during the build — it would
-silently replace the mold flag from `.cargo/config.toml` — so distribution
-default flags are not applied to this package.
+The dependency license page ships in the archive and is installed as
+`/usr/share/doc/rssstv/licenses.html`.
 
 ## Debian / Ubuntu
 
-Prerequisites: rustc ≥ 1.85 (edition 2024), `build-essential`,
-`libasound2-dev`, `mold`, `pandoc`, and
+Built from the checked-out working tree — whatever is in it, not a released
+tag. Prerequisites: rustc ≥ 1.85 (edition 2024), `build-essential`,
+`libasound2-dev`, `mold` (named by `.cargo/config.toml` for every Linux build
+of this tree), `pandoc`, and
 [cargo-deb](https://github.com/kornelski/cargo-deb)
 (`cargo install cargo-deb`). Then:
 

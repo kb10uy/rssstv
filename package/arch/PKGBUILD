@@ -1,38 +1,28 @@
-pkgname=rssstv
+pkgname=rssstv-bin
 pkgver=0.2.0
 pkgrel=1
 pkgdesc="SSTV for amateur radio"
-arch=('x86_64' 'aarch64')
+arch=('x86_64')
 url="https://github.com/kb10uy/rssstv"
 license=('LGPL-3.0-or-later')
 depends=('glibc' 'gcc-libs' 'alsa-lib' 'libxkbcommon' 'libxkbcommon-x11'
          'libgl' 'wayland' 'libx11' 'hicolor-icon-theme')
-makedepends=('cargo' 'mold' 'pandoc')
 optdepends=('xdg-utils: open the manual and the image folders'
             'noto-fonts: interface font'
             'noto-fonts-cjk: interface font for Japanese'
             'ttf-dejavu: interface fallback font')
-options=('!debug')
-source=()
-
-pkgver() {
-  sed -n 's/^version = "\(.*\)"$/\1/p' "$startdir/../../Cargo.toml" | head -n 1
-}
-
-build() {
-  cd "$startdir/../.."
-  # makepkg exports RUSTFLAGS, which would silently replace the mold linker
-  # flag in .cargo/config.toml; the config file is the one source of truth.
-  unset RUSTFLAGS
-  cargo build --release --locked -p rssstv
-  RSSSTV_VERSION="v$pkgver" bash docs/help/build.sh "$srcdir/help"
-}
+provides=('rssstv')
+conflicts=('rssstv')
+options=('!strip' '!debug')
+source=("$url/releases/download/v$pkgver/rssstv-v$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('b2458bcb91794a5bfa560b4f841916a090440f1d5c829cf408f11c93ce151f48')
 
 package() {
-  local repo="$startdir/../.."
-  install -Dm755 "$repo/target/release/rssstv" "$pkgdir/usr/bin/rssstv"
-  install -Dm644 "$repo/rssstv/assets/rssstv.desktop" "$pkgdir/usr/share/applications/rssstv.desktop"
-  install -Dm644 "$repo/rssstv/assets/icon.png" "$pkgdir/usr/share/icons/hicolor/512x512/apps/rssstv.png"
+  cd "rssstv-v$pkgver-x86_64-unknown-linux-gnu"
+  install -Dm755 rssstv "$pkgdir/usr/bin/rssstv"
+  install -Dm644 assets/rssstv.desktop "$pkgdir/usr/share/applications/rssstv.desktop"
+  install -Dm644 assets/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/rssstv.png"
+  install -Dm644 licenses.html "$pkgdir/usr/share/doc/rssstv/licenses.html"
   install -dm755 "$pkgdir/usr/share/doc/rssstv/help"
-  install -m644 "$srcdir"/help/* "$pkgdir/usr/share/doc/rssstv/help/"
+  install -m644 help/* "$pkgdir/usr/share/doc/rssstv/help/"
 }
